@@ -80,6 +80,11 @@ out/
 .env.*.local
 .env.development
 .env.production
+.int.env
+.prod.env
+*.env
+!.env.example
+!.env.template
 
 # Logs
 *.log
