@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "creez-backend"
+version = "0.1.0"
+description = "Creez backend - AI image/video generation, prompt generation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "python-dotenv>=1.1.0",
+    "supabase>=2.15.1",
+    "openai>=1.78.1",
+    "requests>=2.32.3",
+    "tos>=2.8.4",
+    "httpx>=0.27.0",
+]
+
+# 与 mcp_host_backend 一致：声明可安装的顶层模块与包，使 pip install . 在 Docker 中可用
+[tool.setuptools.packages.find]
+where = ["."]
+[tool.setuptools]
+py-modules = ["main", "config", "configmap_utils", "log_util", "task_runner", "utils", "supabase_client", "token_usage_utils", "prompt_generator", "llm_client", "video_generation_helper", "image_generation_helper"]

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' file: data:; media-src 'self' file: data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Creez</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="main-view" class="view">
+        <div class="layout">
+          <aside id="sidebar">
+            <div class="panel-title-row">
+              <span class="panel-title">文件目录</span>
+              <button type="button" id="refresh-tree" class="tree-refresh-btn" title="刷新目录">↻</button>
+            </div>
+            <div class="tree-search">
+              <input id="tree-search-input" type="text" placeholder="搜索文件..." />
+            </div>
+            <div id="file-tree" class="tree"></div>
+            <button id="open-config" class="gear-button" title="设置">⚙</button>
+          </aside>
+
+          <main id="editor">
+            <div id="tabs" class="tabs"></div>
+            <div id="editor-content" class="editor-content">
+              <div class="empty-state">请选择左侧文件进行查看或编辑。</div>
+            </div>
+          </main>
+
+          <aside id="chat">
+            <div class="panel-title">对话</div>
+            <div id="chat-messages" class="chat-messages"></div>
+            <div class="chat-input-wrap">
+              <div id="chat-attachments" class="chat-attachments"></div>
+              <div class="chat-input-inner">
+                <div class="chat-input-textarea-wrap">
+                  <div id="chat-input-area" class="chat-input-area" contenteditable="true" data-placeholder="输入消息，使用 @ 引用文件；可粘贴图片"></div>
+                </div>
+                <div class="chat-input-actions">
+                  <input id="chat-upload-image" type="file" accept="image/*" multiple hidden />
+                  <input id="chat-upload-video" type="file" accept="video/*" multiple hidden />
+                  <button type="button" id="btn-upload-image" class="chat-icon-btn" title="上传图片">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                  </button>
+                  <button type="button" id="btn-upload-video" class="chat-icon-btn" title="上传视频">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+                  </button>
+                  <button type="button" id="send-message" class="chat-send-btn" title="发送">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div id="mention-dropdown" class="mention-dropdown hidden"></div>
+            </div>
+          </aside>
+        </div>
+      </div>
+
+      <div id="confirm-modal" class="modal hidden">
+        <div class="modal-card prompt-modal-card">
+          <div class="modal-header">
+            <div>确认</div>
+          </div>
+          <div class="modal-body">
+            <div id="confirm-modal-message" class="confirm-message">确认吗？</div>
+            <div class="prompt-modal-actions">
+              <button type="button" id="confirm-modal-cancel">取消</button>
+              <button type="button" id="confirm-modal-ok" class="primary">确定</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="prompt-modal" class="modal hidden">
+        <div class="modal-card prompt-modal-card">
+          <div class="modal-header">
+            <div id="prompt-modal-title">输入</div>
+          </div>
+          <div class="modal-body">
+            <input id="prompt-modal-input" type="text" />
+            <div id="prompt-modal-error" class="prompt-modal-error hidden">
+              <span>A file or folder <span id="prompt-modal-error-name" class="prompt-modal-error-name"></span> already exists at this location. Please choose a different name.</span>
+            </div>
+            <div class="prompt-modal-actions">
+              <button type="button" id="prompt-modal-cancel">取消</button>
+              <button type="button" id="prompt-modal-ok" class="primary">确定</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="add-art-material-modal" class="modal hidden">
+        <div class="modal-card add-art-material-modal-card">
+          <div class="modal-header">
+            <div>添加美术素材</div>
+            <button type="button" id="add-art-material-modal-close" class="modal-close-btn">×</button>
+          </div>
+          <div class="modal-body add-art-material-body">
+            <label class="add-art-material-label">
+              资产名
+              <input id="add-art-material-name" type="text" placeholder="请输入资产名称" required />
+            </label>
+            <label class="add-art-material-label">
+              状态
+              <input id="add-art-material-status" type="text" placeholder="请输入状态" required />
+            </label>
+            <label class="add-art-material-label">
+              类型
+              <select id="add-art-material-type" required>
+                <option value="">请选择类型</option>
+                <option value="角色">角色</option>
+                <option value="背景">背景</option>
+                <option value="常见">常见</option>
+                <option value="道具">道具</option>
+                <option value="其他">其他</option>
+              </select>
+            </label>
+            <div class="add-art-material-label">
+              <span class="add-art-material-label-text">图片</span>
+              <div id="add-art-material-upload" class="add-art-material-upload" role="button" tabindex="0">
+                <input id="add-art-material-file" type="file" accept="image/jpeg,image/png,image/gif" class="add-art-material-file-input" required />
+                <div id="add-art-material-upload-placeholder" class="add-art-material-upload-placeholder">
+                  <span class="add-art-material-upload-icon">🖼</span>
+                  <span>点击或拖拽选择图片</span>
+                  <span class="add-art-material-upload-hint">支持 JPG、PNG、GIF，最大 6MB</span>
+                </div>
+                <img id="add-art-material-preview" class="add-art-material-preview hidden" alt="预览" />
+              </div>
+            </div>
+            <div class="add-art-material-actions">
+              <button type="button" id="add-art-material-cancel">取消</button>
+              <button type="button" id="add-art-material-ok" class="primary">确定</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="context-menu" class="context-menu hidden">
+        <button data-action="new-scene-board" data-show-for="dir blank">新建分镜板</button>
+        <div class="context-menu-sep" data-show-for="dir blank"></div>
+        <button data-action="new-file" data-show-for="dir blank">新建文件</button>
+        <button data-action="new-folder" data-show-for="dir blank">新建文件夹</button>
+        <button data-action="rename" data-show-for="file dir blank">重命名</button>
+        <button data-action="delete" data-show-for="file dir blank">删除</button>
+        <button data-action="copy-path" data-show-for="file dir blank">复制路径</button>
+        <button data-action="reveal" data-show-for="file dir blank">在文件夹中显示</button>
+      </div>
+
+      <div id="config-modal" class="modal hidden">
+        <div class="modal-card config-card">
+          <div class="modal-header">
+            <div>配置</div>
+          </div>
+          <div class="modal-body config-body">
+            <form id="config-form">
+              <label>
+                模型供应商
+                <select id="provider-input"></select>
+              </label>
+              <label>
+                API Key
+                <input id="apikey-input" type="password" placeholder="sk-..." />
+              </label>
+              <label>
+                模型名称
+                <input id="model-input" type="text" placeholder="例如 gpt-4o、claude-3-5-sonnet-20241022、doubao-1.5-pro-32k" />
+              </label>
+              <label>
+                工作目录
+                <div class="inline">
+                  <input id="workdir-input" type="text" placeholder="请选择一个目录" readonly />
+                  <button type="button" id="pick-workdir">选择</button>
+                </div>
+              </label>
+              <div class="actions">
+                <button type="button" id="cancel-config">取消</button>
+                <button type="submit" class="primary">保存</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

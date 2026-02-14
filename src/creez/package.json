@@ -1,0 +1,80 @@
+{
+  "name": "creez",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "concurrently \"vite\" \"npm:electron\"",
+    "electron": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron src/main.js",
+    "electron:inspect": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron --inspect=9229 src/main.js",
+    "dev:debug": "concurrently \"vite\" \"npm:electron:inspect\"",
+    "build": "vite build && node scripts/copy-main.js && node scripts/bundle-agent-runner.js",
+    "preview": "vite preview",
+    "start": "electron src/main.js",
+    "start:fresh": "npm run build && electron dist/main.js",
+    "pack": "npm run build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --dir",
+    "dist": "npm run build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder",
+    "dist:win": "npm run build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win",
+    "dist:mac": "npm run build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --mac",
+    "dist:linux": "npm run build && cross-env ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --linux"
+  },
+  "dependencies": {
+    "@mariozechner/pi-agent-core": "^0.50.0",
+    "@mariozechner/pi-ai": "^0.50.0",
+    "@mariozechner/pi-coding-agent": "^0.50.0",
+    "@vscode/codicons": "^0.0.44",
+    "mammoth": "latest",
+    "marked": "^17.0.1",
+    "xlsx": "latest"
+  },
+  "devDependencies": {
+    "concurrently": "latest",
+    "cross-env": "latest",
+    "electron": "latest",
+    "electron-builder": "24.13.3",
+    "esbuild": "^0.27.3",
+    "vite": "latest",
+    "wait-on": "latest"
+  },
+  "build": {
+    "appId": "video.lighton.creez",
+    "productName": "Creez",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "skills",
+        "to": "skills"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "executableName": "Creez"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    }
+  }
+}
