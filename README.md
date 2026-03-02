@@ -4,6 +4,10 @@
 
 A desktop app that brings together chat, contacts, workspace, and AI agents in one place.
 
+## Download
+
+Ready-to-use installers and portable builds are available on [**Releases**](https://github.com/YOUR_ORG/creez/releases). Download the latest version for your platform (Windows / macOS) and install or run directly.
+
 ## Overview
 
 Creez is an Electron-based desktop application for managing contacts, multi-session chat, workspace files, and conversations with one or more AI assistants (multi-bot). It suits both personal use and team collaboration.
