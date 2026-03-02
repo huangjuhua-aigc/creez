@@ -1,0 +1,50 @@
+# Build Creez Electron app (creezv2) for Windows and Mac.
+# Trigger: push to main/master, or manually via Actions tab ("Run workflow").
+# Artifacts: after a run, open the workflow run → Artifacts section to download
+#            "creez-electron-win" (Windows) and "creez-electron-mac" (Mac).
+name: Build Electron (Creez)
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+          - os: macos-latest
+            platform: mac
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: creezv2/package-lock.json
+
+      - name: Install dependencies
+        working-directory: creezv2
+        run: npm ci
+
+      - name: Build app
+        working-directory: creezv2
+        run: npm run build:${{ matrix.platform }}
+        env:
+          # Skip code signing when no certs are configured (avoids hang/failure)
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: creez-electron-${{ matrix.platform }}
+          path: creezv2/release/

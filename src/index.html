@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <title>Creez</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      (function () {
+        try {
+          console.log("[Creez] renderer index.html loaded");
+          window.__creezRenderError = null;
+          window.onerror = function (msg, source, lineno, colno, err) {
+            var s = "[Creez] renderer error: " + msg + " at " + (source || "") + ":" + lineno + ":" + colno + (err && err.stack ? "\n" + err.stack : "");
+            console.error(s);
+            window.__creezRenderError = s;
+            return false;
+          };
+        } catch (e) {
+          console.error("[Creez] bootstrap error:", e);
+        }
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+  

@@ -1,0 +1,35 @@
+import React from "react";
+
+export function Logo({ size = 40, className = "" }: { size?: number; className?: string }) {
+  return (
+    <div
+      className={`relative flex items-center justify-center transition-transform hover:scale-105 active:scale-95 ${className}`}
+      style={{ width: size, height: size }}
+    >
+      <svg
+        width={size}
+        height={size}
+        viewBox="0 0 40 40"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        className="drop-shadow-sm"
+      >
+        <rect width="40" height="40" rx="10" fill="#07C160" />
+        <path
+          d="M19 10C13.477 10 9 13.582 9 18C9 20.35 10.19 22.46 12.08 23.95C11.97 24.36 11.5 25.8 11.5 25.8C11.5 25.8 13.8 25.5 15.2 24.5C16.36 24.83 17.64 25 19 25C24.523 25 29 21.418 29 17C29 12.582 24.523 10 19 10Z"
+          fill="white"
+        />
+        <circle cx="15.5" cy="16.5" r="1.5" fill="#07C160" />
+        <circle cx="22.5" cy="16.5" r="1.5" fill="#07C160" />
+        <path
+          d="M28.5 12.5 L31.5 18.5 L37.5 21.5 L31.5 24.5 L28.5 30.5 L25.5 24.5 L19.5 21.5 L25.5 18.5 Z"
+          fill="white"
+          stroke="#07C160"
+          strokeWidth="1.5"
+          paintOrder="stroke"
+        />
+        <path d="M36 6 L37 8 L39 9 L37 10 L36 12 L35 10 L33 9 L35 8 Z" fill="white" />
+      </svg>
+    </div>
+  );
+}
