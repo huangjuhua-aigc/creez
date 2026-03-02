@@ -86,8 +86,9 @@ out/
 !.env.example
 !.env.template
 
-# Docs (generated output only; README.md etc. are not ignored)
+# Docs (generated output and doc folders; README.md at root not ignored if outside docs/)
 doc/
+docs/
 docs/_build/
 docs/build/
 docs/*.pdf
@@ -128,7 +129,8 @@ Desktop.ini
 # pnpm-lock.yaml
 # uv.lock
 
-# IDE specific
+# IDE / editor
+.cursor/
 .vscode/
 .idea/
 *.sublime-project

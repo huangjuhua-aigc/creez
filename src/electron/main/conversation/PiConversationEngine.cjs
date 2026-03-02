@@ -1,6 +1,6 @@
 /**
  * Pi-based conversation engine. Adapts agent-runner (createAndSubscribe, prompt, setModel, abort)
- * to the conversation engine contract. Single active session; init replaces previous session.
+ * to the conversation engine contract. Sessions are keyed by chatId so multiple bots can reply concurrently.
  */
 
 const path = require("node:path");
@@ -50,6 +50,7 @@ class PiConversationEngine {
       apiKey: context.apiKey,
       contactId: context.contactId || null,
       assistantConfigId: context.assistantConfigId || null,
+      defaultContactId: context.defaultContactId || null,
       workDir,
       agentDir,
       assistantConfig: context.assistantConfig || {},
@@ -62,26 +63,29 @@ class PiConversationEngine {
 
   async prompt(payload) {
     const runner = await getRunner();
-    if (!runner.hasSession()) return;
+    const chatId = payload?.chatId ?? "";
+    if (!runner.hasSession(chatId)) return;
     const text = payload?.text ?? "";
     const images = Array.isArray(payload?.images) ? payload.images : [];
     if (!text && images.length === 0) return;
-    await runner.prompt({ text, images });
+    await runner.prompt({ chatId, text, images });
   }
 
-  async setModel(config) {
+  async setModel(chatId, config) {
     const runner = await getRunner();
-    if (!runner.hasSession()) return false;
-    return runner.setModel(config);
+    if (!runner.hasSession(chatId)) return false;
+    return runner.setModel(chatId, config);
   }
 
-  abort() {
-    return getRunner().then((r) => r.abort());
+  abort(chatId) {
+    return getRunner().then((r) => {
+      r.abort(chatId);
+    });
   }
 
-  async hasSession() {
+  async hasSession(chatId) {
     const runner = await getRunner();
-    return Boolean(runner.hasSession && runner.hasSession());
+    return Boolean(runner.hasSession && runner.hasSession(chatId));
   }
 }
 

@@ -51,7 +51,7 @@ contextBridge.exposeInMainWorld("electron", {
     init: (payload) => ipcRenderer.send(CHANNELS.AGENT_INIT, payload),
     setModel: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_SET_MODEL, payload),
     prompt: (payload) => ipcRenderer.send(CHANNELS.AGENT_PROMPT, payload),
-    abort: () => ipcRenderer.send(CHANNELS.AGENT_ABORT),
+    abort: (chatId) => ipcRenderer.send(CHANNELS.AGENT_ABORT, chatId ?? ""),
     onEvent: (listener) => {
       const wrapped = (_event, payload) => listener(payload);
       ipcRenderer.on(CHANNELS.AGENT_EVENT, wrapped);

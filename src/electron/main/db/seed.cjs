@@ -34,7 +34,8 @@ function resolveDefaultBotAvatarPath(homeDir) {
   return copyBundledAvatar(homeDir, "bot_avatar_256x256.png");
 }
 
-const BOT_CONTACT_ID = "0d9f5d8a-4c7e-4f2a-9d6a-2b3a1a5e7c11";
+/** Fixed UUID for default assistant bot (config id = contact id). */
+const BOT_CONTACT_ID = "11111111-1111-1111-1111-111111111111";
 const BOT_CHAT_ID = "1f2e3d4c-5b6a-47d8-9c01-23456789abcd";
 const BOT_WELCOME_MESSAGE_ID = "2a3b4c5d-6e7f-48a9-b012-3456789abcde";
 const ROUND_CLOSER_CONTACT_ID = "a3e6d3f0-9d91-4dc0-8f84-7f3ca8a0619c";
@@ -56,8 +57,8 @@ function seedIfEmpty(db, options = {}) {
   const roundCloserAvatarPath = resolveRoundCloserAvatarPath(homeDir);
   const defaultBotAvatarPath = resolveDefaultBotAvatarPath(homeDir);
   const assistantRow = db
-    .prepare("SELECT name, avatar_path, models_json FROM assistant_config WHERE id = 1")
-    .get();
+    .prepare("SELECT name, avatar_path, models_json FROM assistant_config WHERE id = ?")
+    .get(BOT_CONTACT_ID);
   const assistantName = String(assistantRow?.name || "Assistant");
   const assistantAvatarPath = (defaultBotAvatarPath || (assistantRow?.avatar_path ? String(assistantRow.avatar_path) : null));
   const models = safeJsonParse(assistantRow?.models_json, []);
@@ -96,8 +97,8 @@ function seedIfEmpty(db, options = {}) {
     VALUES (@id, @contactId, @createdAt, @updatedAt, @lastMessageAt)
   `);
   const insertContact = db.prepare(`
-    INSERT OR IGNORE INTO contacts (id, type, name, avatar_path, assistant_config_id, is_default, created_at, updated_at)
-    VALUES (@id, @type, @name, @avatarPath, @assistantConfigId, @isDefault, @createdAt, @updatedAt)
+    INSERT OR IGNORE INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at)
+    VALUES (@id, @type, @name, @avatarPath, @isDefault, @createdAt, @updatedAt)
   `);
   const updateContact = db.prepare(`
     UPDATE contacts
@@ -124,14 +125,11 @@ function seedIfEmpty(db, options = {}) {
     )
   `);
   const insertAssistantConfig = db.prepare(`
-    INSERT INTO assistant_config (
-      name, avatar_path, system_prompt, skills_json, models_json, updated_at, engine_type
+    INSERT OR IGNORE INTO assistant_config (
+      id, name, avatar_path, system_prompt, skills_json, models_json, updated_at, engine_type
     ) VALUES (
-      @name, @avatarPath, @systemPrompt, @skillsJson, @modelsJson, @updatedAt, @engineType
+      @id, @name, @avatarPath, @systemPrompt, @skillsJson, @modelsJson, @updatedAt, @engineType
     )
-  `);
-  const getContactById = db.prepare(`
-    SELECT id, assistant_config_id FROM contacts WHERE id = @id LIMIT 1
   `);
   const updateAssistantConfigAvatar = db.prepare(`
     UPDATE assistant_config SET avatar_path = @avatarPath, updated_at = @updatedAt WHERE id = @id
@@ -144,12 +142,21 @@ function seedIfEmpty(db, options = {}) {
   const tx = db.transaction(() => {
     const createdAt = base - 30;
     deleteLegacyDemoChats.run();
+    insertAssistantConfig.run({
+      id: BOT_CONTACT_ID,
+      name: assistantName,
+      avatarPath: assistantAvatarPath,
+      systemPrompt: "",
+      skillsJson: JSON.stringify({}),
+      modelsJson: assistantRow?.models_json ?? "[]",
+      updatedAt: base,
+      engineType: "pi",
+    });
     const contactInserted = insertContact.run({
       id: BOT_CONTACT_ID,
       type: "bot",
       name: assistantName,
       avatarPath: assistantAvatarPath,
-      assistantConfigId: 1,
       isDefault: 1,
       createdAt,
       updatedAt: base,
@@ -162,7 +169,7 @@ function seedIfEmpty(db, options = {}) {
     });
     if (defaultBotAvatarPath) {
       updateAssistantConfigAvatar.run({
-        id: 1,
+        id: BOT_CONTACT_ID,
         avatarPath: defaultBotAvatarPath,
         updatedAt: base,
       });
@@ -189,43 +196,34 @@ function seedIfEmpty(db, options = {}) {
       id: BOT_CHAT_ID,
       updatedAt: base,
     });
-    let roundCloserConfigId = null;
-    const existingRoundCloser = getContactById.get({ id: ROUND_CLOSER_CONTACT_ID });
-    if (existingRoundCloser?.assistant_config_id != null) {
-      roundCloserConfigId = Number(existingRoundCloser.assistant_config_id);
-    } else {
-      const createdConfig = insertAssistantConfig.run({
-        name: roundCloserName,
-        avatarPath: roundCloserAvatarPath,
-        systemPrompt: roundCloserPrompt,
-        skillsJson: JSON.stringify({}),
-        modelsJson: JSON.stringify(Array.isArray(models) ? models : []),
-        updatedAt: base,
-        engineType: "pi",
-      });
-      roundCloserConfigId = Number(createdConfig.lastInsertRowid);
-    }
-    if (roundCloserConfigId != null && roundCloserAvatarPath != null) {
+    insertAssistantConfig.run({
+      id: ROUND_CLOSER_CONTACT_ID,
+      name: roundCloserName,
+      avatarPath: roundCloserAvatarPath,
+      systemPrompt: roundCloserPrompt,
+      skillsJson: JSON.stringify({}),
+      modelsJson: JSON.stringify(Array.isArray(models) ? models : []),
+      updatedAt: base,
+      engineType: "pi",
+    });
+    if (roundCloserAvatarPath != null) {
       updateAssistantConfigAvatar.run({
-        id: roundCloserConfigId,
+        id: ROUND_CLOSER_CONTACT_ID,
         avatarPath: roundCloserAvatarPath,
         updatedAt: base,
       });
     }
-    if (roundCloserConfigId != null) {
-      updateAssistantConfigSkills.run({
-        id: roundCloserConfigId,
-        skillsJson: JSON.stringify({}),
-        updatedAt: base,
-      });
-    }
+    updateAssistantConfigSkills.run({
+      id: ROUND_CLOSER_CONTACT_ID,
+      skillsJson: JSON.stringify({}),
+      updatedAt: base,
+    });
 
     const roundContactInserted = insertContact.run({
       id: ROUND_CLOSER_CONTACT_ID,
       type: "bot",
       name: roundCloserName,
       avatarPath: roundCloserAvatarPath,
-      assistantConfigId: roundCloserConfigId || 1,
       isDefault: 0,
       createdAt,
       updatedAt: base,

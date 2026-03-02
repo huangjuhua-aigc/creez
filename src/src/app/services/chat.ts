@@ -124,6 +124,8 @@ export async function fetchChatMessages(chatId: string, chatName: string, avatar
 
 export type AgentEventPayload = {
   type: string;
+  /** When set, event is for this chat; frontend routes to the matching chat only. */
+  chatId?: string | null;
   message?: {
     role?: string;
     content?: string | Array<{ type?: string; text?: string }>;
@@ -163,7 +165,12 @@ export function initAgent(payload: {
   window.electron?.agent?.init(payload);
 }
 
-export async function switchAgentModel(payload: { provider: string; modelId: string; apiKey: string }): Promise<boolean> {
+export async function switchAgentModel(payload: {
+  chatId: string | null;
+  provider: string;
+  modelId: string;
+  apiKey: string;
+}): Promise<boolean> {
   const api = window.electron?.agent;
   if (!api || typeof api.setModel !== "function") return false;
   const result = await api.setModel(payload);
@@ -171,11 +178,13 @@ export async function switchAgentModel(payload: { provider: string; modelId: str
 }
 
 export function sendAgentPrompt(payload: {
+  chatId: string | null;
   text: string;
   images?: Array<{ type: "image"; data: string; mimeType?: string }>;
 }) {
   if (typeof console?.log === "function") {
     console.log("[creezv2 renderer] sendAgentPrompt", {
+      chatId: payload.chatId ?? null,
       textLen: payload.text?.length ?? 0,
       imageCount: payload.images?.length ?? 0,
     });
@@ -183,8 +192,8 @@ export function sendAgentPrompt(payload: {
   window.electron?.agent?.prompt(payload);
 }
 
-export function abortAgentPrompt() {
-  window.electron?.agent?.abort();
+export function abortAgentPrompt(chatId: string | null) {
+  window.electron?.agent?.abort(chatId ?? "");
 }
 
 export async function saveAttachment(buffer: ArrayBuffer, fileName: string): Promise<{ ok: true; path: string } | { ok: false; error: { message?: string } }> {

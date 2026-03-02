@@ -8,16 +8,18 @@ const { BUILTIN_SKILL_IDS } = require("../../builtinSkillIds.cjs");
 
 function isKnowledgeSearchEnabled(runtimeContext = {}) {
   const allowDefault = String(process.env.CREEZ_ENABLE_DEFAULT_BOT_KNOWLEDGE || "") === "1";
-  const assistantConfigId = Number(runtimeContext?.assistantConfigId || 0);
+  const assistantConfigId = runtimeContext?.assistantConfigId;
+  const defaultContactId = runtimeContext?.defaultContactId;
   if (allowDefault) return true;
-  if (!Number.isFinite(assistantConfigId)) return false;
-  return assistantConfigId !== 1;
+  if (assistantConfigId == null || defaultContactId == null) return false;
+  return String(assistantConfigId) !== String(defaultContactId);
 }
 
 function isVcLeadCaptureEnabled(runtimeContext = {}) {
-  const assistantConfigId = Number(runtimeContext?.assistantConfigId || 0);
-  if (!Number.isFinite(assistantConfigId)) return false;
-  return assistantConfigId !== 1;
+  const assistantConfigId = runtimeContext?.assistantConfigId;
+  const defaultContactId = runtimeContext?.defaultContactId;
+  if (assistantConfigId == null || defaultContactId == null) return false;
+  return String(assistantConfigId) !== String(defaultContactId);
 }
 
 function createBuiltinSkillRegistry() {

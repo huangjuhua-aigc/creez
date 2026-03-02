@@ -21,11 +21,8 @@ const { BUILTIN_SKILL_IDS } = require("./builtinSkillIds.cjs");
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT_DIR = path.join(RUNNER_DIR, "..", "..");
 
-let sessionRef = null;
-let unsubscribe = null;
-let senderRef = null;
-let errorNotifiedThisTurn = false;
-let authStorageRef = null;
+/** Sessions keyed by chatId so multiple bots can reply concurrently. */
+const sessionsByChatId = new Map();
 const DEBUG_AGENT = false;
 
 function log(scope, details) {
@@ -67,25 +64,30 @@ function resolveModel(provider, modelId) {
 }
 
 export async function createAndSubscribe(sender, config) {
-  if (unsubscribe) {
-    unsubscribe();
-    unsubscribe = null;
-  }
-  sessionRef = null;
-
   const {
     provider,
     modelId,
     apiKey,
     contactId,
     assistantConfigId,
+    defaultContactId,
     workDir,
     agentDir,
     assistantConfig,
     memoryContent,
     memoryPath,
-    chatId,
+    chatId: configChatId,
   } = config;
+  const chatId = configChatId != null && String(configChatId).trim() !== "" ? String(configChatId).trim() : null;
+  const sessionKey = chatId ?? "";
+
+  const existing = sessionsByChatId.get(sessionKey);
+  if (existing?.unsubscribe) {
+    existing.unsubscribe();
+    existing.unsubscribe = null;
+  }
+  sessionsByChatId.delete(sessionKey);
+
   const cwd = workDir || process.cwd();
   const resolvedAgentDir = agentDir || path.join(process.cwd(), ".creez");
   log("create:start", {
@@ -100,7 +102,6 @@ export async function createAndSubscribe(sender, config) {
   const authPath = path.join(resolvedAgentDir, "auth.json");
   const authStorage = new AuthStorage(authPath);
   authStorage.setRuntimeApiKey(provider, apiKey);
-  authStorageRef = authStorage;
 
   const modelRegistry = new ModelRegistry(authStorage);
   const model = resolveModel(provider, modelId);
@@ -125,10 +126,11 @@ export async function createAndSubscribe(sender, config) {
     runtimeContext: {
       contactId: contactId || null,
       assistantConfigId: assistantConfigId || null,
+      defaultContactId: defaultContactId || null,
       chatId: chatId || null,
     },
     onEvent: (builtinEv) => {
-      sender.send("agent:event", builtinEv);
+      sender.send("agent:event", { ...builtinEv, chatId: chatId ?? undefined });
     },
     replyInstructions,
   });
@@ -173,9 +175,8 @@ export async function createAndSubscribe(sender, config) {
     log("create:system-prompt", { length: systemPrompt.length });
   }
 
-  sessionRef = session;
-  senderRef = sender;
-  unsubscribe = session.subscribe((ev) => {
+  let errorNotifiedThisTurn = false;
+  const unsubscribe = session.subscribe((ev) => {
     try {
       const role = ev.message?.role || "";
       const toolName = ev.toolName || ev.message?.toolName || "";
@@ -186,15 +187,16 @@ export async function createAndSubscribe(sender, config) {
             ? String(ev.message.content.find((c) => c?.type === "text")?.text || "").length
             : 0;
       if (ev.type !== "message_update") {
-        log("event", { type: ev.type, role, toolName, textLen });
+        log("event", { type: ev.type, role, toolName, textLen, chatId: chatId || null });
       }
       const errorMsg = ev.isError ?? ev.message?.errorMessage ?? null;
       if (errorMsg) {
         log("event:error", errorMsg);
         const shouldNotify =
           typeof errorMsg === "string" &&
-          senderRef &&
-          !senderRef.isDestroyed() &&
+          sender &&
+          typeof sender.isDestroyed === "function" &&
+          !sender.isDestroyed() &&
           ((ev.type === "message_end" && ev.message?.role === "assistant") || ev.type === "agent_end");
         if (shouldNotify && !errorNotifiedThisTurn) {
           sender.send("agent:eventError", errorMsg);
@@ -202,34 +204,41 @@ export async function createAndSubscribe(sender, config) {
         }
       }
       if (ev.type === "agent_end") errorNotifiedThisTurn = false;
-      sender.send("agent:event", serializeEvent(ev));
+      sender.send("agent:event", { ...serializeEvent(ev), chatId: chatId ?? undefined });
     } catch (error) {
       const msg = error?.message || String(error);
       console.error("[creezv2 agent-runner] event forward error:", msg);
     }
   });
 
-  sender.send("agent:event", { type: "agent_ready" });
-  log("create:ready", "");
+  sessionsByChatId.set(sessionKey, { session, unsubscribe, authStorage });
+  console.log("[creez:flow] agent-runner agent_ready sent", { chatId: chatId ?? null, sessionKey });
+  sender.send("agent:event", { type: "agent_ready", chatId: chatId ?? undefined });
+  log("create:ready", { chatId: chatId || null });
 }
 
 export async function prompt(payload) {
-  if (!sessionRef) return;
+  const chatId = payload?.chatId != null && String(payload.chatId).trim() !== "" ? String(payload.chatId).trim() : "";
+  const entry = sessionsByChatId.get(chatId);
+  if (!entry?.session) return;
   const { text, images } = payload || {};
   if (!text && (!images || images.length === 0)) return;
   log("prompt:start", {
+    chatId: chatId || null,
     textLen: String(text || "").length,
     imageCount: Array.isArray(images) ? images.length : 0,
   });
-  await sessionRef.prompt(text || "", {
+  await entry.session.prompt(text || "", {
     images: Array.isArray(images) ? images : [],
     expandPromptTemplates: false,
   });
-  log("prompt:end", "");
+  log("prompt:end", { chatId: chatId || null });
 }
 
-export async function setModel(config) {
-  if (!sessionRef) return false;
+export async function setModel(chatId, config) {
+  const key = chatId != null && String(chatId).trim() !== "" ? String(chatId).trim() : "";
+  const entry = sessionsByChatId.get(key);
+  if (!entry?.session) return false;
   const provider = String(config?.provider || "").trim();
   const modelId = String(config?.modelId || "").trim();
   const apiKey = String(config?.apiKey || "").trim();
@@ -241,31 +250,36 @@ export async function setModel(config) {
     return false;
   }
 
-  if (authStorageRef) {
-    authStorageRef.setRuntimeApiKey(provider, apiKey);
+  if (entry.authStorage) {
+    entry.authStorage.setRuntimeApiKey(provider, apiKey);
   }
-  await sessionRef.setModel(model);
-  log("setModel:ok", { provider, modelId });
+  await entry.session.setModel(model);
+  log("setModel:ok", { provider, modelId, chatId: key || null });
   return true;
 }
 
-export function abort() {
-  if (sessionRef?.agent) {
-    log("abort", "abort requested");
-    sessionRef.agent.abort();
+export function abort(chatId) {
+  const key = chatId != null && String(chatId).trim() !== "" ? String(chatId).trim() : "";
+  const entry = sessionsByChatId.get(key);
+  if (entry?.session?.agent) {
+    log("abort", { chatId: key || null });
+    entry.session.agent.abort();
   }
 }
 
-export function hasSession() {
-  return Boolean(sessionRef);
+export function hasSession(chatId) {
+  if (chatId != null && String(chatId).trim() !== "") {
+    return Boolean(sessionsByChatId.get(String(chatId).trim()));
+  }
+  return sessionsByChatId.size > 0;
 }
 
 export function dispose() {
-  if (unsubscribe) {
-    unsubscribe();
-    unsubscribe = null;
+  for (const [id, entry] of sessionsByChatId.entries()) {
+    if (entry?.unsubscribe) {
+      entry.unsubscribe();
+      entry.unsubscribe = null;
+    }
   }
-  sessionRef = null;
-  senderRef = null;
-  authStorageRef = null;
+  sessionsByChatId.clear();
 }

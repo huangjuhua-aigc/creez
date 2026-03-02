@@ -120,7 +120,8 @@
       "dist/**/*",
       "electron/**/*",
       "icons/**/*",
-      "assets/**/*"
+      "assets/**/*",
+      "skills/**/*"
     ],
     "win": {
       "icon": "icons/icon_256x256.png",

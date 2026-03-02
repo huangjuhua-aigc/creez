@@ -187,8 +187,70 @@ function handleStartupFailure(error) {
 
 const isDebug = process.env.CREEZ_DEBUG === "1";
 
-function createWindow() {
-  startupLog("createWindow: start");
+/** Inline HTML for startup splash (spinner + text) to show while init runs. */
+function getSplashWindowHtml() {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Creez</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f0f0f;
+      color: #e0e0e0;
+    }
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid rgba(255,255,255,0.15);
+      border-top-color: #07C160;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .text {
+      margin-top: 20px;
+      font-size: 15px;
+      color: #999;
+    }
+  </style>
+</head>
+<body>
+  <div class="spinner" aria-hidden="true"></div>
+  <p class="text">正在启动 Creez…</p>
+</body>
+</html>`;
+}
+
+/** Load the main app (Vite dev or dist) into an existing window. */
+function loadMainAppInto(mainWindow) {
+  const basePath = app.isPackaged ? app.getAppPath() : path.join(__dirname, "..", "..");
+  const indexPath = path.join(basePath, "dist", "index.html");
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    mainWindow.loadURL(devServerUrl);
+  } else {
+    mainWindow.loadFile(indexPath);
+  }
+}
+
+/**
+ * Create main window. If loadSplash is true, show spinner and return (call loadMainAppInto later).
+ * If false, load main app immediately (e.g. for activate).
+ */
+function createWindow(loadSplash = false) {
+  startupLog("createWindow: start (loadSplash=" + loadSplash + ")");
   const basePath = app.isPackaged ? app.getAppPath() : path.join(__dirname, "..", "..");
   const iconPath = path.join(basePath, "icons", "icon_256x256.png");
   const preloadPath = path.join(basePath, "electron", "preload", "index.cjs");
@@ -220,11 +282,10 @@ function createWindow() {
     }
   });
 
-  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
-  if (devServerUrl) {
-    mainWindow.loadURL(devServerUrl);
+  if (loadSplash) {
+    mainWindow.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(getSplashWindowHtml()));
   } else {
-    mainWindow.loadFile(indexPath);
+    loadMainAppInto(mainWindow);
   }
 
   // DevTools shortcuts in desktop app:
@@ -248,6 +309,7 @@ function createWindow() {
     });
   }
   startupLog("createWindow: done");
+  return mainWindow;
 }
 
 app.whenReady().then(async () => {
@@ -257,6 +319,10 @@ app.whenReady().then(async () => {
     const creezHome = app.getPath("home");
     ensureCreezDirs(creezHome);
     startupLog("ensureCreezDirs done");
+
+    // Show window with spinner immediately so user sees progress during init
+    const mainWindow = createWindow(true);
+    startupLog("splash window shown");
 
     creezDb = new CreezDatabase({ homeDir: creezHome }).init();
     seedIfEmpty(creezDb.db, { homeDir: creezHome });
@@ -269,7 +335,21 @@ app.whenReady().then(async () => {
     const skillManager = new SkillManager({ homeDir: creezHome });
 
     const { ensureBundledSkillsInConfig } = require("./ensureSkillsConfig.cjs");
-    await ensureBundledSkillsInConfig(skillManager, assistantConfigRepository);
+    const defaultContactId = contactRepository.getDefaultAssistantConfigId();
+    await ensureBundledSkillsInConfig(skillManager, assistantConfigRepository, defaultContactId);
+
+    // Sync default bot's model config (with API key) to all other bots so RoundCloser etc. have correct config in DB
+    const rawDefault = assistantConfigRepository.getRawConfigById(defaultContactId);
+    if (rawDefault?.models?.length && typeof contactRepository.getNonDefaultBotAssistantConfigIds === "function") {
+      const otherIds = contactRepository.getNonDefaultBotAssistantConfigIds();
+      for (const configId of otherIds) {
+        try {
+          assistantConfigRepository.saveConfigById(configId, { models: rawDefault.models });
+        } catch (e) {
+          if (typeof console?.warn === "function") console.warn("[creez] syncAllBotModelConfigFromDefault", configId, e?.message || e);
+        }
+      }
+    }
 
     const appStateStore = new AppStateStore({ repository: appStateRepository, homeDir: creezHome });
     registerAppStateIpc(ipcMain, appStateStore);
@@ -286,13 +366,13 @@ app.whenReady().then(async () => {
       creezHome,
     });
 
-    createWindow();
-    startupLog("after createWindow");
+    loadMainAppInto(mainWindow);
+    startupLog("after loadMainAppInto");
     startSyncPullTask(contactRepository);
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
+        createWindow(false);
       }
     });
   } catch (error) {

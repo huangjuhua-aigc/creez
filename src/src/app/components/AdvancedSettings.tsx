@@ -86,7 +86,7 @@ function IdentitySettings() {
   const [systemPrompt, setSystemPrompt] = useState('You are a helpful, professional AI assistant. You answer questions concisely and accurately.');
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
   const [avatarDisplaySrc, setAvatarDisplaySrc] = useState<string | null>(null);
-  const [workspaceDir, setWorkspaceDir] = useState('~/.user/creez/workplace');
+  const [workspaceDir, setWorkspaceDir] = useState('~/.creez/workplace');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {

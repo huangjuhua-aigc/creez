@@ -17,11 +17,11 @@ class ContactRepository {
   constructor(db) {
     this.db = db;
     this.getByIdStmt = db.prepare(
-      "SELECT id, type, name, avatar_path, assistant_config_id, is_default, updated_at FROM contacts WHERE id = ?"
+      "SELECT id, type, name, avatar_path, is_default, updated_at FROM contacts WHERE id = ?"
     );
   }
 
-  /** Get one contact by id. Returns null if not found. */
+  /** Get one contact by id. Returns null if not found. For bots, config id = contact id. */
   getById(contactId) {
     if (!contactId || typeof contactId !== "string") return null;
     const row = this.getByIdStmt.get(contactId.trim());
@@ -31,7 +31,7 @@ class ContactRepository {
       type: row.type,
       name: row.name,
       avatarPath: row.avatar_path || null,
-      assistantConfigId: row.assistant_config_id != null ? Number(row.assistant_config_id) : null,
+      assistantConfigId: row.id,
       isDefault: Boolean(row.is_default),
       updatedAt: row.updated_at,
     };
@@ -60,17 +60,30 @@ class ContactRepository {
   }
 
   /**
-   * Returns assistant_config ids for all bot contacts that are not the default (config id 1).
+   * Returns the contact id of the default bot (config id = contact id; user edits this in Settings).
+   */
+  getDefaultAssistantConfigId() {
+    const row = this.db
+      .prepare(
+        "SELECT id FROM contacts WHERE type = 'bot' AND is_default = 1 LIMIT 1"
+      )
+      .get();
+    const id = row?.id != null ? String(row.id).trim() : null;
+    return id || "11111111-1111-1111-1111-111111111111";
+  }
+
+  /**
+   * Returns contact ids of all bot contacts that are not the default bot (config id = contact id).
    * Used to sync model config from default bot to other bots (e.g. RoundCloser).
    */
   getNonDefaultBotAssistantConfigIds() {
+    const defaultContactId = this.getDefaultAssistantConfigId();
     const rows = this.db
       .prepare(
-        `SELECT DISTINCT assistant_config_id FROM contacts
-         WHERE type = 'bot' AND assistant_config_id IS NOT NULL AND assistant_config_id != 1`
+        `SELECT id FROM contacts WHERE type = 'bot' AND id != ?`
       )
-      .all();
-    return rows.map((r) => Number(r.assistant_config_id)).filter(Number.isFinite);
+      .all(defaultContactId);
+    return rows.map((r) => String(r.id)).filter(Boolean);
   }
 
   createBotFromTemplate(templateId) {
@@ -80,7 +93,8 @@ class ContactRepository {
     }
 
     const ts = nowTs();
-    const defaultConfigRow = this.db.prepare("SELECT * FROM assistant_config WHERE id = 1").get();
+    const defaultContactId = this.getDefaultAssistantConfigId();
+    const defaultConfigRow = this.db.prepare("SELECT * FROM assistant_config WHERE id = ?").get(defaultContactId);
     const defaultModels = Array.isArray(safeJsonParse(defaultConfigRow?.models_json, []))
       ? safeJsonParse(defaultConfigRow?.models_json, [])
       : [];
@@ -95,14 +109,14 @@ class ContactRepository {
 
     const insertConfig = this.db.prepare(`
       INSERT INTO assistant_config (
-        name, avatar_path, system_prompt, skills_json, models_json, updated_at, engine_type
+        id, name, avatar_path, system_prompt, skills_json, models_json, updated_at, engine_type
       ) VALUES (
-        @name, @avatarPath, @systemPrompt, @skillsJson, @modelsJson, @updatedAt, @engineType
+        @id, @name, @avatarPath, @systemPrompt, @skillsJson, @modelsJson, @updatedAt, @engineType
       )
     `);
     const insertContact = this.db.prepare(`
-      INSERT INTO contacts (id, type, name, avatar_path, assistant_config_id, is_default, created_at, updated_at)
-      VALUES (@id, 'bot', @name, @avatarPath, @assistantConfigId, 0, @createdAt, @updatedAt)
+      INSERT INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at)
+      VALUES (@id, 'bot', @name, @avatarPath, 0, @createdAt, @updatedAt)
     `);
     const insertChat = this.db.prepare(`
       INSERT INTO chats (id, contact_id, created_at, updated_at, last_message_at)
@@ -113,8 +127,12 @@ class ContactRepository {
       VALUES (@id, @chatId, 'assistant', @botId, @content, 'done', @modelUsed, @createdAt, @updatedAt)
     `);
 
+    const contactId = randomUUID();
+    const chatId = randomUUID();
+    const messageId = randomUUID();
     const tx = this.db.transaction(() => {
-      const insertConfigResult = insertConfig.run({
+      insertConfig.run({
+        id: contactId,
         name: assistantName,
         avatarPath: null,
         systemPrompt: assistantSystemPrompt,
@@ -127,17 +145,12 @@ class ContactRepository {
         updatedAt: ts,
         engineType: "pi",
       });
-      const assistantConfigId = Number(insertConfigResult.lastInsertRowid);
-      const contactId = randomUUID();
-      const chatId = randomUUID();
-      const messageId = randomUUID();
       const welcome = "你好，我是你的 VC 融资助手。可以先从电梯陈述、融资目标和关键数据开始。";
 
       insertContact.run({
         id: contactId,
         name: assistantName,
         avatarPath: null,
-        assistantConfigId,
         createdAt: ts,
         updatedAt: ts,
       });
@@ -157,7 +170,7 @@ class ContactRepository {
         createdAt: ts,
         updatedAt: ts,
       });
-      return { contactId, chatId, assistantConfigId, messageId, name: assistantName };
+      return { contactId, chatId, assistantConfigId: contactId, messageId, name: assistantName };
     });
 
     return tx();

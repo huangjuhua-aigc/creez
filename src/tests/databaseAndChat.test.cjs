@@ -45,7 +45,7 @@ test("seed ensures default bot contact/chat/message exist", async () => {
 
   const first = seedIfEmpty(dbWrapper.db);
   assert.equal(first.seeded, true);
-  assert.equal(first.botContactId, "0d9f5d8a-4c7e-4f2a-9d6a-2b3a1a5e7c11");
+  assert.equal(first.botContactId, "11111111-1111-1111-1111-111111111111");
   assert.equal(first.botChatId, "1f2e3d4c-5b6a-47d8-9c01-23456789abcd");
   assert.equal(first.roundCloserContactId, "a3e6d3f0-9d91-4dc0-8f84-7f3ca8a0619c");
   assert.equal(first.roundCloserChatId, "2a946572-93e6-4f9d-95bc-c6658ee319cd");
@@ -58,7 +58,7 @@ test("seed ensures default bot contact/chat/message exist", async () => {
   assert.equal(Number(contactCount.count) >= 2, true);
 
   const botMessage = dbWrapper.db.prepare("SELECT bot_id FROM messages WHERE id = ?").get("2a3b4c5d-6e7f-48a9-b012-3456789abcde");
-  assert.equal(botMessage.bot_id, "0d9f5d8a-4c7e-4f2a-9d6a-2b3a1a5e7c11");
+  assert.equal(botMessage.bot_id, "11111111-1111-1111-1111-111111111111");
   const roundMessage = dbWrapper.db.prepare("SELECT bot_id, content FROM messages WHERE id = ?").get("2de4e355-c80d-4aea-b510-ed45d5f5647d");
   assert.equal(roundMessage.bot_id, "a3e6d3f0-9d91-4dc0-8f84-7f3ca8a0619c");
   assert.equal(String(roundMessage.content || "").includes("Hi, I’m RoundCloser"), true);

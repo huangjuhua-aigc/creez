@@ -342,6 +342,65 @@ const MIGRATIONS = [
       VALUES (1, CAST(strftime('%s', 'now') AS INTEGER), 'pi');
     `,
   },
+  {
+    version: 8,
+    name: "assistant_config_id_equals_contact_id",
+    sql: `
+      CREATE TABLE assistant_config_new (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL DEFAULT 'Assistant',
+        avatar_path TEXT,
+        system_prompt TEXT,
+        skills_json TEXT NOT NULL DEFAULT '{}',
+        models_json TEXT NOT NULL DEFAULT '[]',
+        updated_at INTEGER NOT NULL,
+        engine_type TEXT NOT NULL DEFAULT 'pi'
+      );
+
+      INSERT INTO assistant_config_new (id, name, avatar_path, system_prompt, skills_json, models_json, updated_at, engine_type)
+      SELECT
+        c.id,
+        ac.name,
+        ac.avatar_path,
+        ac.system_prompt,
+        ac.skills_json,
+        ac.models_json,
+        ac.updated_at,
+        COALESCE(NULLIF(TRIM(ac.engine_type), ''), 'pi')
+      FROM contacts c
+      JOIN assistant_config ac ON ac.id = c.assistant_config_id
+      WHERE c.type = 'bot' AND c.assistant_config_id IS NOT NULL;
+
+      DROP TABLE assistant_config;
+      ALTER TABLE assistant_config_new RENAME TO assistant_config;
+
+      CREATE TABLE contacts_new (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL DEFAULT 'bot' CHECK(type IN ('bot','human','group')),
+        name TEXT NOT NULL,
+        avatar_path TEXT,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      INSERT INTO contacts_new (id, type, name, avatar_path, is_default, created_at, updated_at)
+      SELECT id, type, name, avatar_path, is_default, created_at, updated_at FROM contacts;
+      DROP TABLE contacts;
+      ALTER TABLE contacts_new RENAME TO contacts;
+      CREATE INDEX IF NOT EXISTS idx_contacts_type ON contacts(type);
+      CREATE INDEX IF NOT EXISTS idx_contacts_default ON contacts(is_default DESC, updated_at DESC);
+    `,
+  },
+  {
+    version: 9,
+    name: "default_bot_id_to_fixed_uuid",
+    sql: `
+      UPDATE contacts SET id = '11111111-1111-1111-1111-111111111111' WHERE id = '0d9f5d8a-4c7e-4f2a-9d6a-2b3a1a5e7c11';
+      UPDATE assistant_config SET id = '11111111-1111-1111-1111-111111111111' WHERE id = '0d9f5d8a-4c7e-4f2a-9d6a-2b3a1a5e7c11';
+      UPDATE chats SET contact_id = '11111111-1111-1111-1111-111111111111' WHERE contact_id = '0d9f5d8a-4c7e-4f2a-9d6a-2b3a1a5e7c11';
+      UPDATE messages SET bot_id = '11111111-1111-1111-1111-111111111111' WHERE bot_id = '0d9f5d8a-4c7e-4f2a-9d6a-2b3a1a5e7c11';
+    `,
+  },
 ];
 
 module.exports = {

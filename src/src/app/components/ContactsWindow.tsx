@@ -8,7 +8,7 @@ interface ContactsWindowProps {
   onStartChat?: (contactId: number | string) => void;
 }
 
-const BOT_CONTACT_ID = '0d9f5d8a-4c7e-4f2a-9d6a-2b3a1a5e7c11';
+const BOT_CONTACT_ID = '11111111-1111-1111-1111-111111111111';
 const BOT_CHAT_ID = '1f2e3d4c-5b6a-47d8-9c01-23456789abcd';
 
 export function ContactsWindow({ onStartChat }: ContactsWindowProps) {

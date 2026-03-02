@@ -267,6 +267,8 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   const initInFlightRef = useRef<Promise<boolean> | null>(null);
   const initResolveRef = useRef<((ok: boolean) => void) | null>(null);
   const initRejectRef = useRef<((error: Error) => void) | null>(null);
+  /** Chat we're currently initializing for; agent_ready is accepted for this chat even if user switched away. */
+  const pendingInitChatIdRef = useRef<string | null>(null);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const activeToolMessageIdRef = useRef<string | null>(null);
   const streamedTextRef = useRef<string>("");
@@ -278,6 +280,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   const [isStreaming, setIsStreaming] = useState(false);
   const [waitingDots, setWaitingDots] = useState("·");
   const isStreamingRef = useRef(false);
+  const selectedChatIdRef = useRef(selectedChatId);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const activeToolCallsRef = useRef<ToolCall[]>([]);
 
@@ -401,6 +404,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         initRejectRef.current = null;
         initResolveRef.current = null;
         initInFlightRef.current = null;
+        pendingInitChatIdRef.current = null;
       }
       const assistantId = activeAssistantMessageIdRef.current;
       if (assistantId) {
@@ -444,13 +448,16 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
           prev.map((c) => (c.id === errChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
         );
       }
+      const errorInCurrentChat = errChatId == null || errChatId === selectedChatIdRef.current;
       activeAssistantMessageIdRef.current = null;
       activeToolMessageIdRef.current = null;
       activeToolCallsRef.current = [];
       streamedTextRef.current = "";
       activeStreamChatIdRef.current = null;
       activeStreamBotIdRef.current = null;
-      setIsStreaming(false);
+      if (errorInCurrentChat) {
+        setIsStreaming(false);
+      }
     });
     return () => {
       offEvent();
@@ -468,11 +475,17 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     initInFlightRef.current = null;
     initResolveRef.current = null;
     initRejectRef.current = null;
+    pendingInitChatIdRef.current = null;
   }, [selectedModelId]);
 
   useEffect(() => {
     isStreamingRef.current = isStreaming;
   }, [isStreaming]);
+  useEffect(() => {
+    selectedChatIdRef.current = selectedChatId;
+    const streamingHere = activeStreamChatIdRef.current != null && activeStreamChatIdRef.current === selectedChatId;
+    setIsStreaming(streamingHere);
+  }, [selectedChatId]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -699,9 +712,34 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   };
 
   const handleIncomingAgentEvent = (event: AgentEventPayload) => {
+    const eventChatId = event.chatId ?? null;
+    const currentSelectedChatId = selectedChatIdRef.current;
+    const pendingInitChatId = pendingInitChatIdRef.current ?? null;
+    const isForPendingInit =
+      event.type === "agent_ready" &&
+      initResolveRef.current != null &&
+      (eventChatId == null || pendingInitChatId == null || String(eventChatId) === String(pendingInitChatId));
+    const isForOtherChat =
+      eventChatId != null &&
+      currentSelectedChatId != null &&
+      String(eventChatId) !== String(currentSelectedChatId) &&
+      !isForPendingInit;
+    if (isForOtherChat) {
+      if (event.type === "message_end" && event.message?.role === "assistant") {
+        const finalText = parseAssistantText(event.message?.content) || "";
+        if (finalText) {
+          const preview = finalText.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
+          setChatList((prev) =>
+            prev.map((c) => (c.id === eventChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
+          );
+        }
+      }
+      return;
+    }
     if (event.type !== "message_update") {
       chatLog("agent:event", {
         type: event.type,
+        chatId: eventChatId ?? null,
         role: event.message?.role || "",
         toolName: event.toolName || event.message?.toolName || "",
       });
@@ -711,12 +749,18 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       case "message_start":
         return;
       case "agent_ready":
+        console.log("[creez:flow] agent_ready applied", {
+          eventChatId,
+          currentSelectedChatId,
+          pendingInitChatId: pendingInitChatIdRef.current ?? null,
+        });
         agentReadyRef.current = true;
         if (initResolveRef.current) {
           initResolveRef.current(true);
           initResolveRef.current = null;
           initRejectRef.current = null;
           initInFlightRef.current = null;
+          pendingInitChatIdRef.current = null;
         }
         return;
       case "message_update": {
@@ -778,7 +822,9 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
             prev.map((c) => (c.id === endChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
           );
         }
-        setIsStreaming(false);
+        if (endChatId == null || endChatId === currentSelectedChatId) {
+          setIsStreaming(false);
+        }
         activeAssistantMessageIdRef.current = null;
         activeToolMessageIdRef.current = null;
         streamedTextRef.current = "";
@@ -829,7 +875,18 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   const ensureAgentInitialized = async (): Promise<boolean> => {
     const currentChat = chatList.find((c) => c.id === selectedChatId);
     const contactId = currentChat?.contactId ?? null;
+    console.log("[creez:flow] ensureAgentInitialized start", {
+      selectedChatId,
+      contactId,
+      hasCurrentChat: Boolean(currentChat),
+    });
     const config = await fetchAssistantConfig({ contactId });
+    console.log("[creez:flow] ensureAgentInitialized config", {
+      contactId,
+      modelCount: config.models?.length ?? 0,
+      modelIds: (config.models || []).map((m) => m?.id).filter(Boolean),
+      selectedModelId,
+    });
     chatLog("agent:init:config", {
       modelCount: config.models?.length ?? 0,
       selectedModelId,
@@ -838,14 +895,26 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     const targetModel =
       config.models.find((item) => item.id === selectedModelId) || config.models.find((item) => item.active) || config.models[0];
     if (!targetModel?.id || !targetModel.model || !targetModel.provider) {
+      console.log("[creez:flow] ensureAgentInitialized fail: no targetModel or missing id/model/provider", {
+        contactId,
+        hasTargetModel: Boolean(targetModel),
+        targetModelId: targetModel?.id,
+        targetModelProvider: targetModel?.provider,
+        targetModelModel: targetModel?.model,
+      });
       chatLog("agent:init:skip", "no targetModel or missing id/model/provider");
       return false;
     }
     const apiKey = await fetchModelApiKey(targetModel.id, { contactId });
     if (!apiKey) {
+      console.log("[creez:flow] ensureAgentInitialized fail: fetchModelApiKey returned empty", {
+        contactId,
+        modelId: targetModel.id,
+      });
       chatLog("agent:init:skip", { reason: "fetchModelApiKey returned empty", modelId: targetModel.id });
       return false;
     }
+    console.log("[creez:flow] ensureAgentInitialized has apiKey", { contactId, modelId: targetModel.id });
 
     const appState = await (window as any).electron?.app?.getState?.();
     const workDir = appState?.ok ? appState.data.workspaceRoot : null;
@@ -878,6 +947,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         modelConfigId: targetModel.id,
       });
       const changed = await switchAgentModel({
+        chatId: selectedChatId ?? null,
         provider: String(targetModel.provider),
         modelId: String(targetModel.model),
         apiKey,
@@ -904,6 +974,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       hasApiKey: Boolean(apiKey),
     });
     agentReadyRef.current = false;
+    pendingInitChatIdRef.current = selectedChatId ?? null;
     initAgent({
       modelConfigId: targetModel.id,
       provider: String(targetModel.provider),
@@ -921,26 +992,44 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       initRejectRef.current = reject;
       window.setTimeout(() => {
         if (!agentReadyRef.current) {
+          console.log("[creez:flow] ensureAgentInitialized fail: timeout (no agent_ready)", {
+            contactId,
+            chatId: selectedChatId,
+          });
           reject(new Error("Agent init timeout. No agent_ready received."));
         }
       }, 10000);
     });
     initInFlightRef.current = waitReady;
     try {
-      return await waitReady;
+      const ok = await waitReady;
+      if (ok) console.log("[creez:flow] ensureAgentInitialized ok", { contactId, chatId: selectedChatId });
+      return ok;
     } catch (error) {
+      console.log("[creez:flow] ensureAgentInitialized fail: timeout or error", {
+        contactId,
+        chatId: selectedChatId,
+        message: (error as Error)?.message || String(error),
+      });
       chatLog("agent:init:timeout-or-error", (error as Error)?.message || String(error));
       return false;
     } finally {
       initInFlightRef.current = null;
       initResolveRef.current = null;
       initRejectRef.current = null;
+      pendingInitChatIdRef.current = null;
     }
   };
 
   const stopStreaming = () => {
+    const currentChatId = selectedChatIdRef.current;
+    const streamingChatId = activeStreamChatIdRef.current;
+    if (!streamingChatId || streamingChatId !== currentChatId) {
+      setIsStreaming(false);
+      return;
+    }
     chatLog("agent:abort", "stop button clicked");
-    abortAgentPrompt();
+    abortAgentPrompt(streamingChatId);
     if (activeAssistantMessageIdRef.current) {
       void updateChatMessage({
         id: activeAssistantMessageIdRef.current,
@@ -951,22 +1040,19 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         updatedAt: Math.floor(Date.now() / 1000),
       });
     }
-    const stopChatId = activeStreamChatIdRef.current;
-    if (stopChatId) {
-      void appendChatMessage({
-        id: `${Date.now()}-system-stop`,
-        chatId: stopChatId,
-        sender: "system",
-        content: "Response stopped.",
-        status: "done",
-        createdAt: Math.floor(Date.now() / 1000),
-        updatedAt: Math.floor(Date.now() / 1000),
-      });
-      const preview = (streamedTextRef.current || "Response stopped.").slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
-      setChatList((prev) =>
-        prev.map((c) => (c.id === stopChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
-      );
-    }
+    void appendChatMessage({
+      id: `${Date.now()}-system-stop`,
+      chatId: streamingChatId,
+      sender: "system",
+      content: "Response stopped.",
+      status: "done",
+      createdAt: Math.floor(Date.now() / 1000),
+      updatedAt: Math.floor(Date.now() / 1000),
+    });
+    const preview = (streamedTextRef.current || "Response stopped.").slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
+    setChatList((prev) =>
+      prev.map((c) => (c.id === streamingChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
+    );
     setIsStreaming(false);
     activeAssistantMessageIdRef.current = null;
     activeToolMessageIdRef.current = null;
@@ -977,7 +1063,9 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   };
 
   const handleSend = async () => {
-    if (isStreamingRef.current) {
+    const currentChatId = selectedChatIdRef.current;
+    const streamingThisChat = activeStreamChatIdRef.current != null && activeStreamChatIdRef.current === currentChatId;
+    if (streamingThisChat) {
       stopStreaming();
       return;
     }
@@ -1073,7 +1161,25 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       return;
     }
 
-    abortAgentPrompt();
+    const prevStreamChatId = activeStreamChatIdRef.current;
+    const prevAssistantId = activeAssistantMessageIdRef.current;
+    const prevContent = streamedTextRef.current || "";
+    if (prevStreamChatId === activeChat.id) {
+      abortAgentPrompt(activeChat.id);
+    } else if (prevStreamChatId && prevAssistantId) {
+      const savedContent = prevContent || "(对方正在回复中…)";
+      void updateChatMessage({
+        id: prevAssistantId,
+        content: savedContent,
+        status: "done",
+        toolCalls: activeToolCallsRef.current?.length ? activeToolCallsRef.current : undefined,
+        updatedAt: Math.floor(Date.now() / 1000),
+      });
+      const preview = savedContent.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
+      setChatList((prev) =>
+        prev.map((c) => (c.id === prevStreamChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
+      );
+    }
     streamedTextRef.current = "";
     activeToolMessageIdRef.current = null;
     activeToolCallsRef.current = [];
@@ -1125,6 +1231,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     );
 
     sendAgentPrompt({
+      chatId: selectedChatId ?? null,
       text: contentWithPaths,
       images,
     });

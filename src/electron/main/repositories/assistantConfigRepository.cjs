@@ -36,7 +36,6 @@ function normalizeModel(model) {
 class AssistantConfigRepository {
   constructor(db) {
     this.db = db;
-    this.getStmt = db.prepare("SELECT * FROM assistant_config WHERE id = 1");
     this.getByIdStmt = db.prepare("SELECT * FROM assistant_config WHERE id = ?");
     this.insertIfMissingStmt = db.prepare(`
       INSERT OR IGNORE INTO assistant_config (
@@ -74,25 +73,15 @@ class AssistantConfigRepository {
     };
   }
 
-  getRawConfig() {
-    const row = this.getStmt.get();
-    return this._rowToRawConfig(row) || {
-      id: 1,
-      ...DEFAULT_CONFIG,
-    };
-  }
-
-  /** Get config by primary key (for contact's assistant_config_id). Returns null if not found. */
-  getRawConfigById(assistantConfigId) {
-    const id = assistantConfigId != null ? Number(assistantConfigId) : 1;
-    if (Number.isNaN(id)) return null;
+  /**
+   * Get config by id (contact id = config id for bots). Returns null if not found.
+   * @param {string|number|null} configOrContactId - Bot contact id (TEXT) or legacy integer id.
+   */
+  getRawConfigById(configOrContactId) {
+    const id = configOrContactId != null ? String(configOrContactId) : null;
+    if (!id || id.trim() === "") return null;
     const row = this.getByIdStmt.get(id);
     return this._rowToRawConfig(row);
-  }
-
-  getConfig() {
-    const raw = this.getRawConfig();
-    return this._configWithMaskedModels(raw);
   }
 
   /** Get config by id for frontend/settings (masked apiKey). Returns null if not found. */
@@ -113,10 +102,11 @@ class AssistantConfigRepository {
     };
   }
 
-  getModelApiKey(modelId) {
+  getModelApiKey(modelId, defaultContactId) {
     const id = modelId != null ? String(modelId) : "";
     if (!id) return "";
-    const raw = this.getRawConfig();
+    const raw = defaultContactId ? this.getRawConfigById(defaultContactId) : null;
+    if (!raw) return "";
     const matched = raw.models.find((model) => model.id === id);
     return matched?.apiKey || "";
   }
@@ -129,10 +119,10 @@ class AssistantConfigRepository {
     return matched?.apiKey || "";
   }
 
-  saveConfigById(assistantConfigId, patch) {
-    const id = assistantConfigId != null ? Number(assistantConfigId) : 1;
-    if (!Number.isFinite(id) || id <= 0) {
-      throw new Error("assistantConfigId must be a positive number.");
+  saveConfigById(configOrContactId, patch) {
+    const id = configOrContactId != null ? String(configOrContactId) : null;
+    if (!id || id.trim() === "") {
+      throw new Error("configOrContactId (bot contact id) is required.");
     }
     const current = this.getRawConfigById(id) || { id, ...DEFAULT_CONFIG };
     const incoming = patch && typeof patch === "object" ? patch : {};

@@ -15,18 +15,15 @@ function err(code, message, details) {
 
 function resolveAssistantConfigId(payload, contactRepository) {
   const raw = payload && typeof payload === "object" ? payload : {};
-  if (raw.assistantConfigId != null) {
-    const id = Number(raw.assistantConfigId);
-    if (Number.isFinite(id) && id > 0) return id;
-  }
   if (raw.contactId && contactRepository && typeof contactRepository.getById === "function") {
     const contact = contactRepository.getById(String(raw.contactId));
-    if (contact?.assistantConfigId != null) {
-      const id = Number(contact.assistantConfigId);
-      if (Number.isFinite(id) && id > 0) return id;
-    }
+    if (contact) return contact.id;
   }
-  return 1;
+  if (raw.assistantConfigId != null && typeof raw.assistantConfigId === "string") {
+    const id = String(raw.assistantConfigId).trim();
+    if (id) return id;
+  }
+  return contactRepository?.getDefaultAssistantConfigId?.() ?? "11111111-1111-1111-1111-111111111111";
 }
 
 function inferExtFromDataUrl(dataUrl) {
@@ -66,15 +63,40 @@ async function saveAvatarFromDataUrl(payload, avatarDir) {
 function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, skillManager, contactRepository, options = {}) {
   const creezHome = options.creezHome ?? os.homedir();
   const avatarDir = path.join(creezHome, ".creez", "avatars");
+  const DEFAULT_BOT_ID = "11111111-1111-1111-1111-111111111111";
   ipcMain.handle(CHANNELS.SETTINGS_GET_ASSISTANT_CONFIG, async (_event, payload) => {
     try {
       const assistantConfigId = resolveAssistantConfigId(payload, contactRepository);
-      const config = assistantConfigRepository.getConfigById(assistantConfigId);
+      const defaultConfigId = contactRepository?.getDefaultAssistantConfigId?.() ?? DEFAULT_BOT_ID;
+      console.log("[creez:flow] getAssistantConfig", {
+        payloadContactId: payload?.contactId ?? null,
+        assistantConfigId,
+        defaultConfigId,
+      });
+      let config = assistantConfigRepository.getConfigById(assistantConfigId);
       if (!config) {
+        console.log("[creez:flow] getAssistantConfig NOT_FOUND", { assistantConfigId });
         return err("NOT_FOUND", "Assistant config not found.");
+      }
+      console.log("[creez:flow] getAssistantConfig found", {
+        assistantConfigId,
+        modelCount: config.models?.length ?? 0,
+        modelIds: (config.models || []).map((m) => m?.id).filter(Boolean),
+      });
+      // Non-default bots (e.g. RoundCloser) with empty models use default bot's config models so chat can start
+      if (assistantConfigId !== defaultConfigId && (!config.models || config.models.length === 0)) {
+        const defaultConfig = assistantConfigRepository.getConfigById(defaultConfigId);
+        console.log("[creez:flow] getAssistantConfig fallback to default", {
+          defaultConfigId,
+          defaultModelCount: defaultConfig?.models?.length ?? 0,
+        });
+        if (defaultConfig?.models?.length) {
+          config = { ...config, models: defaultConfig.models };
+        }
       }
       return ok(config);
     } catch (error) {
+      console.log("[creez:flow] getAssistantConfig error", { message: error?.message || String(error) });
       return err("DB_ERROR", "Failed to read assistant config", error?.message || String(error));
     }
   });
@@ -86,9 +108,23 @@ function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, sk
     }
     try {
       const assistantConfigId = resolveAssistantConfigId(payload, contactRepository);
-      const apiKey = assistantConfigRepository.getModelApiKeyFromConfig(assistantConfigId, modelId);
+      const defaultConfigId = contactRepository?.getDefaultAssistantConfigId?.() ?? DEFAULT_BOT_ID;
+      let apiKey = assistantConfigRepository.getModelApiKeyFromConfig(assistantConfigId, modelId);
+      const fromDefault = !apiKey && assistantConfigId !== defaultConfigId;
+      if (fromDefault) {
+        apiKey = assistantConfigRepository.getModelApiKeyFromConfig(defaultConfigId, modelId);
+      }
+      console.log("[creez:flow] getModelApiKey", {
+        payloadContactId: payload?.contactId ?? null,
+        assistantConfigId,
+        defaultConfigId,
+        modelId,
+        hasApiKey: Boolean(apiKey),
+        fromDefault,
+      });
       return ok({ modelId, apiKey });
     } catch (error) {
+      console.log("[creez:flow] getModelApiKey error", { message: error?.message || String(error) });
       return err("DB_ERROR", "Failed to read model API key", error?.message || String(error));
     }
   });
@@ -99,7 +135,8 @@ function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, sk
     }
     try {
       const assistantConfigId = resolveAssistantConfigId(payload, contactRepository);
-      if (assistantConfigId !== 1) {
+      const defaultConfigId = contactRepository?.getDefaultAssistantConfigId?.() ?? DEFAULT_BOT_ID;
+      if (assistantConfigId !== defaultConfigId) {
         return err("FORBIDDEN", "Only the default assistant config can be edited by the user.");
       }
       const sanitizedPayload = { ...payload };
@@ -110,11 +147,15 @@ function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, sk
       if (skillManager && saved?.skills && typeof saved.skills === "object") {
         await skillManager.syncEnabledSkills(saved.skills);
       }
-      // Temporary: when user updates model config, sync the same models to all other bots (e.g. RoundCloser).
-      if (Array.isArray(payload.models) && contactRepository?.getNonDefaultBotAssistantConfigIds) {
-        const otherConfigIds = contactRepository.getNonDefaultBotAssistantConfigIds();
-        for (const configId of otherConfigIds) {
-          assistantConfigRepository.saveConfigById(configId, { models: saved.models });
+      // Sync default bot's models (with API keys) to all other bots. Use raw config so apiKey is included
+      // (saveConfigById returns masked config; using saved.models would write empty apiKey).
+      if (contactRepository?.getNonDefaultBotAssistantConfigIds) {
+        const rawDefault = assistantConfigRepository.getRawConfigById(defaultConfigId);
+        if (rawDefault?.models?.length) {
+          const otherConfigIds = contactRepository.getNonDefaultBotAssistantConfigIds();
+          for (const configId of otherConfigIds) {
+            assistantConfigRepository.saveConfigById(configId, { models: rawDefault.models });
+          }
         }
       }
       return ok({ updated: true, updatedAt: Math.floor(Date.now() / 1000), config: saved });
@@ -126,7 +167,8 @@ function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, sk
   ipcMain.handle(CHANNELS.SETTINGS_UPLOAD_AVATAR, async (_event, payload) => {
     try {
       const assistantConfigId = resolveAssistantConfigId(payload, contactRepository);
-      if (assistantConfigId !== 1) {
+      const defaultConfigId = contactRepository?.getDefaultAssistantConfigId?.() ?? DEFAULT_BOT_ID;
+      if (assistantConfigId !== defaultConfigId) {
         return err("FORBIDDEN", "Only the default assistant config avatar can be changed by the user.");
       }
       const avatarPath = await saveAvatarFromDataUrl(payload, avatarDir);

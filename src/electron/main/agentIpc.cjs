@@ -57,6 +57,14 @@ function registerAgentIpc(ipcMain, deps = {}) {
   const agentDir = creezHome ? path.join(creezHome, ".creez") : path.join(os.homedir(), ".creez");
 
   ipcMain.on(CHANNELS.AGENT_INIT, async (event, payload) => {
+    console.log("[creez:flow] AGENT_INIT recv", {
+      contactId: payload?.contactId ?? null,
+      chatId: payload?.chatId ?? null,
+      modelConfigId: payload?.modelConfigId || null,
+      provider: payload?.provider || null,
+      modelId: payload?.modelId || null,
+      hasApiKey: Boolean(payload?.apiKey),
+    });
     log("agent:init:recv", {
       contactId: payload?.contactId ?? null,
       modelConfigId: payload?.modelConfigId || null,
@@ -66,7 +74,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
       hasApiKey: Boolean(payload?.apiKey),
     });
     try {
-      const { engine, rawConfig, assistantConfigId } = getEngineForContact(payload?.contactId, {
+      const { engine, rawConfig, assistantConfigId, defaultContactId } = getEngineForContact(payload?.contactId, {
         contactRepository,
         assistantConfigRepository,
       });
@@ -90,11 +98,21 @@ function registerAgentIpc(ipcMain, deps = {}) {
           if (apiKey) apiKeySource = "getModelApiKeyFromConfig";
         }
       }
-      if (!apiKey && payload?.modelConfigId && assistantConfigRepository?.getModelApiKey) {
-        apiKey = assistantConfigRepository.getModelApiKey(payload.modelConfigId);
+      if (!apiKey && payload?.modelConfigId && defaultContactId && assistantConfigRepository?.getModelApiKey) {
+        apiKey = assistantConfigRepository.getModelApiKey(payload.modelConfigId, defaultContactId);
         if (apiKey) apiKeySource = "getModelApiKey(default)";
       }
 
+      console.log("[creez:flow] AGENT_INIT resolved", {
+        assistantConfigId,
+        defaultContactId,
+        activeModelId: activeModel?.id ?? null,
+        provider,
+        modelId,
+        hasApiKey: Boolean(apiKey),
+        apiKeySource,
+        rawConfigModelCount: rawConfig?.models?.length ?? 0,
+      });
       log("agent:init:apiKey", {
         source: apiKeySource,
         hasApiKey: Boolean(apiKey),
@@ -116,6 +134,15 @@ function registerAgentIpc(ipcMain, deps = {}) {
       });
 
       if (!provider || !modelId || !apiKey) {
+        console.log("[creez:flow] AGENT_INIT invalid", {
+          contactId: payload?.contactId ?? null,
+          chatId: payload?.chatId ?? null,
+          hasProvider: Boolean(provider),
+          hasModelId: Boolean(modelId),
+          hasApiKey: Boolean(apiKey),
+          apiKeySource,
+          assistantConfigId,
+        });
         log("agent:init:invalid", {
           hasProvider: Boolean(provider),
           hasModelId: Boolean(modelId),
@@ -131,6 +158,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
         chatId: payload?.chatId ?? null,
         contactId: payload?.contactId ?? null,
         assistantConfigId,
+        defaultContactId: defaultContactId ?? null,
         assistantConfig: rawConfig,
         workDir,
         agentDir,
@@ -151,10 +179,10 @@ function registerAgentIpc(ipcMain, deps = {}) {
         },
       };
       await currentEngine.init(context);
-      log("agent:init:ok", { provider, modelId });
+      log("agent:init:ok", { provider, modelId, chatId: context.chatId ?? null });
       setImmediate(() => {
         if (currentSender && typeof currentSender.isDestroyed === "function" && !currentSender.isDestroyed()) {
-          currentSender.send(CHANNELS.AGENT_EVENT, { type: "agent_ready" });
+          currentSender.send(CHANNELS.AGENT_EVENT, { type: "agent_ready", chatId: context.chatId ?? undefined });
           log("agent:init:agent_ready:sent", "explicit agent_ready (setImmediate) from agentIpc");
         } else {
           log("agent:init:agent_ready:skip", "sender destroyed or missing");
@@ -169,27 +197,29 @@ function registerAgentIpc(ipcMain, deps = {}) {
   });
 
   ipcMain.on(CHANNELS.AGENT_PROMPT, async (event, payload) => {
+    const chatId = payload?.chatId ?? "";
     const textLen = String(payload?.text || "").length;
     const imageCount = Array.isArray(payload?.images) ? payload.images.length : 0;
-    log("agent:prompt:recv", { textLen, imageCount });
+    log("agent:prompt:recv", { chatId: chatId || null, textLen, imageCount });
     try {
       const engine = currentEngine || getPiEngine();
-      const hasSession = await engine.hasSession();
-      log("agent:prompt:session", { hasSession });
+      const hasSession = await engine.hasSession(chatId);
+      log("agent:prompt:session", { hasSession, chatId: chatId || null });
       if (!hasSession) {
-        log("agent:prompt:no-session", "Agent not initialized");
+        log("agent:prompt:no-session", "Agent not initialized for this chat");
         event.sender.send(CHANNELS.AGENT_EVENT_ERROR, "Agent not initialized.");
         return;
       }
       log("agent:prompt:engine.prompt:start", "");
       await engine.prompt({
+        chatId,
         text: payload?.text || "",
         images: normalizeImages(payload?.images),
       });
       log("agent:prompt:engine.prompt:done", "");
       log("agent:prompt:done", "prompt resolved");
       if (currentSender && typeof currentSender.isDestroyed === "function" && !currentSender.isDestroyed()) {
-        currentSender.send(CHANNELS.AGENT_EVENT, { type: "agent_end" });
+        currentSender.send(CHANNELS.AGENT_EVENT, { type: "agent_end", chatId: chatId || undefined });
         log("agent:prompt:agent_end:sent", "fallback agent_end after prompt done");
       }
     } catch (error) {
@@ -202,10 +232,11 @@ function registerAgentIpc(ipcMain, deps = {}) {
 
   ipcMain.handle(CHANNELS.AGENT_SET_MODEL, async (_event, payload) => {
     try {
+      const chatId = payload?.chatId ?? "";
       const provider = normalizeProvider(payload?.provider);
       const modelId = String(payload?.modelId || "").trim();
       const apiKey = String(payload?.apiKey || "").trim();
-      log("agent:setModel:recv", { provider, modelId, hasApiKey: Boolean(apiKey) });
+      log("agent:setModel:recv", { chatId: chatId || null, provider, modelId, hasApiKey: Boolean(apiKey) });
       if (!provider || !modelId || !apiKey) {
         return {
           ok: false,
@@ -213,13 +244,13 @@ function registerAgentIpc(ipcMain, deps = {}) {
         };
       }
       const engine = currentEngine || getPiEngine();
-      if (!(await engine.hasSession())) {
+      if (!(await engine.hasSession(chatId))) {
         return {
           ok: false,
           error: { code: "NO_SESSION", message: "Agent not initialized." },
         };
       }
-      const changed = await engine.setModel({ provider, modelId, apiKey });
+      const changed = await engine.setModel(chatId, { provider, modelId, apiKey });
       if (!changed) {
         return {
           ok: false,
@@ -240,11 +271,11 @@ function registerAgentIpc(ipcMain, deps = {}) {
     }
   });
 
-  ipcMain.on(CHANNELS.AGENT_ABORT, async () => {
-    log("agent:abort:recv", "");
+  ipcMain.on(CHANNELS.AGENT_ABORT, async (_event, chatId) => {
+    log("agent:abort:recv", { chatId: chatId ?? null });
     try {
       const engine = currentEngine || getPiEngine();
-      engine.abort();
+      engine.abort(chatId ?? "");
       log("agent:abort:ok", "");
     } catch {
       // Ignore abort failure.

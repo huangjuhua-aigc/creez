@@ -26,34 +26,36 @@ function registerEngine(engineType, engineInstance) {
 
 /**
  * Get the conversation engine and raw assistant config for the given contact.
- * If contactId is missing or contact not found, falls back to default config (id=1).
+ * Config id = contact id for bots.
  *
  * @param {string|null|undefined} contactId - Contact id (optional)
- * @param {{ contactRepository: { getById: (id) => any }, assistantConfigRepository: { getRawConfigById: (id) => any, getRawConfig: () => any } }} deps
- * @returns {{ engine: object, rawConfig: object, assistantConfigId: number }}
+ * @param {{ contactRepository: { getById: (id) => any, getDefaultAssistantConfigId: () => string } }, assistantConfigRepository: { getRawConfigById: (id) => any } }} deps
+ * @returns {{ engine: object, rawConfig: object, assistantConfigId: string, defaultContactId: string }}
  */
 function getEngineForContact(contactId, deps) {
   const contactRepo = deps?.contactRepository;
   const configRepo = deps?.assistantConfigRepository;
-  const defaultRaw = configRepo ? configRepo.getRawConfig() : { id: 1, engineType: "pi", models: [], skills: {}, name: "Assistant", avatar: null, systemPrompt: "" };
+  const defaultContactId = contactRepo?.getDefaultAssistantConfigId?.() ?? "11111111-1111-1111-1111-111111111111";
+  const defaultRaw = configRepo ? configRepo.getRawConfigById(defaultContactId) : null;
+  const fallbackRaw = { id: defaultContactId, engineType: "pi", models: [], skills: {}, name: "Assistant", avatar: null, systemPrompt: "" };
 
-  let assistantConfigId = 1;
-  let rawConfig = defaultRaw;
+  let assistantConfigId = defaultContactId;
+  let rawConfig = defaultRaw || fallbackRaw;
   let contactResolved = false;
 
   if (contactId && contactRepo) {
     const contact = contactRepo.getById(contactId);
-    if (contact && contact.assistantConfigId != null) {
-      assistantConfigId = contact.assistantConfigId;
+    if (contact) {
+      assistantConfigId = contact.id;
       contactResolved = true;
       if (configRepo) {
         const byId = configRepo.getRawConfigById(assistantConfigId);
         if (byId) rawConfig = byId;
       }
     }
-  } else if (configRepo) {
-    rawConfig = configRepo.getRawConfig();
-    assistantConfigId = rawConfig.id != null ? rawConfig.id : 1;
+  } else if (configRepo && defaultRaw) {
+    rawConfig = defaultRaw;
+    assistantConfigId = defaultContactId;
   }
 
   const engineType = (rawConfig.engineType && String(rawConfig.engineType).trim()) || "pi";
@@ -64,17 +66,17 @@ function getEngineForContact(contactId, deps) {
     else engine = getPiEngine(); // fallback to pi for unknown type
   }
 
-  if (typeof console?.log === "function") {
-    console.log("[creezv2 engineRegistry] getEngineForContact", {
-      contactId: contactId ?? null,
-      contactResolved,
-      assistantConfigId,
-      engineType,
-      modelCount: rawConfig?.models?.length ?? 0,
-    });
-  }
+  console.log("[creez:flow] getEngineForContact", {
+    contactId: contactId ?? null,
+    contactResolved,
+    assistantConfigId,
+    defaultContactId,
+    engineType,
+    modelCount: rawConfig?.models?.length ?? 0,
+    firstModelId: rawConfig?.models?.[0]?.id ?? null,
+  });
 
-  return { engine, rawConfig, assistantConfigId };
+  return { engine, rawConfig, assistantConfigId, defaultContactId };
 }
 
 module.exports = {
