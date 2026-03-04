@@ -9,6 +9,19 @@ const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const fsp = require("node:fs/promises");
+
+function resolveWorkDir(raw) {
+  if (raw == null || String(raw).trim() === "") return null;
+  const s = String(raw).trim();
+  const home = os.homedir();
+  if (s === "~" || s.startsWith("~/") || s.startsWith("~\\")) {
+    return path.join(home, s.slice(1).replace(/\//g, path.sep));
+  }
+  return path.resolve(s);
+}
+
+const DEFAULT_WORKSPACE_ROOT = path.join(os.homedir(), ".creez", "workplace");
 
 const FEISHU_AUTH_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 
@@ -275,7 +288,15 @@ class FeishuChannelAdapter {
     }
     if (!apiKey) return null;
 
-    const workDir = process.cwd();
+    const appStateStore = this._deps.appStateStore;
+    const appState = appStateStore ? await appStateStore.getState() : {};
+    const rawRoot = appState?.workspaceRoot ?? null;
+    const workDir = resolveWorkDir(rawRoot) || DEFAULT_WORKSPACE_ROOT;
+    try {
+      await fsp.mkdir(workDir, { recursive: true });
+    } catch (e) {
+      feishuLog("workspace dir create failed: " + (e?.message || String(e)));
+    }
     const agentDir = path.join(os.homedir(), ".creez");
 
     const historyRows = chatRepository.getMessages({ chatId, limit: 50 });
