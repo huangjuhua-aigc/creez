@@ -47,12 +47,16 @@ const { AppStateRepository } = require("./repositories/appStateRepository.cjs");
 const { ChatRepository } = require("./repositories/chatRepository.cjs");
 const { ContactRepository } = require("./repositories/contactRepository.cjs");
 const { AssistantConfigRepository } = require("./repositories/assistantConfigRepository.cjs");
+const { ChannelConfigRepository } = require("./repositories/channelConfigRepository.cjs");
+const { registerChannelIpc } = require("./channelIpc.cjs");
+const { ChannelManager } = require("./channel/ChannelManager.cjs");
 const { MemoryStore } = require("./memoryStore.cjs");
 const { SkillManager } = require("./skillManager.cjs");
 
 const isMac = process.platform === "darwin";
 const isDev = !app.isPackaged || Boolean(process.env.VITE_DEV_SERVER_URL);
 let creezDb = null;
+let channelManager = null;
 
 function getStartupLogPath() {
   const homeDir = app.getPath("home");
@@ -331,6 +335,7 @@ app.whenReady().then(async () => {
     const chatRepository = new ChatRepository(creezDb.db);
     const contactRepository = new ContactRepository(creezDb.db);
     const assistantConfigRepository = new AssistantConfigRepository(creezDb.db);
+    const channelConfigRepository = new ChannelConfigRepository(creezDb.db);
     const memoryStore = new MemoryStore({ homeDir: creezHome });
     const skillManager = new SkillManager({ homeDir: creezHome });
 
@@ -355,6 +360,13 @@ app.whenReady().then(async () => {
     registerAppStateIpc(ipcMain, appStateStore);
     registerChatIpc(ipcMain, chatRepository);
     registerContactIpc(ipcMain, contactRepository);
+    channelManager = new ChannelManager({
+      channelConfigRepository,
+      contactRepository,
+      chatRepository,
+      assistantConfigRepository,
+    });
+    registerChannelIpc(ipcMain, { channelConfigRepository, contactRepository, channelManager });
     registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, skillManager, contactRepository, { creezHome });
     registerWorkspaceIpc(ipcMain, appStateStore);
     registerAttachmentIpc(ipcMain);
@@ -363,12 +375,21 @@ app.whenReady().then(async () => {
       appStateStore,
       memoryStore,
       contactRepository,
+      chatRepository,
       creezHome,
     });
 
     loadMainAppInto(mainWindow);
     startupLog("after loadMainAppInto");
     startSyncPullTask(contactRepository);
+    startupLog("before channelManager.startAll");
+    channelManager.startAll()
+      .then(() => startupLog("channelManager.startAll done"))
+      .catch((e) => {
+        const msg = e?.message || String(e);
+        startupLog("channelManager.startAll error: " + msg);
+        console.warn("[creez] channelManager.startAll:", msg);
+      });
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -386,8 +407,12 @@ app.on("window-all-closed", () => {
   if (!isMac) app.quit();
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", async () => {
   stopSyncPullTask();
+  if (channelManager) {
+    await channelManager.stopAll().catch(() => {});
+    channelManager = null;
+  }
   if (creezDb) {
     creezDb.close();
     creezDb = null;

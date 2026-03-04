@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '../../utils/cn';
-import { Bot, Brain, Database, Cpu, ChevronDown, ChevronUp, Plus, Trash2, Eye, EyeOff, Save, Upload, User, Camera, CheckCircle2, RotateCcw, Folder } from 'lucide-react';
+import { Bot, Brain, Database, Cpu, ChevronDown, ChevronUp, Plus, Trash2, Save, Upload, User, Camera, CheckCircle2, RotateCcw, Folder, Radio } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
-import { fetchAssistantConfig, fetchModelApiKey, persistAssistantConfig, readMemory, writeMemory, uploadAssistantAvatar, selectWorkplaceDirectory, readLocalImageDataUrl, listAvailableSkills } from '../services/settings';
+import { fetchAssistantConfig, fetchModelApiKey, persistAssistantConfig, readMemory, writeMemory, uploadAssistantAvatar, selectWorkplaceDirectory, readLocalImageDataUrl, listAvailableSkills, getSkillEnv, saveSkillEnv } from '../services/settings';
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 
 export function AdvancedSettings() {
@@ -14,6 +14,7 @@ export function AdvancedSettings() {
     { id: 'skills', label: 'Skills', icon: Brain, description: 'Define what tasks the AI can perform.' },
     { id: 'memory', label: 'Memory', icon: Database, description: 'Manage conversation history and context retention.' },
     { id: 'model', label: 'Model Config', icon: Cpu, description: 'Configure LLM providers and models.' },
+    { id: 'channel', label: 'Channel Config', icon: Radio, description: 'Connect messaging platforms as input/output channels.' },
   ];
 
   return (
@@ -71,6 +72,7 @@ export function AdvancedSettings() {
             {activeSection === 'skills' && <SkillsSettings />}
             {activeSection === 'memory' && <MemorySettings />}
             {activeSection === 'model' && <ModelSettings />}
+            {activeSection === 'channel' && <ChannelSettings />}
           </div>
         </div>
       </div>
@@ -86,7 +88,7 @@ function IdentitySettings() {
   const [systemPrompt, setSystemPrompt] = useState('You are a helpful, professional AI assistant. You answer questions concisely and accurately.');
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
   const [avatarDisplaySrc, setAvatarDisplaySrc] = useState<string | null>(null);
-  const [workspaceDir, setWorkspaceDir] = useState('~/.creez/workplace');
+  const [workspaceDir, setWorkspaceDir] = useState('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -100,8 +102,11 @@ function IdentitySettings() {
       setAvatarPath(config.avatar || null);
     });
     window.electron?.app?.getState?.().then((res) => {
-      if (!cancelled && res?.ok && res.data.workspaceRoot) {
+      if (cancelled) return;
+      if (res?.ok && res.data.workspaceRoot) {
         setWorkspaceDir(String(res.data.workspaceRoot));
+      } else {
+        setWorkspaceDir('');
       }
     });
     return () => {
@@ -247,7 +252,8 @@ function IdentitySettings() {
             <input 
               type="text" 
               value={workspaceDir}
-              className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] outline-none transition-all shadow-inner"
+              placeholder="~/.creez/workplace"
+              className="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] outline-none transition-all shadow-inner placeholder:text-gray-400"
               readOnly
             />
             <div className="absolute left-3 top-3 text-gray-400">
@@ -283,10 +289,14 @@ function IdentitySettings() {
   );
 }
 
+const XHS_COOKIE_TIP = "获取方式：\n1. 浏览器登录 https://www.xiaohongshu.com\n2. F12 → Network → 任选请求 → 请求头中的 Cookie，整串复制";
+
 // --- 2. Skills Settings ---
 
 function SkillsSettings() {
     const [skills, setSkills] = useState<Array<{ id: string; name: string; desc: string; enabled: boolean }>>([]);
+    const [xhsCookie, setXhsCookie] = useState('');
+    const [xhsSaving, setXhsSaving] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -305,6 +315,18 @@ function SkillsSettings() {
         };
     }, []);
 
+    useEffect(() => {
+        if (!skills.some((s) => s.id === 'xiaohongshu')) return;
+        let cancelled = false;
+        getSkillEnv('xiaohongshu').then((env) => {
+            if (cancelled) return;
+            setXhsCookie(env.XHS_COOKIE ?? '');
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [skills]);
+
     const persistSkills = async (nextSkills: Array<{ id: string; enabled: boolean }>) => {
         const payload: Record<string, boolean> = {};
         nextSkills.forEach((s) => {
@@ -320,6 +342,14 @@ function SkillsSettings() {
         persistSkills(next);
     };
 
+    const persistXhsCookie = async () => {
+        setXhsSaving(true);
+        const ok = await saveSkillEnv('xiaohongshu', { XHS_COOKIE: xhsCookie.trim() });
+        if (!ok) toast.error('保存失败');
+        else toast.success('保存成功');
+        setXhsSaving(false);
+    };
+
     const sortedSkills = [...skills].sort((a, b) => {
         const enabledFirst = (a.enabled ? 0 : 1) - (b.enabled ? 0 : 1);
         return enabledFirst !== 0 ? enabledFirst : a.name.localeCompare(b.name);
@@ -328,46 +358,84 @@ function SkillsSettings() {
     return (
         <div className="grid grid-cols-1 gap-4">
             {sortedSkills.map((skill) => (
-                <Tooltip key={skill.id} delayDuration={300}>
-                    <TooltipTrigger asChild>
-                        <div className={cn(
-                            "border rounded-xl p-4 bg-white transition-all shadow-sm flex flex-col justify-between group cursor-default",
-                            skill.enabled ? "border-[#07C160]/30 ring-1 ring-[#07C160]/5" : "border-gray-200"
-                        )}>
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-start gap-3 flex-1 min-w-0 pr-1">
-                                    <div className={cn(
-                                        "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
-                                        skill.enabled ? "bg-[#07C160] text-white" : "bg-gray-100 text-gray-400"
-                                    )}>
-                                        <Brain size={20} />
+                <div key={skill.id}>
+                    <Tooltip delayDuration={300}>
+                        <TooltipTrigger asChild>
+                            <div className={cn(
+                                "border rounded-xl p-4 bg-white transition-all shadow-sm flex flex-col justify-between group cursor-default",
+                                skill.enabled ? "border-[#07C160]/30 ring-1 ring-[#07C160]/5" : "border-gray-200"
+                            )}>
+                                <div className="flex items-start justify-between gap-3">
+                                    <div className="flex items-start gap-3 flex-1 min-w-0 pr-1">
+                                        <div className={cn(
+                                            "w-10 h-10 rounded-lg flex items-center justify-center transition-colors",
+                                            skill.enabled ? "bg-[#07C160] text-white" : "bg-gray-100 text-gray-400"
+                                        )}>
+                                            <Brain size={20} />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <h3 className="text-sm font-bold text-gray-800">{skill.name}</h3>
+                                            <p className="text-[11px] text-gray-500 leading-tight mt-0.5">
+                                              {skill.desc.length > 50 ? `${skill.desc.slice(0, 50)}...` : skill.desc}
+                                            </p>
+                                        </div>
                                     </div>
-                                    <div className="min-w-0">
-                                        <h3 className="text-sm font-bold text-gray-800">{skill.name}</h3>
-                                        <p className="text-[11px] text-gray-500 leading-tight mt-0.5">
-                                          {skill.desc.length > 50 ? `${skill.desc.slice(0, 50)}...` : skill.desc}
-                                        </p>
-                                    </div>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); toggleSkill(skill.id); }}
+                                        className={cn(
+                                            "w-11 h-6 rounded-full relative transition-colors duration-200 ease-in-out focus:outline-none flex-shrink-0 mt-0.5",
+                                            skill.enabled ? "bg-[#07C160]" : "bg-gray-200"
+                                        )}
+                                    >
+                                        <span className={cn(
+                                            "block w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform duration-200 ease-in-out absolute top-1 left-1",
+                                            skill.enabled ? "translate-x-5" : "translate-x-0"
+                                        )} />
+                                    </button>
                                 </div>
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); toggleSkill(skill.id); }}
-                                    className={cn(
-                                        "w-11 h-6 rounded-full relative transition-colors duration-200 ease-in-out focus:outline-none flex-shrink-0 mt-0.5",
-                                        skill.enabled ? "bg-[#07C160]" : "bg-gray-200"
-                                    )}
-                                >
-                                    <span className={cn(
-                                        "block w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform duration-200 ease-in-out absolute top-1 left-1",
-                                        skill.enabled ? "translate-x-5" : "translate-x-0"
-                                    )} />
-                                </button>
+                                {skill.id === 'xiaohongshu' && (
+                                    <div className="mt-4 pt-4 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
+                                        <label className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                                            XHS_COOKIE
+                                            <span className="relative group/tip cursor-default">
+                                                <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 text-gray-400 text-[9px] font-bold normal-case tracking-normal leading-none">?</span>
+                                                <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-52 px-3 py-2 rounded-lg bg-gray-800 text-white text-[11px] font-normal normal-case tracking-normal leading-relaxed opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150 shadow-lg z-50 whitespace-pre-line">
+                                                    {XHS_COOKIE_TIP}
+                                                    <span className="absolute left-1/2 -translate-x-1/2 top-full border-4 border-transparent border-t-gray-800" />
+                                                </span>
+                                            </span>
+                                        </label>
+                                        <input
+                                            type="text"
+                                            autoComplete="off"
+                                            placeholder="填入 Cookie 后发布脚本可用"
+                                            value={xhsCookie}
+                                            onChange={(e) => setXhsCookie(e.target.value)}
+                                            className="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-[13px] text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#07C160]/30 focus:border-[#07C160]"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => persistXhsCookie()}
+                                            disabled={xhsSaving}
+                                            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#07C160] text-white hover:bg-[#06ad56] disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            {xhsSaving ? (
+                                                <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                            ) : (
+                                                <Save size={14} />
+                                            )}
+                                            {xhsSaving ? '保存中…' : '保存'}
+                                        </button>
+                                        <p className="mt-1 text-[10px] text-gray-400">保存到 ~/.creez/.env</p>
+                                    </div>
+                                )}
                             </div>
-                        </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" className="max-w-sm whitespace-pre-wrap text-left">
-                        {skill.desc}
-                    </TooltipContent>
-                </Tooltip>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-sm whitespace-pre-wrap text-left">
+                            {skill.desc}
+                        </TooltipContent>
+                    </Tooltip>
+                </div>
             ))}
         </div>
     );
@@ -533,28 +601,32 @@ function providerLabel(value: string): string {
 
 function ModelSettings() {
     const [models, setModels] = useState<ModelConfig[]>([]);
-    const [showApiKeyById, setShowApiKeyById] = useState<Record<string, boolean>>({});
     const [isSavingById, setIsSavingById] = useState<Record<string, boolean>>({});
     const [savingKeyPreviewById, setSavingKeyPreviewById] = useState<Record<string, string>>({});
 
     useEffect(() => {
         let cancelled = false;
-        fetchAssistantConfig().then((config) => {
+        (async () => {
+            const config = await fetchAssistantConfig();
             if (cancelled) return;
             if (!Array.isArray(config.models) || config.models.length === 0) return;
-            setModels(
-                config.models.map((m) => ({
-                    id: m.id,
-                    provider: normalizeProviderValue(m.provider || 'openrouter'),
-                    model: m.model || 'gpt-4o',
-                    apiKey: '',
-                    apiKeyMasked: m.apiKeyMasked || '',
-                    apiBase: m.apiBase || '',
-                    isOpen: false,
-                    active: Boolean(m.active),
-                }))
+            const initial = config.models.map((m) => ({
+                id: m.id,
+                provider: normalizeProviderValue(m.provider || 'openrouter'),
+                model: m.model || 'gpt-4o',
+                apiKey: '',
+                apiKeyMasked: m.apiKeyMasked || '',
+                apiBase: m.apiBase || '',
+                isOpen: false,
+                active: Boolean(m.active),
+            }));
+            setModels(initial);
+            const keys = await Promise.all(initial.map((m) => fetchModelApiKey(m.id)));
+            if (cancelled) return;
+            setModels((prev) =>
+                prev.map((m, i) => ({ ...m, apiKey: keys[i] || m.apiKey }))
             );
-        });
+        })();
         return () => {
             cancelled = true;
         };
@@ -636,20 +708,6 @@ function ModelSettings() {
         setModels(next);
     };
 
-    const toggleApiKeyVisibility = async (id: string) => {
-        const shouldShow = !showApiKeyById[id];
-        if (shouldShow) {
-            const target = models.find((m) => m.id === id);
-            if (target && !target.apiKey && target.apiKeyMasked) {
-                const fullApiKey = await fetchModelApiKey(id);
-                if (fullApiKey) {
-                    setModels((prev) => prev.map((m) => (m.id === id ? { ...m, apiKey: fullApiKey } : m)));
-                }
-            }
-        }
-        setShowApiKeyById((prev) => ({ ...prev, [id]: shouldShow }));
-    };
-
     return (
         <div className="space-y-6 pb-20">
             {models.map((config) => (
@@ -727,22 +785,14 @@ function ModelSettings() {
                                         const value = config.apiKey || (isSaving ? (savingKeyPreviewById[config.id] || '') : '');
                                         return (
                                     <input 
-                                        type={showApiKeyById[config.id] ? "text" : "password"}
+                                        type="text"
                                         value={value}
                                         onChange={(e) => updateModel(config.id, 'apiKey', e.target.value)}
-                                        className="w-full bg-gray-50 border border-gray-200 text-gray-700 py-2.5 px-4 pr-12 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] font-mono text-sm tracking-widest transition-all shadow-inner"
-                                        placeholder={config.apiKeyMasked ? "••••••••" : ""}
+                                        className="w-full bg-gray-50 border border-gray-200 text-gray-700 py-2.5 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] font-mono text-sm tracking-widest transition-all shadow-inner"
+                                        placeholder=""
                                     />
                                         );
                                     })()}
-                                    <button
-                                        type="button"
-                                        onClick={() => toggleApiKeyVisibility(config.id)}
-                                        className="absolute right-3 top-2.5 p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                                        title={showApiKeyById[config.id] ? "Hide API key" : "Show API key"}
-                                    >
-                                        {showApiKeyById[config.id] ? <EyeOff size={18} /> : <Eye size={18} />}
-                                    </button>
                                 </div>
                                 <div className="pt-1 flex justify-end">
                                     <button
@@ -779,4 +829,306 @@ function ModelSettings() {
             </button>
         </div>
     );
+}
+
+// --- 5. Channel Settings ---
+
+type ChannelFieldType = 'text' | 'password';
+
+interface ChannelField {
+  key: string;
+  label: string;
+  type: ChannelFieldType;
+  placeholder: string;
+  hint?: string;
+}
+
+const CHANNEL_DEFS: Record<string, { label: string; color: string; fields: ChannelField[] }> = {
+  feishu: {
+    label: 'Feishu / Lark',
+    color: 'bg-blue-50 text-blue-600',
+    fields: [
+      { key: 'FEISHU_APP_ID',     label: 'App ID',     type: 'text',     placeholder: 'cli_xxxxxxxxxxxxxxxx',    hint: 'Found in Feishu Open Platform → Credentials' },
+      { key: 'FEISHU_APP_SECRET', label: 'App Secret', type: 'text', placeholder: 'Enter App Secret',        hint: 'Keep this private — do not share' },
+      { key: 'FEISHU_OPEN_ID',    label: 'Open ID',    type: 'text',     placeholder: 'ou_xxxxxxxxxxxxxxxx',     hint: 'Target user / bot Open ID' },
+    ],
+  },
+  slack: {
+    label: 'Slack',
+    color: 'bg-yellow-50 text-yellow-600',
+    fields: [
+      { key: 'SLACK_BOT_TOKEN',      label: 'Bot Token',      type: 'text', placeholder: 'xoxb-xxxxxxxxxxxx' },
+      { key: 'SLACK_SIGNING_SECRET', label: 'Signing Secret', type: 'text', placeholder: 'Enter Signing Secret' },
+      { key: 'SLACK_CHANNEL_ID',     label: 'Channel ID',     type: 'text',     placeholder: 'C0XXXXXXXX' },
+    ],
+  },
+  telegram: {
+    label: 'Telegram',
+    color: 'bg-sky-50 text-sky-600',
+    fields: [
+      { key: 'TELEGRAM_BOT_TOKEN', label: 'Bot Token', type: 'text', placeholder: '123456789:ABC-xxxxxxxxxxxx' },
+      { key: 'TELEGRAM_CHAT_ID',   label: 'Chat ID',   type: 'text',     placeholder: '-100xxxxxxxxxx' },
+    ],
+  },
+  dingtalk: {
+    label: 'DingTalk',
+    color: 'bg-orange-50 text-orange-500',
+    fields: [
+      { key: 'DINGTALK_APP_KEY',    label: 'App Key',    type: 'text',     placeholder: 'dingxxxxxxxxxx' },
+      { key: 'DINGTALK_APP_SECRET', label: 'App Secret', type: 'text', placeholder: 'Enter App Secret' },
+      { key: 'DINGTALK_ROBOT_CODE', label: 'Robot Code', type: 'text',     placeholder: 'Enter Robot Code' },
+    ],
+  },
+};
+
+const CHANNEL_OPTIONS = Object.entries(CHANNEL_DEFS).map(([id, def]) => ({
+  id,
+  label: def.label,
+  available: id === 'feishu', // only Feishu is available for now
+}));
+
+interface ChannelConfigItem {
+  id: string;
+  channelType: string;
+  values: Record<string, string>;
+  isOpen: boolean;
+  enabled: boolean;
+}
+
+function ChannelCard({
+  config,
+  onToggleOpen,
+  onToggleEnabled,
+  onChangeType,
+  onChangeValue,
+  onSave,
+  onDelete,
+  isSaving,
+}: {
+  config: ChannelConfigItem;
+  onToggleOpen: () => void;
+  onToggleEnabled: () => void;
+  onChangeType: (t: string) => void;
+  onChangeValue: (key: string, val: string) => void;
+  onSave: () => void;
+  onDelete: () => void;
+  isSaving: boolean;
+}) {
+  const def = CHANNEL_DEFS[config.channelType] ?? CHANNEL_DEFS.feishu;
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm bg-white transition-all hover:shadow-md group">
+      <div
+        className="flex items-center justify-between p-4 bg-white cursor-pointer select-none group-hover:bg-gray-50/50 transition-colors"
+        onClick={onToggleOpen}
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded flex items-center justify-center bg-gray-100 text-gray-400">
+            <Radio size={16} className="text-blue-600" />
+          </div>
+          <div className="flex flex-col">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">Channel</span>
+            <span className="text-sm font-semibold text-gray-700 mt-1">{def.label}</span>
+          </div>
+          <span className={cn(
+            'ml-1 text-[10px] font-bold px-2 py-0.5 rounded-full border',
+            config.enabled ? 'bg-green-50 text-green-600 border-green-100' : 'bg-gray-100 text-gray-400 border-gray-200'
+          )}>
+            {config.enabled ? 'Active' : 'Inactive'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={e => { e.stopPropagation(); onDelete(); }}
+            className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+          >
+            <Trash2 size={16} />
+          </button>
+          <button className="flex items-center justify-center w-8 h-8 text-gray-400 hover:text-gray-600 transition-all">
+            {config.isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+        </div>
+      </div>
+
+      {config.isOpen && (
+        <div className="p-6 pt-2 space-y-6 animate-in slide-in-from-top-2 duration-200 bg-white border-t border-gray-50">
+          <div className="grid grid-cols-2 gap-6 items-end">
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Platform</label>
+              <div className="relative">
+                <select
+                  value={config.channelType}
+                  onChange={e => { e.stopPropagation(); const v = e.target.value; if (CHANNEL_OPTIONS.find(x => x.id === v)?.available) onChangeType(v); }}
+                  className="w-full appearance-none bg-gray-50 border border-gray-200 text-gray-700 py-2.5 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] font-medium transition-all shadow-inner"
+                >
+                  {CHANNEL_OPTIONS.map(o => (
+                    <option key={o.id} value={o.id} disabled={!o.available} title={o.available ? undefined : 'Coming soon'}>
+                      {o.label}{!o.available ? ' (Coming soon)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-4 top-3.5 text-gray-400 pointer-events-none" size={14} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</label>
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); onToggleEnabled(); }}
+                className={cn(
+                  'flex items-center gap-2 w-full py-2.5 px-4 rounded-lg border text-sm font-medium transition-all',
+                  config.enabled ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                )}
+              >
+                <span className={cn('w-2 h-2 rounded-full', config.enabled ? 'bg-green-500' : 'bg-gray-400')} />
+                {config.enabled ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Credentials</span>
+              <div className="flex-1 h-px bg-gray-100" />
+            </div>
+            {def.fields.map(field => (
+              <div key={field.key} className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{field.label}</label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={config.values[field.key] ?? ''}
+                    onChange={e => onChangeValue(field.key, e.target.value)}
+                    placeholder={field.placeholder}
+                    className="w-full bg-gray-50 border border-gray-200 text-gray-800 py-2.5 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] font-mono text-sm transition-all shadow-inner"
+                  />
+                </div>
+                {field.hint && <p className="text-[10px] text-gray-400 px-0.5">{field.hint}</p>}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); onSave(); }}
+              disabled={isSaving}
+              className={cn(
+                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all',
+                isSaving ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#07C160] text-white hover:bg-[#06ad56]'
+              )}
+            >
+              {isSaving ? <span className="w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" /> : <Save size={14} />}
+              {isSaving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChannelSettings() {
+  const [channels, setChannels] = useState<ChannelConfigItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const loadConfigs = async () => {
+    const api = window.electron?.channel?.listConfigs;
+    if (!api) {
+      setLoading(false);
+      return;
+    }
+    const res = await api({});
+    if (!res?.ok || !res.data?.items) {
+      setChannels([]);
+      setLoading(false);
+      return;
+    }
+    const items: ChannelConfigItem[] = res.data.items.map((c: { id: string; channelType: string; enabled: boolean; values: Record<string, string> }) => ({
+      id: c.id,
+      channelType: c.channelType,
+      values: c.values ?? {},
+      isOpen: true,
+      enabled: c.enabled,
+    }));
+    setChannels(items);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    loadConfigs();
+  }, []);
+
+  const update = (id: string, patch: Partial<ChannelConfigItem>) =>
+    setChannels(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
+
+  const addChannel = () =>
+    setChannels(prev => [
+      ...prev,
+      { id: `new-${Date.now()}`, channelType: 'feishu', values: {}, isOpen: true, enabled: false },
+    ]);
+
+  const saveChannel = async (config: ChannelConfigItem) => {
+    const api = window.electron?.channel?.saveConfig;
+    if (!api) return;
+    setSavingId(config.id);
+    const res = await api({
+      channelType: config.channelType,
+      enabled: config.enabled,
+      values: config.values,
+    });
+    setSavingId(null);
+    if (res?.ok) {
+      toast.success('Channel config saved');
+      await loadConfigs();
+    } else {
+      toast.error(res?.error?.message ?? 'Failed to save');
+    }
+  };
+
+  const deleteChannel = async (config: ChannelConfigItem) => {
+    const api = window.electron?.channel?.deleteConfig;
+    if (!api) return;
+    const res = await api({ channelType: config.channelType });
+    if (res?.ok) {
+      setChannels(prev => prev.filter(c => c.id !== config.id));
+      toast.success('Channel removed');
+    } else {
+      toast.error(res?.error?.message ?? 'Failed to delete');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="w-8 h-8 border-2 border-[#07C160] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 pb-20">
+      {channels.map(config => (
+        <ChannelCard
+          key={config.id}
+          config={config}
+          onToggleOpen={() => update(config.id, { isOpen: !config.isOpen })}
+          onToggleEnabled={() => update(config.id, { enabled: !config.enabled })}
+          onChangeType={t => update(config.id, { channelType: t, values: {} })}
+          onChangeValue={(key, val) => update(config.id, { values: { ...config.values, [key]: val } })}
+          onSave={() => saveChannel(config)}
+          onDelete={() => deleteChannel(config)}
+          isSaving={savingId === config.id}
+        />
+      ))}
+      <button
+        onClick={addChannel}
+        className="w-full py-6 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 font-bold hover:border-[#07C160] hover:text-[#07C160] hover:bg-[#07C160]/5 transition-all flex items-center justify-center gap-2 group active:scale-[0.99]"
+      >
+        <Plus size={20} className="group-hover:rotate-90 transition-transform duration-300" />
+        Add New Channel
+      </button>
+    </div>
+  );
 }

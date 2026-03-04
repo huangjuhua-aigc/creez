@@ -401,6 +401,67 @@ const MIGRATIONS = [
       UPDATE messages SET bot_id = '11111111-1111-1111-1111-111111111111' WHERE bot_id = '0d9f5d8a-4c7e-4f2a-9d6a-2b3a1a5e7c11';
     `,
   },
+  {
+    version: 10,
+    name: "add_channel_configs",
+    sql: `
+      CREATE TABLE IF NOT EXISTS channel_configs (
+        id TEXT PRIMARY KEY,
+        bot_id TEXT NOT NULL,
+        channel_type TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        credentials TEXT,
+        extra TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE(bot_id, channel_type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_channel_configs_bot ON channel_configs(bot_id);
+    `,
+  },
+  {
+    version: 11,
+    name: "add_channel_to_chats_and_messages",
+    sql: `
+      ALTER TABLE chats ADD COLUMN channel_type TEXT NOT NULL DEFAULT 'creez_app';
+      ALTER TABLE chats ADD COLUMN channel_chat_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_chats_channel ON chats(channel_type);
+      CREATE INDEX IF NOT EXISTS idx_chats_channel_chat_id ON chats(contact_id, channel_type, channel_chat_id);
+
+      ALTER TABLE messages ADD COLUMN channel_type TEXT;
+      ALTER TABLE messages ADD COLUMN channel_message_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_messages_channel_message_id ON messages(channel_message_id);
+    `,
+  },
+  {
+    version: 12,
+    name: "chats_unique_per_channel",
+    sql: `
+      CREATE TABLE chats_new (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        last_message_at INTEGER,
+        channel_type TEXT NOT NULL DEFAULT 'creez_app',
+        channel_chat_id TEXT,
+        FOREIGN KEY(contact_id) REFERENCES contacts(id) ON DELETE CASCADE
+      );
+      CREATE UNIQUE INDEX idx_chats_contact_channel_unique ON chats_new(contact_id, channel_type, COALESCE(channel_chat_id, ''));
+
+      INSERT INTO chats_new (id, contact_id, created_at, updated_at, last_message_at, channel_type, channel_chat_id)
+      SELECT id, contact_id, created_at, updated_at, last_message_at, channel_type, channel_chat_id FROM chats;
+
+      DROP TABLE chats;
+      ALTER TABLE chats_new RENAME TO chats;
+
+      CREATE INDEX IF NOT EXISTS idx_chats_contact_id ON chats(contact_id);
+      CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON chats(updated_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_chats_last_message_at ON chats(last_message_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_chats_channel ON chats(channel_type);
+      CREATE INDEX IF NOT EXISTS idx_chats_channel_chat_id ON chats(contact_id, channel_type, channel_chat_id);
+    `,
+  },
 ];
 
 module.exports = {

@@ -37,6 +37,18 @@ function registerChatIpc(ipcMain, chatRepository) {
     }
   });
 
+  ipcMain.handle(CHANNELS.CHAT_GET_OR_CREATE_BY_CONTACT, async (_event, payload) => {
+    if (!payload || typeof payload !== "object" || !payload.contactId || String(payload.contactId).trim() === "") {
+      return err("VALIDATION_ERROR", "contactId is required.");
+    }
+    try {
+      const result = chatRepository.getOrCreateByContactId(payload);
+      return ok(result);
+    } catch (error) {
+      return err("DB_ERROR", "Failed to get or create chat by contact", error?.message || String(error));
+    }
+  });
+
   ipcMain.handle(CHANNELS.CHAT_APPEND_MESSAGE, async (_event, payload) => {
     if (!payload || typeof payload !== "object") {
       return err("VALIDATION_ERROR", "Payload must be an object.");

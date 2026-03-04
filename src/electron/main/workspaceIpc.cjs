@@ -1,6 +1,19 @@
 const fs = require("node:fs/promises");
+const os = require("node:os");
 const path = require("node:path");
 const { CHANNELS } = require("./channels.cjs");
+
+function resolveWorkspaceRoot(raw) {
+  if (raw == null || String(raw).trim() === "") return null;
+  const s = String(raw).trim();
+  const home = os.homedir();
+  if (s === "~" || s.startsWith("~/") || s.startsWith("~\\")) {
+    return path.join(home, s.slice(1).replace(/\//g, path.sep));
+  }
+  return path.resolve(s);
+}
+
+const DEFAULT_WORKSPACE_ROOT = path.join(os.homedir(), ".creez", "workplace");
 
 function ok(data) {
   return { ok: true, data };
@@ -27,9 +40,9 @@ function validateName(name) {
 
 async function readWorkspaceRoot(appStateStore) {
   const state = await appStateStore.getState();
-  const workspaceRoot = state?.workspaceRoot ? String(state.workspaceRoot) : "";
-  if (!workspaceRoot) return null;
-  return path.resolve(workspaceRoot);
+  const raw = state?.workspaceRoot ? String(state.workspaceRoot) : "";
+  const resolved = resolveWorkspaceRoot(raw);
+  return resolved || DEFAULT_WORKSPACE_ROOT;
 }
 
 async function assertPathInWorkspace(appStateStore, rawPath) {

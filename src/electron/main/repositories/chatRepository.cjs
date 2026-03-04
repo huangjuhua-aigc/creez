@@ -1,3 +1,5 @@
+const { randomUUID } = require("node:crypto");
+
 function normalizeListParams(params = {}) {
   const limit = Number.isFinite(Number(params.limit)) ? Math.max(1, Math.min(200, Number(params.limit))) : 30;
   const offset = Number.isFinite(Number(params.offset)) ? Math.max(0, Number(params.offset)) : 0;
@@ -17,13 +19,19 @@ class ChatRepository {
     this.db = db;
   }
 
+  /** Only list "main" chats: one per contact (creez_app, no channel_chat_id). Channel messages (e.g. Feishu) are stored in the same chat and marked by message.channel_type. */
+  static MAIN_CHAT_WHERE = " (c.channel_type = 'creez_app' AND (c.channel_chat_id IS NULL OR c.channel_chat_id = '')) ";
+
   list(rawParams) {
     const { limit, offset, keyword } = normalizeListParams(rawParams);
-    const where = keyword ? "WHERE ct.name LIKE @keyword" : "";
+    const mainWhere = "WHERE " + ChatRepository.MAIN_CHAT_WHERE;
+    const where = keyword ? mainWhere + " AND ct.name LIKE @keyword" : mainWhere;
     const listSql = `
       SELECT
         c.id,
         c.contact_id,
+        c.channel_type,
+        c.channel_chat_id,
         c.last_message_at,
         c.updated_at,
         ct.name AS contact_name,
@@ -71,6 +79,8 @@ class ChatRepository {
         lastMessageAt: row.last_message_at || null,
         unreadCount: 0,
         modelUsed: row.last_model_used || null,
+        channelType: row.channel_type ?? "creez_app",
+        channelChatId: row.channel_chat_id ?? null,
       })),
       total: Number(totalRow?.total || 0),
     };
@@ -93,6 +103,8 @@ class ChatRepository {
         m.status,
         m.model_used,
         m.tool_calls,
+        m.channel_type,
+        m.channel_message_id,
         m.created_at
       FROM messages m
       WHERE m.chat_id = @chatId
@@ -129,11 +141,90 @@ class ChatRepository {
         status: row.status,
         modelUsed: row.model_used || null,
         toolCalls,
+        channelType: row.channel_type ?? null,
+        channelMessageId: row.channel_message_id ?? null,
       };
     });
 
     const nextBefore = hasMore && items.length > 0 ? items[items.length - 1].createdAt : null;
     return { items, hasMore, nextBefore };
+  }
+
+  getOrCreateByContactId(rawPayload = {}) {
+    return this.getOrCreateMainChatForContact(rawPayload);
+  }
+
+  /**
+   * Get or create the single "main" chat for a contact (one conversation per bot).
+   * All messages (local + Feishu etc.) go into this chat; message.channel_type marks source.
+   */
+  getOrCreateMainChatForContact(rawPayload = {}) {
+    const contactId = String(rawPayload.contactId || "").trim();
+    if (!contactId) throw new Error("contactId is required.");
+
+    const existing = this.db
+      .prepare(
+        `SELECT id FROM chats WHERE contact_id = ? AND channel_type = 'creez_app' AND (channel_chat_id IS NULL OR channel_chat_id = '') LIMIT 1`
+      )
+      .get(contactId);
+    if (existing?.id) {
+      return { chatId: String(existing.id), created: false };
+    }
+
+    const chatId = randomUUID();
+    const nowTs = Math.floor(Date.now() / 1000);
+    this.db
+      .prepare(
+        `INSERT INTO chats (id, contact_id, channel_type, channel_chat_id, created_at, updated_at, last_message_at)
+         VALUES (@id, @contactId, 'creez_app', NULL, @createdAt, @updatedAt, @lastMessageAt)`
+      )
+      .run({
+        id: chatId,
+        contactId,
+        createdAt: nowTs,
+        updatedAt: nowTs,
+        lastMessageAt: nowTs,
+      });
+    return { chatId, created: true };
+  }
+
+  /**
+   * Find or create a chat for a channel (e.g. Feishu). Used so channel messages
+   * are stored in the same conversation table and appear under the default bot.
+   */
+  getOrCreateChatForChannel(rawPayload = {}) {
+    const contactId = String(rawPayload.contactId || "").trim();
+    const channelType = String(rawPayload.channelType || "feishu").trim();
+    const channelChatId = rawPayload.channelChatId != null ? String(rawPayload.channelChatId).trim() : "";
+    if (!contactId || !channelType) throw new Error("contactId and channelType are required.");
+    if (!channelChatId) throw new Error("channelChatId is required for channel chats.");
+
+    const existing = this.db
+      .prepare(
+        "SELECT id FROM chats WHERE contact_id = ? AND channel_type = ? AND channel_chat_id = ? LIMIT 1"
+      )
+      .get(contactId, channelType, channelChatId);
+    if (existing?.id) {
+      return { chatId: String(existing.id), created: false };
+    }
+
+    const chatId = randomUUID();
+    const nowTs = Math.floor(Date.now() / 1000);
+    this.db
+      .prepare(
+        `INSERT INTO chats (id, contact_id, channel_type, channel_chat_id, created_at, updated_at, last_message_at)
+         VALUES (@id, @contactId, @channelType, @channelChatId, @createdAt, @updatedAt, @lastMessageAt)`
+      )
+      .run({
+        id: chatId,
+        contactId,
+        channelType,
+        channelChatId,
+        createdAt: nowTs,
+        updatedAt: nowTs,
+        lastMessageAt: nowTs,
+      });
+    return { chatId, created: true };
   }
 
   appendMessage(rawPayload = {}) {
@@ -151,6 +242,8 @@ class ChatRepository {
     const botId = rawPayload.botId ? String(rawPayload.botId) : null;
     const errorCode = rawPayload.errorCode ? String(rawPayload.errorCode) : null;
     const errorMessage = rawPayload.errorMessage ? String(rawPayload.errorMessage) : null;
+    const channelType = rawPayload.channelType ? String(rawPayload.channelType) : null;
+    const channelMessageId = rawPayload.channelMessageId ? String(rawPayload.channelMessageId) : null;
     let toolCallsJson = null;
     if (rawPayload.toolCalls != null && Array.isArray(rawPayload.toolCalls) && rawPayload.toolCalls.length > 0) {
       try {
@@ -162,9 +255,11 @@ class ChatRepository {
 
     const insertStmt = this.db.prepare(`
       INSERT OR REPLACE INTO messages (
-        id, chat_id, sender, bot_id, content, status, model_used, error_code, error_message, tool_calls, created_at, updated_at
+        id, chat_id, sender, bot_id, content, status, model_used, error_code, error_message, tool_calls,
+        channel_type, channel_message_id, created_at, updated_at
       ) VALUES (
-        @id, @chat_id, @sender, @bot_id, @content, @status, @model_used, @error_code, @error_message, @tool_calls, @created_at, @updated_at
+        @id, @chat_id, @sender, @bot_id, @content, @status, @model_used, @error_code, @error_message, @tool_calls,
+        @channel_type, @channel_message_id, @created_at, @updated_at
       )
     `);
     const touchChatStmt = this.db.prepare(`
@@ -183,6 +278,8 @@ class ChatRepository {
       error_code: errorCode,
       error_message: errorMessage,
       tool_calls: toolCallsJson,
+      channel_type: channelType,
+      channel_message_id: channelMessageId,
       created_at: createdAt,
       updated_at: updatedAt,
     });

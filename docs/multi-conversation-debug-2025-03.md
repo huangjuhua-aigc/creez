@@ -85,13 +85,46 @@
 
 ---
 
+## 架构重做（2025-03-02）：per-chat stream Map
+
+### 根因
+
+之前用一组**全局 ref**（`activeAssistantMessageIdRef`、`streamedTextRef`、`activeStreamChatIdRef` 等）跟踪「唯一的一个流」。后台 chat 的 `message_end` / `agent_end` 被 `isForOtherChat` early return 丢弃，DB 永远不更新；切回该 chat 时消息内容已丢。
+
+### 改动
+
+1. **`ChatWindow.tsx` — per-chat stream Map**（`chatStreamsRef: Map<chatId, ChatStreamState>`）：
+   - 每个 chat 有独立的 `{ assistantMessageId, streamedText, botId, toolCalls, toolMessageId }`。
+   - `handleIncomingAgentEvent` 不再 `isForOtherChat` early return。改为 `isForCurrentChat` 判断：
+     - `message_update`：**所有 chat** 更新 Map；仅当前 chat 更新 UI。
+     - `message_end`：**所有 chat** 写 DB + 更新侧栏；仅当前 chat 更新 UI 消息列表。
+     - `agent_end`：**所有 chat** 写 DB + 更新侧栏 + 清 Map 条目；仅当前 chat 清 ref + setIsStreaming。
+     - tool events：**所有 chat** 更新 Map 里的 toolCalls；仅当前 chat 更新 UI。
+   - **切换对话**时从 Map 恢复流状态（ref + isStreaming），加载消息后覆盖活跃流内容。
+   - `handleSend` 不再有 prev-stream workaround（背景流自行完成），直接注册 Map 条目。
+   - `stopStreaming` / error handler 都清 Map 条目。
+2. **`agentIpc.cjs`**：
+   - 去掉全局 `currentSender`；每次 AGENT_INIT 用 `const initSender = event.sender` 捕获到闭包。
+   - 去掉 `setImmediate` 发的重复 `agent_ready`（agent-runner 里已发）。
+   - AGENT_PROMPT 的 `agent_end` 用 `event.sender` 而非 `currentSender`。
+
+### 涉及文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/app/components/ChatWindow.tsx` | +`ChatStreamState`、+`chatStreamsRef`；重写事件处理、切换、发送、停止、错误 |
+| `electron/main/agentIpc.cjs` | 去 `currentSender`、per-init sender 捕获、去重复 agent_ready |
+
+---
+
 ## TODO（后续待修复/增强）
 
-- [ ] **后台流完成后持久化**：当前若用户切走，只在「发新消息时」把前一流的已收内容写 DB；若用户一直不发新消息，后台 bot 流完成后 message_end/agent_end 被过滤，DB 不会更新。可选方案：主进程在 session 的 message_end 时主动调 chat IPC 写库；或前端对「其他 chat」的 message_end 用 event 里的 message 内容调 updateChatMessage（需要主进程在事件里带 messageId 或前端维护 chatId→messageId 映射）。
+- [x] ~~**后台流完成后持久化**~~ — 已通过 per-chat Map 解决。
 - [ ] **多流时的停止按钮语义**：若将来支持「当前页显示多个 bot 的流状态」，停止按钮需明确只停当前 chat。
 - [ ] **RoundCloser knowledge_search 复验**：确认 defaultContactId 从 getEngineForContact 透传后，RoundCloser 的 custom tools 是否稳定包含 knowledge_search。
 - [ ] **E2E 或手动用例**：把「A 流式回复中 → 切 B 发消息 → 再切回 A」写成固定用例，回归多对话与空消息修复。
 - [ ] **清理 [creez:flow] 日志**：调试稳定后可将主进程/前端的 [creez:flow] 改为 DEBUG 开关或移除。
+- [ ] **联系人 → 聊天用了错误 ID**：`ContactsWindow` 传 contactId 当 chatId；需加 `getOrCreateChatByContactId` API。
 
 ---
 

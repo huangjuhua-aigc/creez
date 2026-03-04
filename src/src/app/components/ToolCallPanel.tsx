@@ -1,6 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ChevronRight, CheckCircle2, XCircle, Loader2, Terminal, Zap } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
 
 export interface ToolCall {
   id: string;
@@ -35,13 +34,23 @@ function StatusBadge({ status }: { status: ToolCall["status"] }) {
   );
 }
 
-function ToolCard({ toolCall }: { toolCall: ToolCall }) {
-  const [isOpen, setIsOpen] = useState(false);
+function ToolCard({ toolCall, isLastRunning }: { toolCall: ToolCall; isLastRunning: boolean }) {
+  const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const prevStatusRef = useRef(toolCall.status);
+
+  useEffect(() => {
+    if (prevStatusRef.current === "running" && toolCall.status !== "running") {
+      setManualOpen(null);
+    }
+    prevStatusRef.current = toolCall.status;
+  }, [toolCall.status]);
+
+  const isOpen = manualOpen !== null ? manualOpen : isLastRunning;
 
   return (
     <div>
       <button
-        onClick={() => setIsOpen((v) => !v)}
+        onClick={() => setManualOpen(isOpen ? false : true)}
         className="w-full flex items-center gap-2 px-3 py-2 hover:bg-zinc-100/70 transition-colors text-left"
       >
         <ChevronRight
@@ -59,30 +68,19 @@ function ToolCard({ toolCall }: { toolCall: ToolCall }) {
         <StatusBadge status={toolCall.status} />
       </button>
 
-      <AnimatePresence initial={false}>
-        {isOpen && (
-          <motion.div
-            key="body"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: "easeInOut" }}
-            className="overflow-hidden"
-          >
-            <div className="mx-3 mb-2.5 rounded-lg border border-zinc-100 overflow-hidden bg-white">
-              <div className="px-2.5 py-2 border-b border-zinc-100">
-                <div className="flex items-center gap-1 text-[9px] text-zinc-400 uppercase tracking-widest mb-1.5">
-                  <Terminal size={8} />
-                  Parameters
-                </div>
-                <pre className="text-[10.5px] text-zinc-500 bg-zinc-50 rounded-md p-2 overflow-x-auto leading-relaxed border border-zinc-100/80 font-mono">
-                  {JSON.stringify(toolCall.parameters, null, 2)}
-                </pre>
-              </div>
+      {isOpen && (
+        <div className="mx-3 mb-2.5 rounded-lg border border-zinc-100 overflow-hidden bg-white">
+          <div className="px-2.5 py-2 border-b border-zinc-100">
+            <div className="flex items-center gap-1 text-[9px] text-zinc-400 uppercase tracking-widest mb-1.5">
+              <Terminal size={8} />
+              Parameters
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <pre className="text-[10.5px] text-zinc-500 bg-zinc-50 rounded-md p-2 overflow-x-auto leading-relaxed border border-zinc-100/80 font-mono">
+              {JSON.stringify(toolCall.parameters, null, 2)}
+            </pre>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -95,6 +93,13 @@ export function ToolCallGroup({ toolCalls }: ToolCallGroupProps) {
   if (!toolCalls || toolCalls.length === 0) return null;
 
   const runCount = toolCalls.filter((t) => t.status === "running").length;
+  const lastRunningIndex = (() => {
+    let idx = -1;
+    toolCalls.forEach((t, i) => {
+      if (t.status === "running") idx = i;
+    });
+    return idx;
+  })();
 
   return (
     <div className="mt-2 rounded-xl border border-zinc-200/80 overflow-hidden bg-zinc-50/60 max-w-xs w-full text-xs">
@@ -113,8 +118,12 @@ export function ToolCallGroup({ toolCalls }: ToolCallGroupProps) {
       </div>
 
       <div className="divide-y divide-zinc-100">
-        {toolCalls.map((tc) => (
-          <ToolCard key={tc.id} toolCall={tc} />
+        {toolCalls.map((tc, index) => (
+          <ToolCard
+            key={tc.id}
+            toolCall={tc}
+            isLastRunning={index === lastRunningIndex}
+          />
         ))}
       </div>
     </div>

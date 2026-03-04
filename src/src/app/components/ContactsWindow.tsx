@@ -2,18 +2,18 @@ import { User, UserPlus, MessageSquare } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useEffect, useState } from 'react';
 import { SearchBar } from './ui/SearchBar';
-import { fetchContacts, type ContactItem } from '../services/contact';
+import { fetchContacts, getOrCreateChatByContactId, type ContactItem } from '../services/contact';
 
 interface ContactsWindowProps {
   onStartChat?: (contactId: number | string) => void;
 }
 
 const BOT_CONTACT_ID = '11111111-1111-1111-1111-111111111111';
-const BOT_CHAT_ID = '1f2e3d4c-5b6a-47d8-9c01-23456789abcd';
 
 export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
   const [selectedId, setSelectedId] = useState<string>(BOT_CONTACT_ID);
   const [contacts, setContacts] = useState<ContactItem[]>([]);
+  const [isStartingChat, setIsStartingChat] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,6 +32,18 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
   }, []);
 
   const selectedContact = contacts.find((c) => c.id === selectedId) || null;
+
+  const handleStartChat = async () => {
+    if (!selectedContact || isStartingChat) return;
+    setIsStartingChat(true);
+    try {
+      const chatId = await getOrCreateChatByContactId(selectedContact.id);
+      if (!chatId) return;
+      onStartChat?.(chatId);
+    } finally {
+      setIsStartingChat(false);
+    }
+  };
 
   return (
     <div className="flex h-full w-full bg-[#F5F5F5]">
@@ -79,7 +91,8 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
 
             <div className="flex justify-center gap-12 border-t border-gray-200 pt-10">
               <button
-                onClick={() => onStartChat && onStartChat(selectedContact.type === "bot" ? BOT_CHAT_ID : selectedContact.id)}
+                onClick={() => void handleStartChat()}
+                disabled={isStartingChat}
                 className="flex flex-col items-center gap-2 text-[#576B95] hover:text-[#4a5a80] group"
               >
                 <MessageSquare size={24} strokeWidth={1.5} />

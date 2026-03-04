@@ -77,9 +77,16 @@ export async function buildSystemPrompt({
     "## Runtime Context",
     `- Timezone: ${time.timezone}`,
     `- ISO time: ${time.isoTime}`,
-    `- Workspace: ${workDir || "(not set)"}`,
+    `- Workspace (working directory): ${workDir || "(not set)"}`,
+    `- Creez config directory: ${baseDir}`,
     `- Contact ID (botId for knowledge search): ${contactId || "(unknown)"}`,
     `- Chat ID: ${chatId || "(unknown)"}`,
+    "",
+    "## Directory Rules",
+    `- Your bash/read/write/edit tools run in the Workspace directory: ${workDir || "(not set)"}`,
+    `- Always use the Workspace as your working directory for user tasks. Do NOT use the Electron app launch path.`,
+    `- Creez system config, skills, memory, and environment files live under: ${baseDir}`,
+    `- When accessing .env, memory, or skill configs, use the Creez config directory (${baseDir}), not the Workspace.`,
     "",
     "## Assistant Identity",
     `- Name: ${name}`,
@@ -111,5 +118,7 @@ export async function buildSystemPrompt({
     "- Do not fabricate file contents or command outputs.",
   ];
 
-  return sections.join("\n").trim();
+  const result = sections.join("\n").trim();
+  console.log("[creez:system-prompt] full prompt:\n", result);
+  return result;
 }

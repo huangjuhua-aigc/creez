@@ -6,7 +6,7 @@ A desktop app that brings together chat, contacts, workspace, and AI agents in o
 
 ## Download
 
-Ready-to-use installers and portable builds are available on [**Releases**](https://github.com/YOUR_ORG/creez/releases). Download the latest version for your platform (Windows / macOS) and install or run directly.
+Ready-to-use installers and portable builds are available on [**Releases**](https://github.com/huangjuhua-aigc/creez/releases). Download the latest version for your platform (Windows / macOS) and install or run directly.
 
 ## Overview
 

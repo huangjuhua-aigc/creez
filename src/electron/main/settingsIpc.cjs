@@ -68,35 +68,19 @@ function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, sk
     try {
       const assistantConfigId = resolveAssistantConfigId(payload, contactRepository);
       const defaultConfigId = contactRepository?.getDefaultAssistantConfigId?.() ?? DEFAULT_BOT_ID;
-      console.log("[creez:flow] getAssistantConfig", {
-        payloadContactId: payload?.contactId ?? null,
-        assistantConfigId,
-        defaultConfigId,
-      });
       let config = assistantConfigRepository.getConfigById(assistantConfigId);
       if (!config) {
-        console.log("[creez:flow] getAssistantConfig NOT_FOUND", { assistantConfigId });
         return err("NOT_FOUND", "Assistant config not found.");
       }
-      console.log("[creez:flow] getAssistantConfig found", {
-        assistantConfigId,
-        modelCount: config.models?.length ?? 0,
-        modelIds: (config.models || []).map((m) => m?.id).filter(Boolean),
-      });
       // Non-default bots (e.g. RoundCloser) with empty models use default bot's config models so chat can start
       if (assistantConfigId !== defaultConfigId && (!config.models || config.models.length === 0)) {
         const defaultConfig = assistantConfigRepository.getConfigById(defaultConfigId);
-        console.log("[creez:flow] getAssistantConfig fallback to default", {
-          defaultConfigId,
-          defaultModelCount: defaultConfig?.models?.length ?? 0,
-        });
         if (defaultConfig?.models?.length) {
           config = { ...config, models: defaultConfig.models };
         }
       }
       return ok(config);
     } catch (error) {
-      console.log("[creez:flow] getAssistantConfig error", { message: error?.message || String(error) });
       return err("DB_ERROR", "Failed to read assistant config", error?.message || String(error));
     }
   });
@@ -114,17 +98,8 @@ function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, sk
       if (fromDefault) {
         apiKey = assistantConfigRepository.getModelApiKeyFromConfig(defaultConfigId, modelId);
       }
-      console.log("[creez:flow] getModelApiKey", {
-        payloadContactId: payload?.contactId ?? null,
-        assistantConfigId,
-        defaultConfigId,
-        modelId,
-        hasApiKey: Boolean(apiKey),
-        fromDefault,
-      });
       return ok({ modelId, apiKey });
     } catch (error) {
-      console.log("[creez:flow] getModelApiKey error", { message: error?.message || String(error) });
       return err("DB_ERROR", "Failed to read model API key", error?.message || String(error));
     }
   });
@@ -226,6 +201,38 @@ function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, sk
       return ok({ items });
     } catch (error) {
       return err("FS_ERROR", "Failed to list available skills", error?.message || String(error));
+    }
+  });
+
+  ipcMain.handle(CHANNELS.SETTINGS_GET_SKILL_ENV, async (_event, payload) => {
+    try {
+      const skillId = payload?.skillId;
+      if (!skillId || typeof skillId !== "string") {
+        return err("VALIDATION_ERROR", "skillId is required.");
+      }
+      if (!skillManager) return ok({ env: {} });
+      const env = await skillManager.getSkillEnv(skillId.trim());
+      return ok({ env });
+    } catch (error) {
+      return err("FS_ERROR", "Failed to read skill env", error?.message || String(error));
+    }
+  });
+
+  ipcMain.handle(CHANNELS.SETTINGS_SAVE_SKILL_ENV, async (_event, payload) => {
+    try {
+      const skillId = payload?.skillId;
+      const env = payload?.env;
+      if (!skillId || typeof skillId !== "string") {
+        return err("VALIDATION_ERROR", "skillId is required.");
+      }
+      if (!env || typeof env !== "object") {
+        return err("VALIDATION_ERROR", "env must be an object.");
+      }
+      if (!skillManager) return ok({ updated: true });
+      await skillManager.setSkillEnv(skillId.trim(), env);
+      return ok({ updated: true });
+    } catch (error) {
+      return err("FS_ERROR", "Failed to save skill env", error?.message || String(error));
     }
   });
 

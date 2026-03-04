@@ -37,6 +37,15 @@ function registerContactIpc(ipcMain, contactRepository) {
       return err("DB_ERROR", "Failed to create bot from template", message);
     }
   });
+
+  ipcMain.handle(CHANNELS.CONTACT_GET_DEFAULT_BOT_ID, async () => {
+    try {
+      const id = contactRepository.getDefaultAssistantConfigId?.() ?? "11111111-1111-1111-1111-111111111111";
+      return ok({ botId: id });
+    } catch (error) {
+      return err("DB_ERROR", "Failed to get default bot id", error?.message || String(error));
+    }
+  });
 }
 
 module.exports = {

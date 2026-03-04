@@ -87,11 +87,13 @@ out/
 !.env.template
 
 # Docs (generated output and doc folders; README.md at root not ignored if outside docs/)
-doc/
 docs/
 docs/_build/
 docs/build/
 docs/*.pdf
+# Debug / scratch notes (local-only, do not commit)
+docs/*debug*
+docs/*-debug-*
 
 # Deployment (local/override artifacts; keep Dockerfile, docker-compose.yml)
 docker-compose.override.yml

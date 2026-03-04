@@ -86,6 +86,21 @@ export async function listAvailableSkills(): Promise<Array<{ id: string; name: s
   return result.data.items || [];
 }
 
+export async function getSkillEnv(skillId: string): Promise<Record<string, string>> {
+  const api = window.electron?.settings;
+  if (!api || typeof api.getSkillEnv !== "function") return {};
+  const result = await api.getSkillEnv({ skillId });
+  if (!result.ok) return {};
+  return result.data?.env ?? {};
+}
+
+export async function saveSkillEnv(skillId: string, env: Record<string, string>): Promise<boolean> {
+  const api = window.electron?.settings;
+  if (!api || typeof api.saveSkillEnv !== "function") return false;
+  const result = await api.saveSkillEnv({ skillId, env });
+  return Boolean(result?.ok);
+}
+
 export async function readLocalImageDataUrl(path: string): Promise<string | null> {
   const api = window.electron?.settings;
   if (!path) return null;

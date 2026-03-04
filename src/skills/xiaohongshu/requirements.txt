@@ -1,0 +1,13 @@
+# 小红书技能 - Python 依赖（渲染 + 发布）
+
+# Markdown 与 YAML
+markdown>=3.4.0
+PyYAML>=6.0
+
+# 渲染图片（Playwright）
+playwright>=1.40.0
+
+# 小红书发布（本地或 API）
+xhs>=0.4.0
+python-dotenv>=1.0.0
+requests>=2.28.0

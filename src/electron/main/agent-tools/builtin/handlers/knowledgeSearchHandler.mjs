@@ -106,9 +106,16 @@ export function createKnowledgeSearchHandler(runtimeContext = {}) {
         const matches = Array.isArray(payload?.data?.matches)
           ? payload.data.matches.map((item, index) => normalizeMatch(item, index))
           : [];
+        const firstMatchPreview =
+          matches.length > 0 && matches[0]?.text
+            ? String(matches[0].text).slice(0, 120).replace(/\s+/g, " ").trim() + (String(matches[0].text).length > 120 ? "…" : "")
+            : undefined;
         console.log("[creezv2 knowledge_search] response-ok", {
           status: response.status,
           matchCount: matches.length,
+          query,
+          botId,
+          firstMatchPreview,
         });
         if (matches.length === 0) {
           const envelope = buildErrorEnvelope({

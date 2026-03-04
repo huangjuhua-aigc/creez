@@ -21,6 +21,7 @@
   "dependencies": {
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
+    "@larksuiteoapi/node-sdk": "^1.59.0",
     "@mariozechner/pi-ai": "^0.55.1",
     "@mariozechner/pi-coding-agent": "^0.55.1",
     "@mui/icons-material": "7.3.5",
@@ -79,15 +80,15 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",
-    "sharp": "0.33.5",
     "@vitejs/plugin-react": "4.7.0",
     "concurrently": "latest",
     "cross-env": "latest",
     "electron": "latest",
+    "electron-builder": "^25.1.2",
+    "sharp": "0.33.5",
     "tailwindcss": "4.1.12",
     "vite": "6.3.5",
-    "wait-on": "latest",
-    "electron-builder": "^25.1.2"
+    "wait-on": "latest"
   },
   "peerDependencies": {
     "react": "18.3.1",
@@ -126,16 +127,25 @@
     "win": {
       "icon": "icons/icon_256x256.png",
       "target": [
-        { "target": "dir", "arch": ["x64"] }
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
       ]
     },
     "mac": {
       "icon": "icons/icon_512x512.png",
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "category": "public.app-category.productivity"
     },
     "linux": {
-      "target": ["AppImage"]
+      "target": [
+        "AppImage"
+      ]
     }
   }
 }

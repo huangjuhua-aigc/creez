@@ -45,6 +45,14 @@ type PendingAttachment = {
 
 type ChatMessageItemWithTools = ChatMessageItem & { toolCalls?: ToolCall[] };
 
+type ChatStreamState = {
+  assistantMessageId: string;
+  streamedText: string;
+  botId: string | null;
+  toolCalls: ToolCall[];
+  toolMessageId: string | null;
+};
+
 function parseAssistantText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -283,6 +291,8 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   const selectedChatIdRef = useRef(selectedChatId);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const activeToolCallsRef = useRef<ToolCall[]>([]);
+  /** Per-chat stream tracking — background bots persist to DB even when user switches away. */
+  const chatStreamsRef = useRef<Map<string, ChatStreamState>>(new Map());
 
   const scrollMessagesToBottom = () => {
     const el = messagesScrollRef.current;
@@ -340,6 +350,15 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   }, []);
 
   useEffect(() => {
+    const unsub = window.electron?.channel?.onNewMessage?.(() => {
+      void reloadChats(selectedChatId || undefined);
+    });
+    return () => {
+      unsub?.();
+    };
+  }, [selectedChatId]);
+
+  useEffect(() => {
     if (activeChatId) {
       const nextId = String(activeChatId);
       setSelectedChatId(nextId);
@@ -372,7 +391,16 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       setIsLoadingMessages(true);
       const items = await fetchChatMessages(chatId, chatName, chatAvatar);
       if (cancelled) return;
-      setMessages(items);
+      const stream = chatStreamsRef.current.get(chatId);
+      if (stream?.assistantMessageId) {
+        setMessages(items.map((msg) =>
+          msg.id === stream.assistantMessageId
+            ? { ...msg, content: stream.streamedText || msg.content, ...(stream.toolCalls?.length ? { toolCalls: stream.toolCalls } : {}) }
+            : msg
+        ));
+      } else {
+        setMessages(items);
+      }
       setIsLoadingMessages(false);
     }
     loadMessages();
@@ -398,6 +426,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     const offEvent = onAgentEvent((payload) => handleIncomingAgentEvent(payload));
     const offError = onAgentError((message) => {
       const text = message || "Request failed.";
+      console.log("[creez:chat] reply_error", { message: text });
       chatLog("agent:error", text);
       if (initRejectRef.current && !agentReadyRef.current) {
         initRejectRef.current(new Error(text));
@@ -449,6 +478,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         );
       }
       const errorInCurrentChat = errChatId == null || errChatId === selectedChatIdRef.current;
+      if (errChatId) chatStreamsRef.current.delete(errChatId);
       activeAssistantMessageIdRef.current = null;
       activeToolMessageIdRef.current = null;
       activeToolCallsRef.current = [];
@@ -483,9 +513,28 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   }, [isStreaming]);
   useEffect(() => {
     selectedChatIdRef.current = selectedChatId;
-    const streamingHere = activeStreamChatIdRef.current != null && activeStreamChatIdRef.current === selectedChatId;
-    setIsStreaming(streamingHere);
+    const stream = chatStreamsRef.current.get(selectedChatId);
+    if (stream) {
+      activeAssistantMessageIdRef.current = stream.assistantMessageId;
+      streamedTextRef.current = stream.streamedText;
+      activeStreamChatIdRef.current = selectedChatId;
+      activeStreamBotIdRef.current = stream.botId;
+      activeToolCallsRef.current = stream.toolCalls;
+      activeToolMessageIdRef.current = stream.toolMessageId;
+      setIsStreaming(true);
+    } else {
+      setIsStreaming(false);
+    }
   }, [selectedChatId]);
+
+  useEffect(() => {
+    if (!selectedChatId || !selectedModelId || chatList.length === 0) return;
+    const currentChat = chatList.find((c) => c.id === selectedChatId);
+    if (!currentChat?.contactId) return;
+    if (agentReadyRef.current) return;
+    if (initInFlightRef.current) return;
+    void ensureAgentInitialized();
+  }, [selectedChatId, selectedModelId, chatList]);
 
   useEffect(() => {
     if (!isStreaming) {
@@ -719,36 +768,26 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       event.type === "agent_ready" &&
       initResolveRef.current != null &&
       (eventChatId == null || pendingInitChatId == null || String(eventChatId) === String(pendingInitChatId));
-    const isForOtherChat =
-      eventChatId != null &&
-      currentSelectedChatId != null &&
-      String(eventChatId) !== String(currentSelectedChatId) &&
-      !isForPendingInit;
-    if (isForOtherChat) {
-      if (event.type === "message_end" && event.message?.role === "assistant") {
-        const finalText = parseAssistantText(event.message?.content) || "";
-        if (finalText) {
-          const preview = finalText.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
-          setChatList((prev) =>
-            prev.map((c) => (c.id === eventChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
-          );
-        }
-      }
-      return;
-    }
+    const isForCurrentChat =
+      eventChatId == null ||
+      currentSelectedChatId == null ||
+      String(eventChatId) === String(currentSelectedChatId) ||
+      isForPendingInit;
     if (event.type !== "message_update") {
       chatLog("agent:event", {
         type: event.type,
         chatId: eventChatId ?? null,
         role: event.message?.role || "",
         toolName: event.toolName || event.message?.toolName || "",
+        forCurrentChat: isForCurrentChat,
       });
     }
     switch (event.type) {
       case "agent_start":
       case "message_start":
         return;
-      case "agent_ready":
+      case "agent_ready": {
+        if (!isForPendingInit) return;
         console.log("[creez:flow] agent_ready applied", {
           eventChatId,
           currentSelectedChatId,
@@ -763,12 +802,34 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
           pendingInitChatIdRef.current = null;
         }
         return;
+      }
       case "message_update": {
         if (event.message?.role !== "assistant") return;
         const nextRaw = parseAssistantText(event.message?.content);
         if (!nextRaw) return;
-        const prev = streamedTextRef.current || "";
-        const fullText = nextRaw.startsWith(prev) ? nextRaw : `${prev}${nextRaw}`;
+        const streamKey = eventChatId || "";
+        const stream = chatStreamsRef.current.get(streamKey);
+        if (stream) {
+          const prev = stream.streamedText || "";
+          let next: string;
+          if (nextRaw.startsWith(prev) && nextRaw.length >= prev.length) {
+            next = nextRaw;
+          } else if (prev.startsWith(nextRaw) && nextRaw.length <= prev.length) {
+            next = prev;
+          } else {
+            const overlap = (() => {
+              const maxOverlap = Math.min(prev.length, nextRaw.length);
+              for (let n = maxOverlap; n > 0; n--) {
+                if (prev.slice(-n) === nextRaw.slice(0, n)) return n;
+              }
+              return 0;
+            })();
+            next = prev + nextRaw.slice(overlap);
+          }
+          stream.streamedText = next;
+        }
+        if (!isForCurrentChat) return;
+        const fullText = stream?.streamedText || nextRaw;
         streamedTextRef.current = fullText;
         const assistantId = activeAssistantMessageIdRef.current;
         if (!assistantId) return;
@@ -779,61 +840,96 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       }
       case "message_end": {
         if (event.message?.role !== "assistant") return;
-        const finalText = parseAssistantText(event.message?.content) || streamedTextRef.current || "";
-        streamedTextRef.current = finalText;
-        const assistantId = activeAssistantMessageIdRef.current;
-        const streamChatId = activeStreamChatIdRef.current;
-        if (!assistantId) return;
-        setMessages((prevMessages) =>
-          prevMessages.map((msg) => (msg.id === assistantId ? { ...msg, content: finalText } : msg))
-        );
-        void updateChatMessage({
-          id: assistantId,
-          content: finalText,
-          status: "done",
-          toolCalls: activeToolCallsRef.current?.length ? activeToolCallsRef.current : undefined,
-          updatedAt: Math.floor(Date.now() / 1000),
+        const meStreamKey = eventChatId || "";
+        const meStream = chatStreamsRef.current.get(meStreamKey);
+        const fromEvent = parseAssistantText(event.message?.content);
+        const accumulated = meStream?.streamedText ?? streamedTextRef.current ?? "";
+        // Prefer accumulated text when longer (avoids overwriting with only the post–tool-call segment)
+        const finalText =
+          accumulated.length >= (fromEvent?.length ?? 0)
+            ? accumulated
+            : (fromEvent || accumulated);
+        const meTc = isForCurrentChat ? activeToolCallsRef.current : meStream?.toolCalls;
+        console.log("[creez:chat] reply_done", {
+          chatId: eventChatId ?? null,
+          contentLen: finalText.length,
+          toolCallsCount: meTc?.length ?? 0,
+          forCurrentChat: isForCurrentChat,
         });
-        if (streamChatId) {
+        if (meStream) meStream.streamedText = finalText;
+        const meMsgId = isForCurrentChat ? activeAssistantMessageIdRef.current : meStream?.assistantMessageId;
+        if (meMsgId) {
+          void updateChatMessage({
+            id: meMsgId,
+            content: finalText,
+            status: "done",
+            toolCalls: meTc?.length ? meTc : undefined,
+            updatedAt: Math.floor(Date.now() / 1000),
+          });
+        }
+        if (eventChatId) {
           const preview = finalText.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
           setChatList((prev) =>
-            prev.map((c) => (c.id === streamChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
+            prev.map((c) => (c.id === eventChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
           );
+        }
+        if (isForCurrentChat) {
+          streamedTextRef.current = finalText;
+          const assistantId = activeAssistantMessageIdRef.current;
+          if (assistantId) {
+            setMessages((prevMessages) =>
+              prevMessages.map((msg) => (msg.id === assistantId ? { ...msg, content: finalText } : msg))
+            );
+          }
         }
         return;
       }
       case "agent_end": {
-        const endAssistantId = activeAssistantMessageIdRef.current;
-        const endChatId = activeStreamChatIdRef.current;
-        const endContent = streamedTextRef.current || "";
+        const aeStreamKey = eventChatId || "";
+        const aeStream = chatStreamsRef.current.get(aeStreamKey);
+        let endContent = isForCurrentChat ? (streamedTextRef.current || "") : (aeStream?.streamedText || "");
+        const endAssistantId = isForCurrentChat ? activeAssistantMessageIdRef.current : aeStream?.assistantMessageId;
+        const aeTc = isForCurrentChat ? activeToolCallsRef.current : aeStream?.toolCalls;
+        console.log("[creez:chat] agent_end", {
+          chatId: eventChatId ?? null,
+          contentLen: endContent.length,
+          toolCallsCount: aeTc?.length ?? 0,
+          forCurrentChat: isForCurrentChat,
+        });
         if (endAssistantId) {
           void updateChatMessage({
             id: endAssistantId,
             content: endContent,
             status: "done",
-            toolCalls: activeToolCallsRef.current?.length ? activeToolCallsRef.current : undefined,
+            toolCalls: aeTc?.length ? aeTc : undefined,
             updatedAt: Math.floor(Date.now() / 1000),
           });
         }
-        activeToolCallsRef.current = [];
-        if (endChatId) {
+        if (eventChatId) {
           const preview = endContent.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
           setChatList((prev) =>
-            prev.map((c) => (c.id === endChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
+            prev.map((c) => (c.id === eventChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
           );
         }
-        if (endChatId == null || endChatId === currentSelectedChatId) {
+        chatStreamsRef.current.delete(aeStreamKey);
+        if (isForCurrentChat) {
+          const assistantId = activeAssistantMessageIdRef.current;
+          if (assistantId) {
+            setMessages((prev) =>
+              prev.map((msg) => (msg.id === assistantId ? { ...msg, content: endContent } : msg))
+            );
+          }
+          activeAssistantMessageIdRef.current = null;
+          activeToolMessageIdRef.current = null;
+          activeToolCallsRef.current = [];
+          streamedTextRef.current = "";
+          activeStreamChatIdRef.current = null;
+          activeStreamBotIdRef.current = null;
           setIsStreaming(false);
         }
-        activeAssistantMessageIdRef.current = null;
-        activeToolMessageIdRef.current = null;
-        streamedTextRef.current = "";
-        activeStreamChatIdRef.current = null;
-        activeStreamBotIdRef.current = null;
         return;
       }
       default: {
-        if (!isStreamingRef.current) return;
         const isToolLikeEvent =
           event.type.startsWith("tool_") ||
           Boolean(event.toolName) ||
@@ -845,28 +941,38 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         const toolCallId = event.toolCallId || event.message?.toolCallId || "";
         if (!toolName) return;
         const id = toolCallId || `tc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const params = (event.args && typeof event.args === "object" ? event.args : {}) as Record<string, unknown>;
+        let tcStatus: "running" | "success" | "failure" = "running";
+        let tcResult: string | undefined;
         if (event.result !== undefined || event.isError) {
-          const status = event.isError ? "failure" : "success";
-          const result =
-            typeof event.result === "string"
-              ? event.result
-              : event.result !== undefined
-                ? JSON.stringify(event.result)
-                : event.message?.errorMessage || "";
-          upsertToolCall({
+          tcStatus = event.isError ? "failure" : "success";
+          tcResult = typeof event.result === "string"
+            ? event.result
+            : event.result !== undefined
+              ? JSON.stringify(event.result)
+              : event.message?.errorMessage || "";
+          if (tcStatus === "failure") tcResult = event.message?.errorMessage || tcResult;
+        }
+        const dfStreamKey = eventChatId || "";
+        const dfStream = chatStreamsRef.current.get(dfStreamKey);
+        if (dfStream) {
+          const existingIdx = dfStream.toolCalls.findIndex((tc) => tc.id === id);
+          const base = existingIdx >= 0 ? dfStream.toolCalls[existingIdx] : null;
+          const merged: ToolCall = {
             id,
             toolName,
-            parameters: event.args && typeof event.args === "object" ? (event.args as Record<string, unknown>) : {},
-            status,
-            result: status === "failure" ? (event.message?.errorMessage || result) : result,
-          });
+            parameters: Object.keys(params).length > 0 ? params : (base?.parameters ?? {}),
+            status: tcStatus !== "running" ? tcStatus : (base?.status ?? "running"),
+            result: tcResult ?? base?.result,
+          };
+          if (existingIdx >= 0) dfStream.toolCalls[existingIdx] = merged;
+          else dfStream.toolCalls.push(merged);
+        }
+        if (!isForCurrentChat || !isStreamingRef.current) return;
+        if (event.result !== undefined || event.isError) {
+          upsertToolCall({ id, toolName, parameters: params, status: tcStatus, result: tcResult });
         } else if (event.args !== undefined || event.type === "tool_call" || event.type?.startsWith("tool_call")) {
-          upsertToolCall({
-            id,
-            toolName,
-            parameters: event.args && typeof event.args === "object" ? (event.args as Record<string, unknown>) : {},
-            status: "running",
-          });
+          upsertToolCall({ id, toolName, parameters: params, status: "running" });
         }
       }
     }
@@ -892,21 +998,21 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       selectedModelId,
       hasSkills: Object.keys(config.skills || {}).length,
     });
+    const models = Array.isArray(config.models) ? config.models : [];
     const targetModel =
-      config.models.find((item) => item.id === selectedModelId) || config.models.find((item) => item.active) || config.models[0];
+      models.find((item) => item.id === selectedModelId) || models.find((item) => item.active) || models[0];
     if (!targetModel?.id || !targetModel.model || !targetModel.provider) {
       console.log("[creez:flow] ensureAgentInitialized fail: no targetModel or missing id/model/provider", {
         contactId,
+        modelCount: models.length,
         hasTargetModel: Boolean(targetModel),
         targetModelId: targetModel?.id,
-        targetModelProvider: targetModel?.provider,
-        targetModelModel: targetModel?.model,
       });
       chatLog("agent:init:skip", "no targetModel or missing id/model/provider");
       return false;
     }
     const apiKey = await fetchModelApiKey(targetModel.id, { contactId });
-    if (!apiKey) {
+    if (!apiKey || String(apiKey).trim() === "") {
       console.log("[creez:flow] ensureAgentInitialized fail: fetchModelApiKey returned empty", {
         contactId,
         modelId: targetModel.id,
@@ -1053,6 +1159,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     setChatList((prev) =>
       prev.map((c) => (c.id === streamingChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
     );
+    chatStreamsRef.current.delete(streamingChatId);
     setIsStreaming(false);
     activeAssistantMessageIdRef.current = null;
     activeToolMessageIdRef.current = null;
@@ -1138,7 +1245,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         sender: "system",
         name: "System",
         avatar: "",
-        content: "Model config is incomplete. Please set provider/model/API key in settings.",
+        content: "当前未配置可用模型或 API Key。请打开 设置 → Model Config，添加模型并填写 API Key 后保存。",
         timestamp: formatNowTime(),
         type: "system",
       };
@@ -1161,24 +1268,9 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       return;
     }
 
-    const prevStreamChatId = activeStreamChatIdRef.current;
-    const prevAssistantId = activeAssistantMessageIdRef.current;
-    const prevContent = streamedTextRef.current || "";
-    if (prevStreamChatId === activeChat.id) {
+    if (activeStreamChatIdRef.current === activeChat.id) {
       abortAgentPrompt(activeChat.id);
-    } else if (prevStreamChatId && prevAssistantId) {
-      const savedContent = prevContent || "(对方正在回复中…)";
-      void updateChatMessage({
-        id: prevAssistantId,
-        content: savedContent,
-        status: "done",
-        toolCalls: activeToolCallsRef.current?.length ? activeToolCallsRef.current : undefined,
-        updatedAt: Math.floor(Date.now() / 1000),
-      });
-      const preview = savedContent.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
-      setChatList((prev) =>
-        prev.map((c) => (c.id === prevStreamChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
-      );
+      chatStreamsRef.current.delete(activeChat.id);
     }
     streamedTextRef.current = "";
     activeToolMessageIdRef.current = null;
@@ -1187,6 +1279,13 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     activeAssistantMessageIdRef.current = assistantId;
     activeStreamChatIdRef.current = activeChat.id;
     activeStreamBotIdRef.current = activeChat.contactId || null;
+    chatStreamsRef.current.set(activeChat.id, {
+      assistantMessageId: assistantId,
+      streamedText: "",
+      botId: activeChat.contactId || null,
+      toolCalls: [],
+      toolMessageId: null,
+    });
     setIsStreaming(true);
     setMessages((prev) => [
       ...prev,
@@ -1234,6 +1333,11 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       chatId: selectedChatId ?? null,
       text: contentWithPaths,
       images,
+    });
+    console.log("[creez:chat] send", {
+      chatId: selectedChatId ?? null,
+      textLen: contentWithPaths.length,
+      imageCount: images.length,
     });
     chatLog("agent:prompt", {
       textLen: contentWithPaths.length,
@@ -1296,7 +1400,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-center mb-0.5">
+                  <div className="flex justify-between items-center mb-0.5 gap-1">
                     <h3 className="text-[13px] font-normal text-black truncate pr-1">{chat.name}</h3>
                     <span className="text-[10px] text-gray-400 flex-shrink-0">{chat.time}</span>
                   </div>
@@ -1338,8 +1442,13 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
                   </div>
                   <div className={cn("flex flex-col", isMe ? "items-end" : "items-start")}>
                     {!isMe && (
-                      <div className="flex items-baseline gap-2 mb-1">
+                      <div className="flex items-baseline gap-2 mb-1 flex-wrap">
                         <span className="text-xs text-gray-500">{msg.name}</span>
+                        {(msg as { channelType?: string | null }).channelType === "feishu" ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600">来自飞书</span>
+                        ) : (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">Creez</span>
+                        )}
                         <span className="text-xs text-gray-400">{msg.timestamp}</span>
                       </div>
                     )}

@@ -30,3 +30,12 @@ export async function fetchContacts(type?: "bot" | "human" | "group"): Promise<C
   }));
   return mapped;
 }
+
+export async function getOrCreateChatByContactId(contactId: string): Promise<string | null> {
+  const api = window.electron?.chat;
+  const id = String(contactId || "").trim();
+  if (!api || typeof api.getOrCreateByContact !== "function" || !id) return null;
+  const result = await api.getOrCreateByContact({ contactId: id });
+  if (!result.ok || !result.data?.chatId) return null;
+  return String(result.data.chatId);
+}

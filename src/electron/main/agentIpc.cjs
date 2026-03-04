@@ -1,12 +1,25 @@
+const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { CHANNELS } = require("./channels.cjs");
 const { getEngineForContact, getPiEngine } = require("./conversation/engineRegistry.cjs");
 
+/** Expand ~ to homedir; leave other paths unchanged. */
+function resolveWorkDir(raw) {
+  if (raw == null || String(raw).trim() === "") return null;
+  const s = String(raw).trim();
+  const home = os.homedir();
+  if (s === "~" || s.startsWith("~/") || s.startsWith("~\\")) {
+    return path.join(home, s.slice(1).replace(/\//g, path.sep));
+  }
+  return path.resolve(s);
+}
+
+/** Default workspace when user has not chosen one in Settings. */
+const DEFAULT_WORKSPACE_ROOT = path.join(os.homedir(), ".creez", "workplace");
+
 /** Engine used for the current session (set on init, used for prompt/setModel/abort). */
 let currentEngine = null;
-/** WebContents to send agent events to (set on init so prompt-phase events reach the same window). */
-let currentSender = null;
 
 const DEBUG_AGENT = false;
 
@@ -53,7 +66,7 @@ function normalizeImages(images) {
 }
 
 function registerAgentIpc(ipcMain, deps = {}) {
-  const { assistantConfigRepository, appStateStore, memoryStore, contactRepository, creezHome } = deps;
+  const { assistantConfigRepository, appStateStore, memoryStore, contactRepository, chatRepository, creezHome } = deps;
   const agentDir = creezHome ? path.join(creezHome, ".creez") : path.join(os.homedir(), ".creez");
 
   ipcMain.on(CHANNELS.AGENT_INIT, async (event, payload) => {
@@ -119,8 +132,24 @@ function registerAgentIpc(ipcMain, deps = {}) {
         activeModelId: activeModel?.id ?? null,
         rawConfigModelCount: rawConfig?.models?.length ?? 0,
       });
-      const workDir = payload?.workDir || appState?.workspaceRoot || os.homedir();
+      const rawRoot = payload?.workDir || appState?.workspaceRoot || null;
+      const workDir = resolveWorkDir(rawRoot) || DEFAULT_WORKSPACE_ROOT;
+      try {
+        await fs.mkdir(workDir, { recursive: true });
+      } catch (e) {
+        console.warn("[creez:agent] workspace dir create failed:", e?.message || String(e));
+      }
       const memory = memoryStore ? await memoryStore.read(payload?.memoryPath) : { content: "", path: "" };
+
+      let chatHistory = "";
+      if (chatRepository && payload?.chatId) {
+        try {
+          const historyRows = chatRepository.getMessages({ chatId: payload.chatId, limit: 50 });
+          chatHistory = (historyRows?.items || [])
+            .map((m) => `${m.sender === "user" ? "User" : "Assistant"}: ${m.content}`)
+            .join("\n");
+        } catch { /* ignore */ }
+      }
       log("agent:init:resolved", {
         provider,
         modelId,
@@ -153,7 +182,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
         return;
       }
 
-      currentSender = event.sender;
+      const initSender = event.sender;
       const context = {
         chatId: payload?.chatId ?? null,
         contactId: payload?.contactId ?? null,
@@ -162,32 +191,24 @@ function registerAgentIpc(ipcMain, deps = {}) {
         assistantConfig: rawConfig,
         workDir,
         agentDir,
-        memoryContent: memory.content || "",
+        memoryContent: [memory.content || "", chatHistory].filter(Boolean).join("\n"),
         memoryPath: memory.path || "",
         provider,
         modelId,
         apiKey,
         sendEvent: (data) => {
-          if (currentSender && typeof currentSender.isDestroyed === "function" && !currentSender.isDestroyed()) {
-            currentSender.send(CHANNELS.AGENT_EVENT, data);
+          if (initSender && typeof initSender.isDestroyed === "function" && !initSender.isDestroyed()) {
+            initSender.send(CHANNELS.AGENT_EVENT, data);
           }
         },
         sendError: (message) => {
-          if (currentSender && typeof currentSender.isDestroyed === "function" && !currentSender.isDestroyed()) {
-            currentSender.send(CHANNELS.AGENT_EVENT_ERROR, message);
+          if (initSender && typeof initSender.isDestroyed === "function" && !initSender.isDestroyed()) {
+            initSender.send(CHANNELS.AGENT_EVENT_ERROR, message);
           }
         },
       };
       await currentEngine.init(context);
       log("agent:init:ok", { provider, modelId, chatId: context.chatId ?? null });
-      setImmediate(() => {
-        if (currentSender && typeof currentSender.isDestroyed === "function" && !currentSender.isDestroyed()) {
-          currentSender.send(CHANNELS.AGENT_EVENT, { type: "agent_ready", chatId: context.chatId ?? undefined });
-          log("agent:init:agent_ready:sent", "explicit agent_ready (setImmediate) from agentIpc");
-        } else {
-          log("agent:init:agent_ready:skip", "sender destroyed or missing");
-        }
-      });
     } catch (error) {
       const message = error?.message || String(error);
       console.error("[creezv2] agent:init error:", message);
@@ -198,14 +219,23 @@ function registerAgentIpc(ipcMain, deps = {}) {
 
   ipcMain.on(CHANNELS.AGENT_PROMPT, async (event, payload) => {
     const chatId = payload?.chatId ?? "";
-    const textLen = String(payload?.text || "").length;
+    const userText = String(payload?.text || "");
+    const textLen = userText.length;
     const imageCount = Array.isArray(payload?.images) ? payload.images.length : 0;
+    const textPreview = userText.slice(0, 400).replace(/\s+/g, " ").trim();
+    console.log("[creez:chat] prompt", {
+      chatId: chatId || null,
+      textLen,
+      imageCount,
+      textPreview: textPreview ? `${textPreview}${userText.length > 400 ? "…" : ""}` : null,
+    });
     log("agent:prompt:recv", { chatId: chatId || null, textLen, imageCount });
     try {
       const engine = currentEngine || getPiEngine();
       const hasSession = await engine.hasSession(chatId);
       log("agent:prompt:session", { hasSession, chatId: chatId || null });
       if (!hasSession) {
+        console.log("[creez:chat] prompt no-session", { chatId: chatId || null });
         log("agent:prompt:no-session", "Agent not initialized for this chat");
         event.sender.send(CHANNELS.AGENT_EVENT_ERROR, "Agent not initialized.");
         return;
@@ -216,14 +246,21 @@ function registerAgentIpc(ipcMain, deps = {}) {
         text: payload?.text || "",
         images: normalizeImages(payload?.images),
       });
+      const donePreview = userText.slice(0, 200).replace(/\s+/g, " ").trim();
+      console.log("[creez:chat] prompt done", {
+        chatId: chatId || null,
+        userTextLen: textLen,
+        userTextPreview: donePreview ? `${donePreview}${userText.length > 200 ? "…" : ""}` : null,
+      });
       log("agent:prompt:engine.prompt:done", "");
       log("agent:prompt:done", "prompt resolved");
-      if (currentSender && typeof currentSender.isDestroyed === "function" && !currentSender.isDestroyed()) {
-        currentSender.send(CHANNELS.AGENT_EVENT, { type: "agent_end", chatId: chatId || undefined });
+      if (event.sender && typeof event.sender.isDestroyed === "function" && !event.sender.isDestroyed()) {
+        event.sender.send(CHANNELS.AGENT_EVENT, { type: "agent_end", chatId: chatId || undefined });
         log("agent:prompt:agent_end:sent", "fallback agent_end after prompt done");
       }
     } catch (error) {
       const message = error?.message || String(error);
+      console.log("[creez:chat] prompt error", { chatId: chatId || null, error: message });
       console.error("[creezv2] agent:prompt error:", message);
       log("agent:prompt:error", message);
       event.sender.send(CHANNELS.AGENT_EVENT_ERROR, message);

@@ -9,6 +9,8 @@ export type ChatListItem = {
   lastMessage: string;
   unread: number;
   time: string;
+  channelType?: string;
+  channelChatId?: string | null;
 };
 
 export type ChatMessageItem = {
@@ -20,6 +22,8 @@ export type ChatMessageItem = {
   content: string;
   timestamp: string;
   type: "text" | "tool" | "system";
+  channelType?: string | null;
+  channelMessageId?: string | null;
 };
 
 function formatTime(ts: number | null): string {
@@ -55,6 +59,8 @@ export async function fetchChatList(): Promise<ChatListItem[]> {
       lastMessage: item.lastMessage || "",
       unread: item.unreadCount || 0,
       time: formatTime(item.lastMessageAt),
+      channelType: item.channelType ?? undefined,
+      channelChatId: item.channelChatId ?? null,
     };
   }));
   return mapped;
@@ -117,6 +123,8 @@ export async function fetchChatMessages(chatId: string, chatName: string, avatar
       content: msg.content,
       timestamp: formatTime(msg.createdAt),
       type: msg.sender === "system" ? "system" : "text",
+      channelType: (msg as { channelType?: string | null }).channelType ?? null,
+      channelMessageId: (msg as { channelMessageId?: string | null }).channelMessageId ?? null,
       ...(toolCalls ? { toolCalls } : {}),
     };
   });

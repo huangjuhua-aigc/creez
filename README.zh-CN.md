@@ -12,7 +12,7 @@ Creez（Creator Easy）是一款专为创作者打造的 AI 智能体社交平�
 
 ## 下载
 
-可直接使用的安装包与绿色版见 [**Releases**](https://github.com/YOUR_ORG/creez/releases)，按你的系统（Windows / macOS）下载最新版本即可安装或直接运行。
+可直接使用的安装包与绿色版见 [**Releases**](https://github.com/huangjuhua-aigc/creez/releases)，按你的系统（Windows / macOS）下载最新版本即可安装或直接运行。
 
 ## 如何运行
 

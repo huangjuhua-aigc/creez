@@ -39,6 +39,8 @@ declare global {
               lastMessageAt: number | null;
               unreadCount: number;
               modelUsed: string | null;
+              channelType?: string;
+              channelChatId?: string | null;
             }>;
             total: number;
           }>
@@ -54,9 +56,17 @@ declare global {
               createdAt: number;
               status: "pending" | "streaming" | "done" | "error";
               modelUsed: string | null;
+              channelType?: string | null;
+              channelMessageId?: string | null;
             }>;
             hasMore: boolean;
             nextBefore: number | null;
+          }>
+        >;
+        getOrCreateByContact: (payload: { contactId: string }) => Promise<
+          IpcResult<{
+            chatId: string;
+            created: boolean;
           }>
         >;
         appendMessage: (payload: {
@@ -104,6 +114,31 @@ declare global {
             name: string;
           }>
         >;
+        getDefaultBotId: () => Promise<IpcResult<{ botId: string }>>;
+      };
+      channel: {
+        listConfigs: (payload?: { botId?: string } | undefined) => Promise<
+          IpcResult<{
+            items: Array<{
+              id: string;
+              botId: string;
+              channelType: string;
+              enabled: boolean;
+              values: Record<string, string>;
+              createdAt?: number;
+              updatedAt?: number;
+            }>;
+            botId: string;
+          }>
+        >;
+        saveConfig: (payload: {
+          botId?: string;
+          channelType: string;
+          enabled: boolean;
+          values: Record<string, string>;
+        }) => Promise<IpcResult<{ id: string; updated: boolean }>>;
+        deleteConfig: (payload: { botId?: string; channelType: string }) => Promise<IpcResult<{ deleted: boolean }>>;
+        onNewMessage?: (listener: (payload: { chatId: string; channelType: string }) => void) => (() => void) | undefined;
       };
       workspace: {
         getTree: (payload?: { depth?: number }) => Promise<
@@ -185,6 +220,8 @@ declare global {
             items: Array<{ id: string; name: string; description: string; enabled: boolean }>;
           }>
         >;
+        getSkillEnv: (payload: { skillId: string }) => Promise<IpcResult<{ env: Record<string, string> }>>;
+        saveSkillEnv: (payload: { skillId: string; env: Record<string, string> }) => Promise<IpcResult<{ updated: boolean }>>;
       };
       attachment: {
         save: (payload: { buffer: ArrayBuffer; fileName: string }) => Promise<

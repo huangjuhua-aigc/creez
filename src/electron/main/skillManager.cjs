@@ -81,6 +81,82 @@ class SkillManager {
       }
     }
   }
+
+  /** Single .env path for all skill env (app-defined location). */
+  getCreezEnvFilePath() {
+    return this.path.join(this.homeDir, ".creez", ".env");
+  }
+
+  /** Which env keys each skill uses (for reading subset only). */
+  static getSkillEnvKeys() {
+    return {
+      xiaohongshu: ["XHS_COOKIE"],
+    };
+  }
+
+  /** Read full .env at ~/.creez/.env into key-value map. */
+  async _readCreezEnvFile() {
+    const envPath = this.getCreezEnvFilePath();
+    try {
+      const raw = await this.fs.readFile(envPath, "utf8");
+      const env = {};
+      for (const line of raw.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eq = trimmed.indexOf("=");
+        if (eq <= 0) continue;
+        const key = trimmed.slice(0, eq).trim();
+        const value = trimmed.slice(eq + 1).trim();
+        if (key) env[key] = value;
+      }
+      return env;
+    } catch {
+      return {};
+    }
+  }
+
+  /** Write full key-value map to ~/.creez/.env. */
+  async _writeCreezEnvFile(env) {
+    const creezDir = this.path.join(this.homeDir, ".creez");
+    await this.fs.mkdir(creezDir, { recursive: true });
+    const envPath = this.getCreezEnvFilePath();
+    const lines = Object.entries(env)
+      .filter(([, v]) => v != null && String(v).trim() !== "")
+      .map(([k, v]) => `${k}=${String(v).trim()}`);
+    await this.fs.writeFile(envPath, lines.length ? lines.join("\n") + "\n" : "", "utf8");
+  }
+
+  /**
+   * Read skill env from ~/.creez/.env (only keys for this skill).
+   * Returns { XHS_COOKIE?: string, ... } for that skill.
+   */
+  async getSkillEnv(skillId) {
+    if (!skillId || typeof skillId !== "string") return {};
+    const all = await this._readCreezEnvFile();
+    const keys = SkillManager.getSkillEnvKeys()[skillId.trim()];
+    if (!Array.isArray(keys)) return {};
+    const out = {};
+    for (const k of keys) {
+      if (all[k] !== undefined) out[k] = all[k];
+    }
+    return out;
+  }
+
+  /**
+   * Write skill env into ~/.creez/.env. Merges with existing file; only updates keys in `updates`.
+   */
+  async setSkillEnv(skillId, updates) {
+    if (!skillId || typeof skillId !== "string" || !updates || typeof updates !== "object") return;
+    const all = await this._readCreezEnvFile();
+    for (const [k, v] of Object.entries(updates)) {
+      if (v != null && String(v).trim() !== "") {
+        all[k] = String(v).trim();
+      } else if (all[k] !== undefined) {
+        delete all[k];
+      }
+    }
+    await this._writeCreezEnvFile(all);
+  }
 }
 
 module.exports = {

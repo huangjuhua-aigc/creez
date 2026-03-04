@@ -3,6 +3,7 @@ const CHANNELS = Object.freeze({
   APP_SET_STATE: "app:setState",
   CHAT_LIST: "chat:list",
   CHAT_GET_MESSAGES: "chat:getMessages",
+  CHAT_GET_OR_CREATE_BY_CONTACT: "chat:getOrCreateByContact",
   CHAT_APPEND_MESSAGE: "chat:appendMessage",
   CHAT_UPDATE_MESSAGE: "chat:updateMessage",
   CONTACT_LIST: "contact:list",
@@ -20,6 +21,8 @@ const CHANNELS = Object.freeze({
   SETTINGS_SELECT_WORKPLACE_DIRECTORY: "settings:selectWorkplaceDirectory",
   SETTINGS_READ_IMAGE_DATA_URL: "settings:readImageDataUrl",
   SETTINGS_LIST_AVAILABLE_SKILLS: "settings:listAvailableSkills",
+  SETTINGS_GET_SKILL_ENV: "settings:getSkillEnv",
+  SETTINGS_SAVE_SKILL_ENV: "settings:saveSkillEnv",
   MEMORY_READ: "memory:read",
   MEMORY_WRITE: "memory:write",
   AGENT_INIT: "agent:init",
@@ -30,6 +33,10 @@ const CHANNELS = Object.freeze({
   AGENT_EVENT_ERROR: "agent:eventError",
   ATTACHMENT_SAVE: "attachment:save",
   SYNC_PENDING_MESSAGES: "sync:pendingMessages",
+  CHANNEL_LIST_CONFIGS: "channel:listConfigs",
+  CHANNEL_SAVE_CONFIG: "channel:saveConfig",
+  CHANNEL_DELETE_CONFIG: "channel:deleteConfig",
+  CONTACT_GET_DEFAULT_BOT_ID: "contact:getDefaultBotId",
 });
 
 module.exports = {
