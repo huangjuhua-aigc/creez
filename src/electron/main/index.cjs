@@ -365,6 +365,7 @@ app.whenReady().then(async () => {
       contactRepository,
       chatRepository,
       assistantConfigRepository,
+      appStateStore,
     });
     registerChannelIpc(ipcMain, { channelConfigRepository, contactRepository, channelManager });
     registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, skillManager, contactRepository, { creezHome });
