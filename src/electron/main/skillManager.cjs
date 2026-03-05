@@ -91,6 +91,7 @@ class SkillManager {
   static getSkillEnvKeys() {
     return {
       xiaohongshu: ["XHS_COOKIE"],
+      "tavily-search": ["TAVILY_API_KEY"],
     };
   }
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./load-creez-env.mjs";
 
 function usage() {
   console.error(`Usage: search.mjs "query" [-n 5] [--deep] [--topic general|news] [--days 7]`);

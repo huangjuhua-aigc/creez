@@ -18,6 +18,8 @@ node {baseDir}/scripts/search.mjs "query" --deep
 node {baseDir}/scripts/search.mjs "query" --topic news
 ```
 
+Scripts load `TAVILY_API_KEY` from `~/.creez/.env` (or cwd/skill root `.env`) automatically, same as xiaohongshu.
+
 ## Options
 
 - `-n <count>`: Number of results (default: 5, max: 20)
@@ -32,7 +34,7 @@ node {baseDir}/scripts/extract.mjs "https://example.com/article"
 ```
 
 Notes:
-- Needs `TAVILY_API_KEY` from https://tavily.com
+- Needs `TAVILY_API_KEY` from https://tavily.com. In Creez: Settings → Skills → enable Tavily Search → fill in TAVILY_API_KEY (saved to `~/.creez/.env`). The scripts load it from `~/.creez/.env` or local `.env` when run.
 - Tavily is optimized for AI - returns clean, relevant snippets
 - Use `--deep` for complex research questions
 - Use `--topic news` for current events

@@ -295,10 +295,14 @@ const XHS_COOKIE_TIP = "获取方式：\n1. 浏览器登录 https://www.xiaohong
 
 // --- 2. Skills Settings ---
 
+const TAVILY_API_KEY_TIP = "在 https://tavily.com 注册并创建 API Key，填入此处后 Tavily 搜索技能可用。";
+
 function SkillsSettings() {
     const [skills, setSkills] = useState<Array<{ id: string; name: string; desc: string; enabled: boolean }>>([]);
     const [xhsCookie, setXhsCookie] = useState('');
     const [xhsSaving, setXhsSaving] = useState(false);
+    const [tavilyApiKey, setTavilyApiKey] = useState('');
+    const [tavilySaving, setTavilySaving] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -329,6 +333,18 @@ function SkillsSettings() {
         };
     }, [skills]);
 
+    useEffect(() => {
+        if (!skills.some((s) => s.id === 'tavily-search')) return;
+        let cancelled = false;
+        getSkillEnv('tavily-search').then((env) => {
+            if (cancelled) return;
+            setTavilyApiKey(env.TAVILY_API_KEY ?? '');
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [skills]);
+
     const persistSkills = async (nextSkills: Array<{ id: string; enabled: boolean }>) => {
         const payload: Record<string, boolean> = {};
         nextSkills.forEach((s) => {
@@ -350,6 +366,14 @@ function SkillsSettings() {
         if (!ok) toast.error('保存失败');
         else toast.success('保存成功');
         setXhsSaving(false);
+    };
+
+    const persistTavilyApiKey = async () => {
+        setTavilySaving(true);
+        const ok = await saveSkillEnv('tavily-search', { TAVILY_API_KEY: tavilyApiKey.trim() });
+        if (!ok) toast.error('保存失败');
+        else toast.success('保存成功');
+        setTavilySaving(false);
     };
 
     const sortedSkills = [...skills].sort((a, b) => {
@@ -427,6 +451,42 @@ function SkillsSettings() {
                                                 <Save size={14} />
                                             )}
                                             {xhsSaving ? '保存中…' : '保存'}
+                                        </button>
+                                        <p className="mt-1 text-[10px] text-gray-400">保存到 ~/.creez/.env</p>
+                                    </div>
+                                )}
+                                {skill.id === 'tavily-search' && (
+                                    <div className="mt-4 pt-4 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
+                                        <label className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                                            TAVILY_API_KEY
+                                            <span className="relative group/tip cursor-default">
+                                                <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-gray-300 text-gray-400 text-[9px] font-bold normal-case tracking-normal leading-none">?</span>
+                                                <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-52 px-3 py-2 rounded-lg bg-gray-800 text-white text-[11px] font-normal normal-case tracking-normal leading-relaxed opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150 shadow-lg z-50 whitespace-pre-line">
+                                                    {TAVILY_API_KEY_TIP}
+                                                    <span className="absolute left-1/2 -translate-x-1/2 top-full border-4 border-transparent border-t-gray-800" />
+                                                </span>
+                                            </span>
+                                        </label>
+                                        <input
+                                            type="password"
+                                            autoComplete="off"
+                                            placeholder="填入 API Key 后 Tavily 搜索可用"
+                                            value={tavilyApiKey}
+                                            onChange={(e) => setTavilyApiKey(e.target.value)}
+                                            className="mt-1.5 w-full rounded-lg border border-gray-200 px-3 py-2 text-[13px] text-gray-800 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#07C160]/30 focus:border-[#07C160]"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => persistTavilyApiKey()}
+                                            disabled={tavilySaving}
+                                            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#07C160] text-white hover:bg-[#06ad56] disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            {tavilySaving ? (
+                                                <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                            ) : (
+                                                <Save size={14} />
+                                            )}
+                                            {tavilySaving ? '保存中…' : '保存'}
                                         </button>
                                         <p className="mt-1 text-[10px] text-gray-400">保存到 ~/.creez/.env</p>
                                     </div>
