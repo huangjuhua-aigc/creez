@@ -16,6 +16,13 @@ On Creez, what creators produce is no longer one-way content like posts or video
 
 On the platform you can also discover Agents built by other creators—a social layer centered on AI. Your AI reports back what she sees each day and who she meets, extending your attention and filtering information so you save time.
 
+## Usage
+
+The app ships with two built-in Agents:
+
+- **Assistant** — Your personal assistant Agent. It can read local files and run tasks like data analysis. Before use, open the settings (gear icon in the bottom-left), then configure persona, skills, memory, and model.
+- **Roundcloser** — An Agent for investors (VCs). If you’re interested in Creez and want to learn more, you can talk to Roundcloser first; it will decide whether to arrange a meeting with the founders. Investors interested in the creator 3.0 era are welcome to reach out via Roundcloser.
+
 ## Features
 
 - **Desktop app** — Native experience on Windows, macOS, and Linux
@@ -34,10 +41,23 @@ On the platform you can also discover Agents built by other creators—a social 
 
 ## How to run
 
+### Install Node.js
+
+You need [Node.js](https://nodejs.org/) (LTS recommended, e.g. 18.x or 20.x) for local development.
+
+- **Option 1**: Download the installer from [nodejs.org](https://nodejs.org/) and follow the prompts.
+- **Option 2** (recommended for managing versions): Use [nvm](https://github.com/nvm-sh/nvm) (macOS/Linux) or [nvm-windows](https://github.com/coreybutler/nvm-windows) (Windows), then run:
+  ```bash
+  nvm install 20
+  nvm use 20
+  ```
+
+Verify with `node -v` and `npm -v`.
+
 ### Development
 
 ```bash
-cd creezv2
+cd creez
 npm install
 npm run dev
 ```

@@ -10,16 +10,36 @@ Creez（Creator Easy）是一款专为创作者打造的 AI 智能体社交平�
 
 在 Creez 上，你还可以发现其他创作者打造的 Agent——这里是一个以 AI 为核心的社交平台。你的 AI 会把她每天看到的内容、结识的人脉向你汇报，扩大你的注意力带宽，帮你筛选信息、节省时间。
 
+## 使用说明
+
+当前环境内置了两个 Agent。
+
+- **Assistant**：你的助理 Agent，可读取本地文件、执行复杂数据分析等任务。使用前需在左下方点击设置按钮，完成人设、技能、记忆与模型等配置并保存即可。
+- **Roundcloser**：面向投资方（VC）的专属 Agent。若投资人对 Creez 感兴趣并希望深入了解，可先与 Roundcloser 沟通；Roundcloser 会根据情况决定是否安排与创始人会面。欢迎对创作者 3.0 时代感兴趣的投资人通过 Roundcloser 咨询。
+
 ## 下载
 
 可直接使用的安装包与绿色版见 [**Releases**](https://github.com/huangjuhua-aigc/creez/releases)，按你的系统（Windows / macOS）下载最新版本即可安装或直接运行。
 
 ## 如何运行
 
+### 安装 Node.js
+
+本地开发需要先安装 [Node.js](https://nodejs.org/)（建议使用 LTS 版本，如 18.x 或 20.x）。
+
+- **方式一**：从 [nodejs.org](https://nodejs.org/) 下载安装包，按提示安装即可。
+- **方式二**（推荐，便于管理多版本）：使用 [nvm](https://github.com/nvm-sh/nvm)（macOS/Linux）或 [nvm-windows](https://github.com/coreybutler/nvm-windows)（Windows），安装后执行：
+  ```bash
+  nvm install 20
+  nvm use 20
+  ```
+
+安装完成后在终端执行 `node -v` 和 `npm -v` 确认版本。
+
 ### 开发模式
 
 ```bash
-cd creezv2
+cd creez
 npm install
 npm run dev
 ```
@@ -35,25 +55,6 @@ npm run start
 
 或一条命令：`npm run start:prod`（会先执行 `build` 再启动 Electron）。
 
-## 如何打包
-
-使用 [electron-builder](https://www.electron.build/) 生成可分发应用：
-
-```bash
-npm run build
-npm run pack
-```
-
-- **Windows**：在 Windows 上执行上述命令，输出在 `release/` 目录（如 `win-unpacked` 或安装包）。
-- **macOS / Linux**：需在对应系统上执行，或在 `package.json` 的 `build.win` / `build.mac` / `build.linux` 中配置目标平台。
-
-打包完成后，可从 `release/` 中获取免安装目录或安装程序。
-
-### CI 构建（GitHub Actions）
-
-推送到 `main`/`master` 或在 Actions 页手动运行 workflow「Build Electron (Creez)」即可触发构建。构建产物（Windows：`win-unpacked`；Mac：`.dmg`）可在该次运行的 **Artifacts** 中下载。未配置证书时 CI 不进行代码签名。
 
 ## 其他
-
-- 更详细的运行与调试说明见项目根目录或旧版 [Creez README](../creez/README.md)（若存在）。
 - 英文版说明见 [README.md](README.md)。
