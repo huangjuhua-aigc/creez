@@ -68,7 +68,12 @@ class PiConversationEngine {
     const text = payload?.text ?? "";
     const images = Array.isArray(payload?.images) ? payload.images : [];
     if (!text && images.length === 0) return;
-    await runner.prompt({ chatId, text, images });
+    await runner.prompt({
+      chatId,
+      text,
+      images,
+      streamingBehavior: payload?.streamingBehavior,
+    });
   }
 
   async setModel(chatId, config) {

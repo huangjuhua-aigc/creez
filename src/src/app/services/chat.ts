@@ -229,6 +229,13 @@ export function onAgentError(listener: (message: string) => void): () => void {
   return window.electron.agent.onError(listener);
 }
 
+export function onChatMessageAppended(
+  listener: (payload: { type?: string; chatId?: string; message?: unknown }) => void
+): () => void {
+  if (!window.electron?.chat?.onMessageAppended) return () => {};
+  return window.electron.chat.onMessageAppended(listener);
+}
+
 export type ToolCallPayload = {
   id: string;
   toolName: string;

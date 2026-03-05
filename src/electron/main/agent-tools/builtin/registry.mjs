@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { Type } from "@sinclair/typebox";
 import { createKnowledgeSearchHandler } from "./handlers/knowledgeSearchHandler.mjs";
 import { createVcLeadCaptureHandler } from "./handlers/vcLeadCaptureHandler.mjs";
+import { scheduledTaskHandler } from "./handlers/scheduledTaskHandler.mjs";
 
 const require = createRequire(import.meta.url);
 const { BUILTIN_SKILL_IDS } = require("../../builtinSkillIds.cjs");
@@ -20,6 +21,13 @@ function isVcLeadCaptureEnabled(runtimeContext = {}) {
   const defaultContactId = runtimeContext?.defaultContactId;
   if (assistantConfigId == null || defaultContactId == null) return false;
   return String(assistantConfigId) !== String(defaultContactId);
+}
+
+function isScheduledTaskEnabled(runtimeContext = {}) {
+  const assistantConfigId = runtimeContext?.assistantConfigId;
+  const defaultContactId = runtimeContext?.defaultContactId;
+  if (assistantConfigId == null || defaultContactId == null) return false;
+  return String(assistantConfigId) === String(defaultContactId);
 }
 
 function createBuiltinSkillRegistry() {
@@ -50,6 +58,28 @@ function createBuiltinSkillRegistry() {
     }),
     isEnabled: isVcLeadCaptureEnabled,
     createHandler: createVcLeadCaptureHandler,
+  });
+
+  definitions.set("scheduled_task", {
+    id: "scheduled_task",
+    label: "Scheduled Task",
+    description:
+      "Manage recurring scheduled tasks for the default bot in this chat: list existing tasks, create a new one (cron + prompt), or delete by task id. Choose 'action' from list/create/delete based on user intent and supply the corresponding parameters.",
+    parameters: Type.Object({
+      action: Type.Union(
+        [
+          Type.Literal("list"),
+          Type.Literal("create"),
+          Type.Literal("delete"),
+        ],
+        { description: "Operation: 'list' to show tasks in this chat; 'create' to add one (requires cron_expression and task_prompt); 'delete' to remove one (requires task_id from a prior list)." }
+      ),
+      task_id: Type.Optional(Type.String({ description: "Required when action is 'delete'. Task id from a previous list result." })),
+      cron_expression: Type.Optional(Type.String({ description: "Required when action is 'create'. Standard 5-field cron, e.g. '0 8 * * *' for 8:00 daily." })),
+      task_prompt: Type.Optional(Type.String({ description: "Required when action is 'create'. Instruction sent to the agent at each run." })),
+    }),
+    isEnabled: isScheduledTaskEnabled,
+    createHandler: scheduledTaskHandler,
   });
 
   return {
