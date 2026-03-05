@@ -317,7 +317,7 @@ export async function prompt(payload) {
   const botKey = resolveSessionKey(rawKey);
   const entry = sessionsByBot.get(botKey);
   if (!entry?.session) return;
-  const { text, images } = payload || {};
+  const { text, images, streamingBehavior } = payload || {};
   if (!text && (!images || images.length === 0)) return;
   const promptText = String(text || "");
   entry.lastPromptText = promptText.slice(0, 300).replace(/\s+/g, " ").trim();
@@ -328,10 +328,14 @@ export async function prompt(payload) {
   console.log("[creez:agent] prompt body:\n", promptText || "(empty)");
 
   log("prompt:start", { botKey, textLen: promptText.length });
-  await entry.session.prompt(text || "", {
+  const options = {
     images: Array.isArray(images) ? images : [],
     expandPromptTemplates: false,
-  });
+  };
+  if (streamingBehavior === "followUp" || streamingBehavior === "steer") {
+    options.streamingBehavior = streamingBehavior;
+  }
+  await entry.session.prompt(text || "", options);
   log("prompt:end", { botKey });
 }
 

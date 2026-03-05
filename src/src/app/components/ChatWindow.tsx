@@ -11,6 +11,7 @@ import {
   initAgent,
   onAgentError,
   onAgentEvent,
+  onChatMessageAppended,
   saveAttachment,
   switchAgentModel,
   sendAgentPrompt,
@@ -407,6 +408,21 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     return () => {
       cancelled = true;
     };
+  }, [selectedChatId, chatList]);
+
+  useEffect(() => {
+    const unsub = onChatMessageAppended((payload) => {
+      const chatId = payload?.chatId;
+      if (chatId && String(chatId) === String(selectedChatId)) {
+        const currentChat = chatList.find((c) => c.id === selectedChatId);
+        if (currentChat) {
+          fetchChatMessages(selectedChatId, currentChat.name, currentChat.avatar).then((items) => {
+            setMessages(items);
+          });
+        }
+      }
+    });
+    return () => unsub();
   }, [selectedChatId, chatList]);
 
   useEffect(() => {

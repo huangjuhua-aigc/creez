@@ -46,9 +46,14 @@ const { seedIfEmpty } = require("./db/seed.cjs");
 const { AppStateRepository } = require("./repositories/appStateRepository.cjs");
 const { ChatRepository } = require("./repositories/chatRepository.cjs");
 const { ContactRepository } = require("./repositories/contactRepository.cjs");
+const { TaskRepository } = require("./repositories/taskRepository.cjs");
 const { AssistantConfigRepository } = require("./repositories/assistantConfigRepository.cjs");
 const { ChannelConfigRepository } = require("./repositories/channelConfigRepository.cjs");
+const { setSchedulerDeps } = require("./scheduler/deps.cjs");
+const cronManager = require("./scheduler/cronManager.cjs");
+const { CHANNELS } = require("./channels.cjs");
 const { registerChannelIpc } = require("./channelIpc.cjs");
+const { registerTaskIpc } = require("./taskIpc.cjs");
 const { ChannelManager } = require("./channel/ChannelManager.cjs");
 const { MemoryStore } = require("./memoryStore.cjs");
 const { SkillManager } = require("./skillManager.cjs");
@@ -334,6 +339,7 @@ app.whenReady().then(async () => {
     const appStateRepository = new AppStateRepository(creezDb.db);
     const chatRepository = new ChatRepository(creezDb.db);
     const contactRepository = new ContactRepository(creezDb.db);
+    const taskRepository = new TaskRepository(creezDb.db);
     const assistantConfigRepository = new AssistantConfigRepository(creezDb.db);
     const channelConfigRepository = new ChannelConfigRepository(creezDb.db);
     const memoryStore = new MemoryStore({ homeDir: creezHome });
@@ -369,6 +375,7 @@ app.whenReady().then(async () => {
     });
     registerChannelIpc(ipcMain, { channelConfigRepository, contactRepository, channelManager });
     registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, skillManager, contactRepository, { creezHome });
+    registerTaskIpc(ipcMain);
     registerWorkspaceIpc(ipcMain, appStateStore);
     registerAttachmentIpc(ipcMain);
     registerAgentIpc(ipcMain, {
@@ -379,6 +386,31 @@ app.whenReady().then(async () => {
       chatRepository,
       creezHome,
     });
+
+    function sendToRenderer(payload) {
+      try {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (win.webContents && !win.isDestroyed()) {
+            win.webContents.send(CHANNELS.CHAT_MESSAGE_APPENDED, payload);
+          }
+        }
+      } catch (e) {
+        console.warn("[creez:scheduler] sendToRenderer failed", e?.message || e);
+      }
+    }
+
+    setSchedulerDeps({ taskRepository, cronManager });
+    cronManager.setDeps({
+      taskRepository,
+      chatRepository,
+      contactRepository,
+      assistantConfigRepository,
+      appStateStore,
+      memoryStore,
+      creezHome,
+      sendToRenderer,
+    });
+    await cronManager.initAll();
 
     loadMainAppInto(mainWindow);
     startupLog("after loadMainAppInto");

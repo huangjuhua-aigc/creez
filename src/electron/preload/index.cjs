@@ -12,6 +12,11 @@ contextBridge.exposeInMainWorld("electron", {
     getOrCreateByContact: (payload) => ipcRenderer.invoke(CHANNELS.CHAT_GET_OR_CREATE_BY_CONTACT, payload),
     appendMessage: (payload) => ipcRenderer.invoke(CHANNELS.CHAT_APPEND_MESSAGE, payload),
     updateMessage: (payload) => ipcRenderer.invoke(CHANNELS.CHAT_UPDATE_MESSAGE, payload),
+    onMessageAppended: (listener) => {
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on(CHANNELS.CHAT_MESSAGE_APPENDED, wrapped);
+      return () => ipcRenderer.removeListener(CHANNELS.CHAT_MESSAGE_APPENDED, wrapped);
+    },
   },
   contact: {
     list: (payload) => ipcRenderer.invoke(CHANNELS.CONTACT_LIST, payload),
@@ -50,6 +55,12 @@ contextBridge.exposeInMainWorld("electron", {
   memory: {
     read: (payload) => ipcRenderer.invoke(CHANNELS.MEMORY_READ, payload),
     write: (payload) => ipcRenderer.invoke(CHANNELS.MEMORY_WRITE, payload),
+  },
+  scheduledTasks: {
+    list: () => ipcRenderer.invoke(CHANNELS.SCHEDULED_TASKS_LIST),
+    create: (payload) => ipcRenderer.invoke(CHANNELS.SCHEDULED_TASKS_CREATE, payload),
+    update: (payload) => ipcRenderer.invoke(CHANNELS.SCHEDULED_TASKS_UPDATE, payload),
+    delete: (payload) => ipcRenderer.invoke(CHANNELS.SCHEDULED_TASKS_DELETE, payload),
   },
   attachment: {
     save: (payload) => ipcRenderer.invoke(CHANNELS.ATTACHMENT_SAVE, payload),

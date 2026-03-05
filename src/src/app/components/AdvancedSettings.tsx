@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { cn } from '../../utils/cn';
-import { Bot, Brain, Database, Cpu, ChevronDown, ChevronUp, Plus, Trash2, Save, Upload, User, Camera, CheckCircle2, RotateCcw, Folder, Radio } from 'lucide-react';
+import { Bot, Brain, Database, Cpu, ChevronDown, ChevronUp, Plus, Trash2, Save, Upload, User, Camera, CheckCircle2, RotateCcw, Folder, Radio, Clock, Search, Pencil, X } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
 import { fetchAssistantConfig, fetchModelApiKey, persistAssistantConfig, readMemory, writeMemory, uploadAssistantAvatar, selectWorkplaceDirectory, readLocalImageDataUrl, listAvailableSkills, getSkillEnv, saveSkillEnv } from '../services/settings';
@@ -15,6 +15,7 @@ export function AdvancedSettings() {
     { id: 'memory', label: 'Memory', icon: Database, description: 'Manage conversation history and context retention.' },
     { id: 'model', label: 'Model Config', icon: Cpu, description: 'Configure LLM providers and models.' },
     { id: 'channel', label: 'Channel Config', icon: Radio, description: 'Connect messaging platforms as input/output channels.' },
+    { id: 'scheduledTasks', label: 'Tasks', icon: Clock, description: 'List, add, edit scheduled tasks (default bot only).' },
   ];
 
   return (
@@ -73,6 +74,7 @@ export function AdvancedSettings() {
             {activeSection === 'memory' && <MemorySettings />}
             {activeSection === 'model' && <ModelSettings />}
             {activeSection === 'channel' && <ChannelSettings />}
+            {activeSection === 'scheduledTasks' && <ScheduledTasksSettings />}
           </div>
         </div>
       </div>
@@ -1129,6 +1131,335 @@ function ChannelSettings() {
         <Plus size={20} className="group-hover:rotate-90 transition-transform duration-300" />
         Add New Channel
       </button>
+    </div>
+  );
+}
+
+// --- 6. Scheduled Tasks Settings ---
+
+type ScheduledTaskItem = {
+  id: string;
+  contact_id: string;
+  chat_id: string;
+  cron_expression: string;
+  task_prompt: string;
+  status: string;
+  created_at: number;
+  updated_at: number;
+};
+
+type ChatListItem = { id: string; contactId: string | null; title: string };
+
+const CRON_HELP =
+  "5 fields: minute hour day-of-month month day-of-week. Examples: 0 8 * * * = 8:00 daily; 0 */2 * * * = every 2 hours; 0 9 * * 1-5 = 9:00 weekdays.";
+
+function ScheduledTasksSettings() {
+  const [tasks, setTasks] = useState<ScheduledTaskItem[]>([]);
+  const [chatList, setChatList] = useState<ChatListItem[]>([]);
+  const [defaultBotId, setDefaultBotId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [newCron, setNewCron] = useState('');
+  const [newPrompt, setNewPrompt] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editCron, setEditCron] = useState('');
+  const [editPrompt, setEditPrompt] = useState('');
+  const [editStatus, setEditStatus] = useState<'active' | 'paused'>('active');
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const loadTasks = async () => {
+    const api = window.electron?.scheduledTasks?.list;
+    if (!api) return;
+    const res = await api();
+    if (res?.ok && Array.isArray(res.data?.tasks)) setTasks(res.data.tasks);
+  };
+
+  const loadChats = async () => {
+    const api = window.electron?.chat?.list;
+    if (!api) return;
+    const res = await api({ limit: 100 });
+    const items = res?.ok && res?.data?.items ? res.data.items : [];
+    if (items.length) setChatList(items);
+  };
+
+  const loadDefaultBotId = async () => {
+    const api = window.electron?.contact?.getDefaultBotId;
+    if (!api) return;
+    const res = await api();
+    const id = res?.ok && res?.data?.botId != null ? res.data.botId : null;
+    if (id != null) setDefaultBotId(String(id));
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([loadTasks(), loadChats(), loadDefaultBotId()]).then(() => {
+      if (!cancelled) setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const filteredTasks = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return tasks;
+    return tasks.filter(
+      (t) =>
+        t.task_prompt.toLowerCase().includes(q) ||
+        t.cron_expression.toLowerCase().includes(q) ||
+        t.id.toLowerCase().includes(q)
+    );
+  }, [tasks, search]);
+
+  const chatLabel = (contactId: string, chatId: string) => {
+    const chat = chatList.find((c) => c.contactId === contactId && c.id === chatId);
+    return chat?.title ?? `${contactId.slice(0, 8)}… / ${chatId.slice(0, 8)}…`;
+  };
+
+  const startAdd = () => {
+    setNewCron('');
+    setNewPrompt('');
+    setAdding(true);
+  };
+
+  const createTask = async () => {
+    const contactId = defaultBotId;
+    const defaultChat = contactId ? chatList.find((c) => c.contactId === contactId) : null;
+    const chatId = defaultChat?.id ?? null;
+    if (!contactId || !chatId) {
+      toast.error('Start a conversation with the default assistant in the sidebar first.');
+      return;
+    }
+    if (!newCron.trim() || !newPrompt.trim()) {
+      toast.error('Fill cron expression and task prompt.');
+      return;
+    }
+    const api = window.electron?.scheduledTasks?.create;
+    if (!api) return;
+    setCreating(true);
+    const res = await api({
+      contact_id: contactId,
+      chat_id: chatId,
+      cron_expression: newCron.trim(),
+      task_prompt: newPrompt.trim(),
+    });
+    setCreating(false);
+    if (res?.ok) {
+      toast.success('Task created');
+      setAdding(false);
+      loadTasks();
+    } else {
+      toast.error(res?.error?.message ?? 'Create failed');
+    }
+  };
+
+  const startEdit = (t: ScheduledTaskItem) => {
+    setEditingId(t.id);
+    setEditCron(t.cron_expression);
+    setEditPrompt(t.task_prompt);
+    setEditStatus((t.status === 'paused' ? 'paused' : 'active') as 'active' | 'paused');
+  };
+
+  const saveEdit = async () => {
+    if (!editingId) return;
+    const api = window.electron?.scheduledTasks?.update;
+    if (!api) return;
+    setSavingId(editingId);
+    const res = await api({
+      task_id: editingId,
+      cron_expression: editCron.trim(),
+      task_prompt: editPrompt.trim(),
+      status: editStatus,
+    });
+    setSavingId(null);
+    if (res?.ok) {
+      toast.success('已保存');
+      setEditingId(null);
+      loadTasks();
+    } else {
+      toast.error(res?.error?.message ?? '保存失败');
+    }
+  };
+
+  const deleteTask = async (taskId: string) => {
+    if (!confirm('Delete this task?')) return;
+    const api = window.electron?.scheduledTasks?.delete;
+    if (!api) return;
+    const res = await api({ task_id: taskId });
+    if (res?.ok) {
+      toast.success('已删除');
+      loadTasks();
+    } else {
+      toast.error(res?.error?.message ?? '删除失败');
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="w-8 h-8 border-2 border-[#07C160] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6 pb-20">
+      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+        <div className="relative flex-1 w-full sm:max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+          <input
+            type="text"
+            placeholder="Search by prompt, cron or ID…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] outline-none"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={startAdd}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#07C160] text-white text-sm font-medium hover:bg-[#06ad56] transition-colors"
+        >
+          <Plus size={16} />
+          Add task
+        </button>
+      </div>
+
+      <p className="text-xs text-gray-500">Tasks are loaded from the app; only the default bot runs them. List shows cron and prompt for each.</p>
+
+      {adding && (
+        <div className="border border-gray-200 rounded-xl p-6 bg-gray-50/80 space-y-4">
+          <h4 className="text-sm font-bold text-gray-800">New task</h4>
+          {defaultBotId && !chatList.some((c) => c.contactId === defaultBotId) && (
+            <p className="text-amber-700 text-sm bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Start a conversation with the default assistant in the sidebar first.</p>
+          )}
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Cron expression</label>
+            <input
+              type="text"
+              value={newCron}
+              onChange={(e) => setNewCron(e.target.value)}
+              placeholder="0 8 * * *"
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono bg-white"
+            />
+            <p className="text-[11px] text-gray-500">{CRON_HELP}</p>
+          </div>
+          <div className="space-y-1">
+            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Task prompt (sent to AI at run time)</label>
+            <textarea
+              value={newPrompt}
+              onChange={(e) => setNewPrompt(e.target.value)}
+              placeholder={"e.g. Summarize today's priorities and reply in this chat"}
+              rows={2}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white resize-none"
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setAdding(false)}
+              className="px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 text-sm hover:bg-gray-50"
+            >
+              <X size={14} className="inline mr-1" /> Cancel
+            </button>
+            <button
+              type="button"
+              onClick={createTask}
+              disabled={creating}
+              className="px-3 py-1.5 rounded-lg bg-[#07C160] text-white text-sm font-medium hover:bg-[#06ad56] disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {creating ? <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Plus size={14} />}
+              {creating ? 'Creating…' : 'Create'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {filteredTasks.length === 0 ? (
+          <p className="text-gray-500 text-sm py-8 text-center">No tasks yet{search.trim() ? ' (try a different search)' : ' — click Add task to create one'}</p>
+        ) : (
+          filteredTasks.map((t) => (
+            <div
+              key={t.id}
+              className="border border-gray-200 rounded-xl overflow-hidden bg-white shadow-sm hover:shadow-md transition-shadow"
+            >
+              <div className="p-4 flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">{t.cron_expression}</span>
+                    <span className={cn(
+                      'text-[10px] font-bold px-2 py-0.5 rounded-full',
+                      t.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'
+                    )}>
+                      {t.status === 'active' ? 'Active' : 'Paused'}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-800 mt-1 line-clamp-2">{t.task_prompt}</p>
+                  <p className="text-[11px] text-gray-400 mt-1">{chatLabel(t.contact_id, t.chat_id)}</p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {editingId === t.id ? (
+                    <>
+                      <button onClick={saveEdit} disabled={savingId === t.id} className="p-2 text-[#07C160] hover:bg-green-50 rounded-lg" title="Save">
+                        <Save size={16} />
+                      </button>
+                      <button onClick={() => setEditingId(null)} className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg" title="Cancel">
+                        <X size={16} />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={() => startEdit(t)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg" title="Edit">
+                        <Pencil size={16} />
+                      </button>
+                      <button onClick={() => deleteTask(t.id)} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg" title="Delete">
+                        <Trash2 size={16} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+              {editingId === t.id && (
+                <div className="border-t border-gray-100 p-4 bg-gray-50/50 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Cron expression</label>
+                      <input
+                        type="text"
+                        value={editCron}
+                        onChange={(e) => setEditCron(e.target.value)}
+                        className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono bg-white"
+                      />
+                      <p className="mt-0.5 text-[11px] text-gray-500">{CRON_HELP}</p>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Status</label>
+                      <select
+                        value={editStatus}
+                        onChange={(e) => setEditStatus(e.target.value as 'active' | 'paused')}
+                        className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white"
+                      >
+                        <option value="active">Active</option>
+                        <option value="paused">Paused</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Task prompt</label>
+                    <textarea
+                      value={editPrompt}
+                      onChange={(e) => setEditPrompt(e.target.value)}
+                      rows={2}
+                      className="mt-1 w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white resize-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }

@@ -91,6 +91,7 @@ declare global {
           errorMessage?: string | null;
           updatedAt?: number;
         }) => Promise<IpcResult<{ updated: boolean; id?: string }>>;
+        onMessageAppended: (listener: (payload: { type?: string; chatId?: string; message?: unknown }) => void) => () => void;
       };
       contact: {
         list: (payload?: { type?: "bot" | "human" | "group" }) => Promise<

@@ -6,6 +6,7 @@ const CHANNELS = Object.freeze({
   CHAT_GET_OR_CREATE_BY_CONTACT: "chat:getOrCreateByContact",
   CHAT_APPEND_MESSAGE: "chat:appendMessage",
   CHAT_UPDATE_MESSAGE: "chat:updateMessage",
+  CHAT_MESSAGE_APPENDED: "chat:message_appended",
   CONTACT_LIST: "contact:list",
   CONTACT_CREATE_BOT_FROM_TEMPLATE: "contact:createBotFromTemplate",
   WORKSPACE_GET_TREE: "workspace:getTree",
@@ -37,6 +38,10 @@ const CHANNELS = Object.freeze({
   CHANNEL_SAVE_CONFIG: "channel:saveConfig",
   CHANNEL_DELETE_CONFIG: "channel:deleteConfig",
   CONTACT_GET_DEFAULT_BOT_ID: "contact:getDefaultBotId",
+  SCHEDULED_TASKS_LIST: "scheduledTasks:list",
+  SCHEDULED_TASKS_CREATE: "scheduledTasks:create",
+  SCHEDULED_TASKS_UPDATE: "scheduledTasks:update",
+  SCHEDULED_TASKS_DELETE: "scheduledTasks:delete",
 });
 
 module.exports = {

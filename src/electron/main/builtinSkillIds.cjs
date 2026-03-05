@@ -1,4 +1,8 @@
-const BUILTIN_SKILL_IDS = Object.freeze(["knowledge_search", "vc_lead_capture"]);
+const BUILTIN_SKILL_IDS = Object.freeze([
+  "knowledge_search",
+  "vc_lead_capture",
+  "scheduled_task",
+]);
 
 function isBuiltinSkillId(skillId) {
   if (!skillId || typeof skillId !== "string") return false;

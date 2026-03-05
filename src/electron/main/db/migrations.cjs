@@ -462,6 +462,33 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_chats_channel_chat_id ON chats(contact_id, channel_type, channel_chat_id);
     `,
   },
+  {
+    version: 13,
+    name: "add_scheduled_tasks_and_logs",
+    sql: `
+      CREATE TABLE IF NOT EXISTS scheduled_tasks (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT NOT NULL,
+        chat_id TEXT NOT NULL,
+        cron_expression TEXT NOT NULL,
+        task_prompt TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused','deleted')),
+        created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER)),
+        updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER))
+      );
+      CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_status ON scheduled_tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_contact_id ON scheduled_tasks(contact_id);
+
+      CREATE TABLE IF NOT EXISTS task_logs (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('running','success','failed')),
+        error_message TEXT,
+        executed_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER))
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_logs_task_id ON task_logs(task_id);
+    `,
+  },
 ];
 
 module.exports = {

@@ -90,6 +90,8 @@ interface ToolCallGroupProps {
 }
 
 export function ToolCallGroup({ toolCalls }: ToolCallGroupProps) {
+  const [groupExpanded, setGroupExpanded] = useState(false);
+
   if (!toolCalls || toolCalls.length === 0) return null;
 
   const runCount = toolCalls.filter((t) => t.status === "running").length;
@@ -100,10 +102,19 @@ export function ToolCallGroup({ toolCalls }: ToolCallGroupProps) {
     });
     return idx;
   })();
+  const lastTask = toolCalls.length > 0 ? toolCalls[toolCalls.length - 1] : null;
 
   return (
     <div className="mt-2 rounded-xl border border-zinc-200/80 overflow-hidden bg-zinc-50/60 max-w-xs w-full text-xs">
-      <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-zinc-200/60">
+      <button
+        type="button"
+        onClick={() => setGroupExpanded((prev) => !prev)}
+        className="w-full flex items-center gap-1.5 px-3 py-1.5 border-b border-zinc-200/60 hover:bg-zinc-100/50 transition-colors text-left"
+      >
+        <ChevronRight
+          size={11}
+          className={`text-zinc-400 transition-transform duration-200 shrink-0 ${groupExpanded ? "rotate-90" : ""}`}
+        />
         <div className="w-4 h-4 rounded-md bg-zinc-200/80 flex items-center justify-center shrink-0">
           <Zap size={9} className="text-zinc-500" />
         </div>
@@ -112,20 +123,32 @@ export function ToolCallGroup({ toolCalls }: ToolCallGroupProps) {
         <span className="text-[10px] text-zinc-400">
           {toolCalls.length} task{toolCalls.length > 1 ? "s" : ""}
         </span>
-        <div className="flex items-center gap-1 ml-auto">
+        {!groupExpanded && lastTask && (
+          <>
+            <span className="text-[10px] text-zinc-300 ml-0.5">·</span>
+            <span className="text-[10px] text-zinc-500 font-mono truncate min-w-0" title={lastTask.toolName}>
+              {lastTask.toolName}
+            </span>
+            <span className="text-[10px] text-zinc-300 ml-1 shrink-0">·</span>
+            <StatusBadge status={lastTask.status} />
+          </>
+        )}
+        <div className="flex items-center gap-1 ml-auto shrink-0">
           {runCount > 0 && <Loader2 size={11} className="text-sky-400 animate-spin" />}
         </div>
-      </div>
+      </button>
 
-      <div className="divide-y divide-zinc-100">
-        {toolCalls.map((tc, index) => (
-          <ToolCard
-            key={tc.id}
-            toolCall={tc}
-            isLastRunning={index === lastRunningIndex}
-          />
-        ))}
-      </div>
+      {groupExpanded && (
+        <div className="divide-y divide-zinc-100">
+          {toolCalls.map((tc, index) => (
+            <ToolCard
+              key={tc.id}
+              toolCall={tc}
+              isLastRunning={index === lastRunningIndex}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
