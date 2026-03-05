@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "./load-creez-env.mjs";
 
 function usage() {
   console.error(`Usage: extract.mjs "url1" ["url2" ...]`);
