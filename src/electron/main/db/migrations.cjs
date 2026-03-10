@@ -489,6 +489,13 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_task_logs_task_id ON task_logs(task_id);
     `,
   },
+  {
+    version: 14,
+    name: "add_app_state_creez_api_key",
+    sql: `
+      ALTER TABLE app_state ADD COLUMN creez_api_key TEXT;
+    `,
+  },
 ];
 
 module.exports = {

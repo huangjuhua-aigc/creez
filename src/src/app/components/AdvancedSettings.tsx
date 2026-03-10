@@ -91,6 +91,7 @@ function IdentitySettings() {
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
   const [avatarDisplaySrc, setAvatarDisplaySrc] = useState<string | null>(null);
   const [workspaceDir, setWorkspaceDir] = useState('');
+  const [creezApiKey, setCreezApiKey] = useState('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -105,10 +106,16 @@ function IdentitySettings() {
     });
     window.electron?.app?.getState?.().then((res) => {
       if (cancelled) return;
-      if (res?.ok && res.data.workspaceRoot) {
-        setWorkspaceDir(String(res.data.workspaceRoot));
+      const data = res?.ok ? res.data : undefined;
+      if (data?.workspaceRoot) {
+        setWorkspaceDir(String(data.workspaceRoot));
       } else {
         setWorkspaceDir('');
+      }
+      if (data?.creezApiKey != null && String(data.creezApiKey).trim() !== '') {
+        setCreezApiKey(String(data.creezApiKey));
+      } else {
+        setCreezApiKey('');
       }
     });
     return () => {
@@ -246,6 +253,24 @@ function IdentitySettings() {
                 placeholder="e.g. Alex, Boss, Team Lead"
                 className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] outline-none transition-all shadow-sm"
             />
+        </div>
+
+        <div className="space-y-2">
+          <label className="block text-sm font-semibold text-gray-700">Creez API Key</label>
+          <input
+            type="text"
+            value={creezApiKey}
+            onChange={(e) => setCreezApiKey(e.target.value)}
+            onBlur={async () => {
+              const trimmed = creezApiKey.trim();
+              await window.electron?.app?.setState?.({ creezApiKey: trimmed || null });
+              if (trimmed) toast.success('Creez API Key saved');
+            }}
+            placeholder="Used when calling creez backend (e.g. storyboard, image/video generation)"
+            className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] outline-none transition-all shadow-sm font-mono text-sm placeholder:text-gray-400"
+            autoComplete="off"
+          />
+          <p className="text-[11px] text-gray-400 px-1">Stored in app state. Backend reads this for Bearer auth.</p>
         </div>
 
         <div className="space-y-2">

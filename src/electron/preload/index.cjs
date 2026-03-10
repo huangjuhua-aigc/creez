@@ -88,4 +88,20 @@ contextBridge.exposeInMainWorld("electron", {
       return () => ipcRenderer.removeListener(CHANNELS.AGENT_EVENT_ERROR, wrapped);
     },
   },
+  storyboard: {
+    list: () => ipcRenderer.invoke(CHANNELS.STORYBOARD_LIST),
+    get: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_GET, payload),
+    create: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_CREATE, payload),
+    update: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_UPDATE, payload),
+    getAssetUrl: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_GET_ASSET_URL, payload),
+    setActive: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_SET_ACTIVE, payload),
+    deleteResource: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_DELETE_RESOURCE, payload),
+    deleteGeneration: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_DELETE_GENERATION, payload),
+    generateImage: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_GENERATE_IMAGE, payload),
+    generateVideo: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_GENERATE_VIDEO, payload),
+    addResource: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_ADD_RESOURCE, payload),
+    uploadLocalAsset: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_UPLOAD_LOCAL_ASSET, payload),
+    agentCreate: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_AGENT_CREATE, payload),
+    deleteProject: (payload) => ipcRenderer.invoke(CHANNELS.STORYBOARD_DELETE_PROJECT, payload),
+  },
 });

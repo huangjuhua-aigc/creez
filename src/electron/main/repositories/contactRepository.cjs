@@ -119,8 +119,8 @@ class ContactRepository {
       VALUES (@id, 'bot', @name, @avatarPath, 0, @createdAt, @updatedAt)
     `);
     const insertChat = this.db.prepare(`
-      INSERT INTO chats (id, contact_id, created_at, updated_at, last_message_at)
-      VALUES (@id, @contactId, @createdAt, @updatedAt, @lastMessageAt)
+      INSERT INTO chats (id, contact_id, channel_type, created_at, updated_at, last_message_at)
+      VALUES (@id, @contactId, 'creez_app', @createdAt, @updatedAt, @lastMessageAt)
     `);
     const insertMessage = this.db.prepare(`
       INSERT INTO messages (id, chat_id, sender, bot_id, content, status, model_used, created_at, updated_at)

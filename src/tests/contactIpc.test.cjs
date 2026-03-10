@@ -36,11 +36,13 @@ test("contact IPC can create bot from vc template", async () => {
   assert.equal(created.ok, true);
   assert.equal(Boolean(created.data.contactId), true);
   assert.equal(Boolean(created.data.chatId), true);
-  assert.equal(Number(created.data.assistantConfigId) > 1, true);
+  assert.equal(typeof created.data.assistantConfigId, "string");
+  assert.equal(created.data.assistantConfigId.length > 0, true);
 
-  const contact = dbWrapper.db.prepare("SELECT assistant_config_id, name FROM contacts WHERE id = ?").get(created.data.contactId);
+  const contact = dbWrapper.db.prepare("SELECT id, name FROM contacts WHERE id = ?").get(created.data.contactId);
   assert.equal(contact.name, "VC Fundraising Bot");
-  assert.equal(contact.assistant_config_id, created.data.assistantConfigId);
+  assert.equal(contact.id, created.data.contactId);
+  assert.equal(created.data.assistantConfigId, created.data.contactId);
 
   const chat = dbWrapper.db.prepare("SELECT contact_id FROM chats WHERE id = ?").get(created.data.chatId);
   assert.equal(chat.contact_id, created.data.contactId);

@@ -3,6 +3,7 @@ const DEFAULT_APP_STATE = Object.freeze({
   lastChatId: null,
   workspaceRoot: null,
   isLoggedIn: false,
+  creezApiKey: null,
 });
 
 function toDto(row) {
@@ -12,6 +13,7 @@ function toDto(row) {
     lastChatId: row.last_chat_id || null,
     workspaceRoot: row.workspace_root || null,
     isLoggedIn: Boolean(row.is_logged_in),
+    creezApiKey: row.creez_api_key != null ? String(row.creez_api_key) : null,
   };
 }
 
@@ -30,6 +32,7 @@ function sanitize(raw) {
   safe.lastChatId = safe.lastChatId == null ? null : String(safe.lastChatId);
   safe.workspaceRoot = safe.workspaceRoot == null ? null : String(safe.workspaceRoot);
   safe.isLoggedIn = Boolean(safe.isLoggedIn);
+  safe.creezApiKey = safe.creezApiKey != null && String(safe.creezApiKey).trim() !== "" ? String(safe.creezApiKey).trim() : null;
   return safe;
 }
 
@@ -43,6 +46,7 @@ class AppStateRepository {
           last_chat_id = @last_chat_id,
           workspace_root = @workspace_root,
           is_logged_in = @is_logged_in,
+          creez_api_key = @creez_api_key,
           updated_at = @updated_at
       WHERE id = 1
     `);
@@ -63,6 +67,7 @@ class AppStateRepository {
       last_chat_id: merged.lastChatId,
       workspace_root: merged.workspaceRoot,
       is_logged_in: merged.isLoggedIn ? 1 : 0,
+      creez_api_key: merged.creezApiKey,
       updated_at: Math.floor(Date.now() / 1000),
     });
 

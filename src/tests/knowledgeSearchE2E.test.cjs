@@ -82,6 +82,7 @@ test("knowledge_search e2e: non-default bot success path", async () => {
       runtimeContext: {
         contactId: "bot_roundcloser",
         assistantConfigId: 2,
+        defaultContactId: "11111111-1111-1111-1111-111111111111",
         chatId: "chat_abc",
       },
       onEvent: (ev) => events.push(ev),
@@ -132,6 +133,7 @@ test("knowledge_search e2e: empty matches returns structured protocol error", as
       runtimeContext: {
         contactId: "bot_roundcloser",
         assistantConfigId: 2,
+        defaultContactId: "11111111-1111-1111-1111-111111111111",
         chatId: "chat_empty",
       },
     });

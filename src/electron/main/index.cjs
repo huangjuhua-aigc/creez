@@ -1,7 +1,7 @@
 const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
-const { app, BrowserWindow, ipcMain, dialog, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, Menu, protocol, net } = require("electron");
 const { ensureCreezDirs } = require("./creezPaths.cjs");
 
 function writeCrashLog(message) {
@@ -54,6 +54,7 @@ const cronManager = require("./scheduler/cronManager.cjs");
 const { CHANNELS } = require("./channels.cjs");
 const { registerChannelIpc } = require("./channelIpc.cjs");
 const { registerTaskIpc } = require("./taskIpc.cjs");
+const { registerStoryboardIpc } = require("./storyboardIpc.cjs");
 const { ChannelManager } = require("./channel/ChannelManager.cjs");
 const { MemoryStore } = require("./memoryStore.cjs");
 const { SkillManager } = require("./skillManager.cjs");
@@ -321,9 +322,28 @@ function createWindow(loadSplash = false) {
   return mainWindow;
 }
 
+protocol.registerSchemesAsPrivileged([
+  { scheme: "creez-asset", privileges: { standard: false, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+]);
+
 app.whenReady().then(async () => {
   startupLog("app ready");
   Menu.setApplicationMenu(null);
+
+  const { getStoryboardRoot, DEFAULT_WORKSPACE_ROOT } = require("./storyboard/storyboardStorage.cjs");
+  protocol.handle("creez-asset", (request) => {
+    const url = new URL(request.url);
+    const projectId = url.hostname;
+    const relPath = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+    if (!projectId || !relPath || relPath.includes("..")) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    const storyboardRoot = getStoryboardRoot(DEFAULT_WORKSPACE_ROOT);
+    const filePath = path.join(storyboardRoot, projectId, relPath);
+    return net.fetch("file:///" + filePath.replace(/\\/g, "/"));
+  });
+  startupLog("creez-asset protocol registered");
+
   try {
     const creezHome = app.getPath("home");
     ensureCreezDirs(creezHome);
@@ -377,6 +397,7 @@ app.whenReady().then(async () => {
     registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, skillManager, contactRepository, { creezHome });
     registerTaskIpc(ipcMain);
     registerWorkspaceIpc(ipcMain, appStateStore);
+    registerStoryboardIpc(ipcMain, { appStateStore });
     registerAttachmentIpc(ipcMain);
     registerAgentIpc(ipcMain, {
       assistantConfigRepository,

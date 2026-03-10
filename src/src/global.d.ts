@@ -284,6 +284,100 @@ declare global {
         ) => () => void;
         onError: (listener: (message: string) => void) => () => void;
       };
+      storyboard: {
+        list: () => Promise<
+          IpcResult<{
+            items: Array<{
+              id: string;
+              title: string;
+              thumbnailPath?: string;
+              thumbnailUrl?: string | null;
+              createdAt: number;
+              updatedAt: number;
+            }>;
+          }>
+        >;
+        get: (payload: { projectId: string }) => Promise<
+          IpcResult<{
+            id: string;
+            title: string;
+            thumbnailUrl: string | null;
+            createdAt: number;
+            updatedAt: number;
+            prompt: string;
+            supplementPayload?: unknown;
+            content: import("./types/storyboard").StoryboardContent;
+          }>
+        >;
+        create: (payload?: { title?: string; prompt?: string }) => Promise<IpcResult<{ projectId: string }>>;
+        update: (payload: {
+          projectId: string;
+          meta?: Record<string, unknown>;
+          content?: import("./types/storyboard").StoryboardContent;
+        }) => Promise<IpcResult<{ updated: boolean }>>;
+        getAssetUrl: (payload: { projectId: string; relativePath: string }) => Promise<IpcResult<{ url: string }>>;
+        setActive: (payload: {
+          projectId: string;
+          resourceType: "artAsset" | "sceneImage" | "sceneVideo";
+          resourceId: string;
+          activeSource: "upload" | "ai_generation";
+          activeGenerationId?: string;
+        }) => Promise<IpcResult<{ updated: boolean }>>;
+        deleteResource: (payload: {
+          projectId: string;
+          resourceType: "artAsset" | "sceneImage" | "sceneVideo";
+          resourceId: string;
+        }) => Promise<IpcResult<{ deleted: boolean }>>;
+        deleteGeneration: (payload: {
+          projectId: string;
+          resourceType: "artAsset" | "sceneImage" | "sceneVideo";
+          resourceId: string;
+          generationId: string;
+        }) => Promise<IpcResult<{ deleted: boolean }>>;
+        generateImage: (payload: {
+          projectId: string;
+          resourceType?: "artAsset" | "sceneImage";
+          resourceId: string;
+          prompt: string;
+          model?: string;
+          ratio?: string;
+          numImages?: number;
+          enableWebSearch?: boolean;
+          referenceImageUrls?: string[];
+          referenceImageBase64s?: string[];
+        }) => Promise<IpcResult<{ generationId: string; url: string; generationIds?: string[]; urls?: string[] }>>;
+        generateVideo: (payload: {
+          projectId: string;
+          resourceId: string;
+          prompt?: string;
+          model?: string;
+          ratio?: string;
+          duration?: string;
+          startFrameUrl: string;
+          endFrameUrl?: string;
+        }) => Promise<IpcResult<{ generationId: string; url: string; taskId?: string }>>;
+        addResource: (payload: {
+          projectId: string;
+          resourceType: "artAsset" | "sceneImage" | "sceneVideo";
+          name: string;
+          activeSource?: "ai_generation" | "local_disk";
+          localPath?: string;
+        }) => Promise<IpcResult<{ id: string }>>;
+        uploadLocalAsset: (payload: {
+          projectId: string;
+          resourceType: "artAsset" | "sceneImage";
+          resourceId: string;
+          fileData: string;
+          filename?: string;
+        }) => Promise<IpcResult<{ localImage: string }>>;
+        agentCreate: (payload: {
+          title?: string;
+          prompt: string;
+        }) => Promise<IpcResult<{
+          projectId: string;
+          status: "ready";
+        }>>;
+      };
     };
   }
 }
