@@ -21,6 +21,13 @@ const { BUILTIN_SKILL_IDS } = require("./builtinSkillIds.cjs");
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT_DIR = path.join(RUNNER_DIR, "..", "..");
 
+/** RoundCloser uses only assistant_config.system_prompt (from seed), not buildSystemPrompt. */
+const ROUND_CLOSER_CONTACT_ID = "a3e6d3f0-9d91-4dc0-8f84-7f3ca8a0619c";
+
+/** Skills allowed per bot type (controls which SKILL.md entries appear in system prompt). */
+const ROUNDCLOSER_SKILLS = new Set(["knowledge_search", "vc_lead_capture"]);
+const DEFAULT_BOT_SKILLS = new Set(["scheduled_task", "xiaohongshu", "image-generator"]);
+
 /** Sessions keyed by contactId (bot id). One session per bot, shared across channels. */
 const sessionsByBot = new Map();
 
@@ -139,7 +146,7 @@ export async function createAndSubscribe(sender, config) {
     if (model && existing.session.setModel) {
       try { await existing.session.setModel(model); } catch { /* ignore */ }
     }
-    console.log("[creez:chat] session reused", { botKey, listenerId, chatId });
+    log("session_reused", { botKey, listenerId, chatId });
     sender.send("agent:event", { type: "agent_ready", chatId: chatId ?? undefined });
     return;
   }
@@ -156,6 +163,7 @@ export async function createAndSubscribe(sender, config) {
   const authPath = path.join(resolvedAgentDir, "auth.json");
   const authStorage = new AuthStorage(authPath);
   authStorage.setRuntimeApiKey(provider, apiKey);
+  log("auth_set", { provider, keyLength: typeof apiKey === "string" ? apiKey.length : 0 });
 
   const modelRegistry = new ModelRegistry(authStorage);
   const model = resolveModel(provider, modelId);
@@ -205,12 +213,42 @@ export async function createAndSubscribe(sender, config) {
     replyInstructions,
   });
   const customTools = builtinExecutor.listEnabledToolDefinitions();
+
+  // Build system prompt BEFORE resource loader — PI's AgentSession overrides
+  // agent.setSystemPrompt() every turn, so the only way to inject our prompt
+  // is via DefaultResourceLoader's `systemPrompt` option (used as customPrompt).
+  let systemPrompt;
+  if (assistantConfigId === ROUND_CLOSER_CONTACT_ID) {
+    systemPrompt = (assistantConfig?.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
+    log("system_prompt:roundcloser", { length: systemPrompt.length });
+  } else {
+    systemPrompt = await buildSystemPrompt({
+      agentDir: resolvedAgentDir,
+      assistantConfig,
+      workDir: cwd,
+      contactId: contactId || null,
+      memoryContent,
+      memoryPath,
+      chatId,
+      builtinSkills: builtinExecutor.listEnabledSkillIds(),
+    });
+  }
+
+  const isDefaultBot = assistantConfigId != null && defaultContactId != null
+    && String(assistantConfigId) === String(defaultContactId);
+  const allowedSkills = isDefaultBot ? DEFAULT_BOT_SKILLS : ROUNDCLOSER_SKILLS;
+
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: resolvedAgentDir,
     settingsManager,
     noExtensions: true,
     additionalSkillPaths: [additionalSkillPath, builtinSkillPath],
+    systemPrompt: systemPrompt || undefined,
+    skillsOverride: (base) => ({
+      ...base,
+      skills: base.skills.filter((s) => allowedSkills.has(s.name)),
+    }),
   });
   await resourceLoader.reload();
 
@@ -226,20 +264,6 @@ export async function createAndSubscribe(sender, config) {
     resourceLoader,
     customTools,
   });
-
-  const systemPrompt = await buildSystemPrompt({
-    agentDir: resolvedAgentDir,
-    assistantConfig,
-    workDir: cwd,
-    contactId: contactId || null,
-    memoryContent,
-    memoryPath,
-    chatId,
-    builtinSkills: builtinExecutor.listEnabledSkillIds(),
-  });
-  if (systemPrompt) {
-    session.agent.setSystemPrompt(systemPrompt);
-  }
 
   const sessionEntry = { session, unsubscribe: null, authStorage, listeners, workDir: cwd };
   let errorNotifiedThisTurn = false;
@@ -257,25 +281,8 @@ export async function createAndSubscribe(sender, config) {
       if (ev.type !== "message_update") {
         log("event", { type: ev.type, role, toolName, textLen, botKey });
       }
-      if (ev.type === "message_start" && ev.message?.role === "assistant") {
-        const userPreview = sessionEntry.lastPromptText != null ? sessionEntry.lastPromptText : undefined;
-        console.log("[creez:chat] reply_start", {
-          botKey,
-          chatId: chatId ?? undefined,
-          userPromptPreview: userPreview,
-        });
-      }
-      if (ev.type === "message_end" && ev.message?.role === "assistant") {
-        const replyPreview = contentStr.slice(0, 350).replace(/\s+/g, " ").trim();
-        console.log("[creez:chat] reply_done message_end", {
-          botKey,
-          chatId: chatId ?? undefined,
-          contentLen: textLen,
-          replyPreview: replyPreview ? `${replyPreview}${contentStr.length > 350 ? "…" : ""}` : null,
-        });
-      }
       if (ev.type === "agent_end") {
-        console.log("[creez:chat] agent_end", { botKey, chatId: chatId ?? undefined });
+        log("reply_done", { botKey, chatId: chatId ?? undefined });
       }
       const errorMsg = ev.isError ?? ev.message?.errorMessage ?? null;
       if (errorMsg) {
@@ -299,16 +306,7 @@ export async function createAndSubscribe(sender, config) {
   sessionsByBot.set(botKey, sessionEntry);
 
   const builtinIds = builtinExecutor.listEnabledSkillIds();
-  const configSkills = assistantConfig?.skills && typeof assistantConfig.skills === "object"
-    ? Object.entries(assistantConfig.skills).filter(([, on]) => Boolean(on)).map(([id]) => id)
-    : [];
-  console.log("[creez:agent] skills", {
-    botKey,
-    builtin: builtinIds.length ? builtinIds : "(none)",
-    config: configSkills.length ? configSkills : "(none)",
-  });
-
-  console.log("[creez:chat] session created", { botKey, listenerId, chatId });
+  log("session_created", { botKey, listenerId, chatId, builtinSkills: builtinIds.length });
   sender.send("agent:event", { type: "agent_ready", chatId: chatId ?? undefined });
 }
 
@@ -324,8 +322,10 @@ export async function prompt(payload) {
   if (promptText.length > 300) entry.lastPromptText += "…";
 
   const imageCount = Array.isArray(images) ? images.length : 0;
-  console.log("[creez:agent] prompt to pi", { botKey, chatId: rawKey || undefined, textLen: promptText.length, imageCount });
-  console.log("[creez:agent] prompt body:\n", promptText || "(empty)");
+  log("prompt", { botKey, chatId: rawKey || undefined, textLen: promptText.length, imageCount });
+
+  const effectivePrompt = entry.session.systemPrompt ?? "";
+  console.log("[creez:agent] system prompt (before reply):\n", effectivePrompt || "(empty)");
 
   log("prompt:start", { botKey, textLen: promptText.length });
   const options = {

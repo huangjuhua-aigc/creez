@@ -104,7 +104,10 @@ function IdentitySettings() {
       );
       setAvatarPath(config.avatar || null);
     });
-    window.electron?.app?.getState?.().then((res) => {
+    Promise.all([
+      window.electron?.app?.getState?.() ?? Promise.resolve({ ok: false }),
+      getSkillEnv('creez'),
+    ]).then(([res, creezEnv]) => {
       if (cancelled) return;
       const data = res?.ok ? res.data : undefined;
       if (data?.workspaceRoot) {
@@ -112,11 +115,13 @@ function IdentitySettings() {
       } else {
         setWorkspaceDir('');
       }
-      if (data?.creezApiKey != null && String(data.creezApiKey).trim() !== '') {
-        setCreezApiKey(String(data.creezApiKey));
-      } else {
-        setCreezApiKey('');
-      }
+      const fromEnv = creezEnv?.CREEZ_API_KEY != null && String(creezEnv.CREEZ_API_KEY).trim() !== ''
+        ? String(creezEnv.CREEZ_API_KEY).trim()
+        : '';
+      const fromState = data?.creezApiKey != null && String(data.creezApiKey).trim() !== ''
+        ? String(data.creezApiKey).trim()
+        : '';
+      setCreezApiKey(fromEnv || fromState || '');
     });
     return () => {
       cancelled = true;
@@ -263,14 +268,18 @@ function IdentitySettings() {
             onChange={(e) => setCreezApiKey(e.target.value)}
             onBlur={async () => {
               const trimmed = creezApiKey.trim();
-              await window.electron?.app?.setState?.({ creezApiKey: trimmed || null });
-              if (trimmed) toast.success('Creez API Key saved');
+              const ok = await saveSkillEnv('creez', { CREEZ_API_KEY: trimmed || '' });
+              if (ok) {
+                if (trimmed) toast.success('Creez API Key saved');
+              } else {
+                toast.error('Failed to save');
+              }
             }}
             placeholder="Used when calling creez backend (e.g. storyboard, image/video generation)"
             className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] outline-none transition-all shadow-sm font-mono text-sm placeholder:text-gray-400"
             autoComplete="off"
           />
-          <p className="text-[11px] text-gray-400 px-1">Stored in app state. Backend reads this for Bearer auth.</p>
+          <p className="text-[11px] text-gray-400 px-1">保存到 ~/.creez/.env，调用后端时从此处读取（与小红书 Cookie 同文件）。</p>
         </div>
 
         <div className="space-y-2">
@@ -425,7 +434,14 @@ function SkillsSettings() {
                                             <Brain size={20} />
                                         </div>
                                         <div className="min-w-0">
-                                            <h3 className="text-sm font-bold text-gray-800">{skill.name}</h3>
+                                            <h3 className="text-sm font-bold text-gray-800 flex items-center gap-2 flex-wrap">
+                                                {skill.name}
+                                                {skill.id === 'image-generator' && (
+                                                    <span className="text-[10px] font-normal text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">
+                                                        creez 专属，需要 creez key
+                                                    </span>
+                                                )}
+                                            </h3>
                                             <p className="text-[11px] text-gray-500 leading-tight mt-0.5">
                                               {skill.desc.length > 50 ? `${skill.desc.slice(0, 50)}...` : skill.desc}
                                             </p>

@@ -1,4 +1,8 @@
 import { Plus, ChevronDown, Folder, Laugh } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import { cn } from "../../utils/cn";
 import React, { useState, useEffect, useRef } from "react";
 import { SearchBar } from "./ui/SearchBar";
@@ -89,69 +93,25 @@ function fileExtLabel(name: string) {
   return lower.slice(i + 1, i + 5).toUpperCase();
 }
 
-type ContentSegment =
-  | { type: "text"; value: string }
-  | { type: "image"; path: string }
-  | { type: "file"; path: string }
-  | { type: "link"; label: string; target: string };
-
-/** Splits text into text and link segments for [label](target) pattern. */
-function parseLinksInText(text: string): Array<{ type: "text"; value: string } | { type: "link"; label: string; target: string }> {
-  const out: Array<{ type: "text"; value: string } | { type: "link"; label: string; target: string }> = [];
-  const re = /\[([^\]]+)\]\(([^)]+)\)/g;
-  let lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > lastIndex) {
-      out.push({ type: "text", value: text.slice(lastIndex, m.index) });
-    }
-    out.push({ type: "link", label: m[1], target: m[2] });
-    lastIndex = re.lastIndex;
-  }
-  if (lastIndex < text.length) {
-    out.push({ type: "text", value: text.slice(lastIndex) });
-  }
-  if (out.length === 0) {
-    out.push({ type: "text", value: text });
-  }
-  return out;
-}
-
-function parseContentWithAttachments(content: string): ContentSegment[] {
-  if (!content || typeof content !== "string") return [{ type: "text", value: "" }];
-  const parts: ContentSegment[] = [];
-  const re = /\[(Image|File): ##(.+?)##\]/g;
-  let lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(content)) !== null) {
-    if (m.index > lastIndex) {
-      const textSeg = content.slice(lastIndex, m.index);
-      parts.push(...parseLinksInText(textSeg));
-    }
-    parts.push({
-      type: m[1] === "Image" ? "image" : "file",
-      path: m[2],
-    });
-    lastIndex = re.lastIndex;
-  }
-  if (lastIndex < content.length) {
-    parts.push(...parseLinksInText(content.slice(lastIndex)));
-  }
-  if (parts.length === 0) {
-    parts.push({ type: "text", value: content });
-  }
-  return parts;
-}
-
 function fileNameFromPath(filePath: string): string {
   const s = String(filePath || "").replace(/\\/g, "/");
   const idx = s.lastIndexOf("/");
   return idx >= 0 ? s.slice(idx + 1) : s || "file";
 }
 
+function isHttpUrl(s: string): boolean {
+  const t = String(s || "").trim();
+  return t.startsWith("http://") || t.startsWith("https://");
+}
+
 function ImageChipFromPath({ path, className = "" }: { path: string; className?: string }) {
   const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const isUrl = isHttpUrl(path);
   useEffect(() => {
+    if (isUrl) {
+      setDataUrl(path);
+      return;
+    }
     let cancelled = false;
     readLocalImageDataUrl(path).then((url) => {
       if (!cancelled && url) setDataUrl(url);
@@ -159,7 +119,7 @@ function ImageChipFromPath({ path, className = "" }: { path: string; className?:
     return () => {
       cancelled = true;
     };
-  }, [path]);
+  }, [path, isUrl]);
   if (!dataUrl) {
     return (
       <span className={cn("inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-gray-100 text-gray-500 text-xs", className)}>
@@ -169,7 +129,22 @@ function ImageChipFromPath({ path, className = "" }: { path: string; className?:
   }
   return (
     <span className={cn("inline-flex mr-1 mb-1", className)}>
-      <img src={dataUrl} alt="" className="w-14 h-14 rounded-lg object-cover bg-white border border-gray-200" />
+      <img src={dataUrl} alt="" className="max-w-[200px] max-h-[200px] w-auto h-auto rounded-lg object-cover bg-white border border-gray-200" />
+    </span>
+  );
+}
+
+function VideoChipFromUrl({ url, className = "" }: { url: string; className?: string }) {
+  const src = String(url || "").trim();
+  if (!src) return null;
+  return (
+    <span className={cn("inline-flex mr-1 mb-1 block", className)}>
+      <video
+        src={src}
+        controls
+        playsInline
+        className="max-w-[280px] max-h-[200px] rounded-lg border border-gray-200 bg-black"
+      />
     </span>
   );
 }
@@ -191,7 +166,29 @@ function FileChipFromPath({ path, className = "" }: { path: string; className?: 
   );
 }
 
-function MessageContentWithChips({
+/** Sanitize schema: allow common markdown HTML + video (for rehype-raw). */
+const markdownSanitizeSchema = {
+  tagNames: [
+    "a", "b", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3", "hr", "i", "img", "input", "li", "ol", "p",
+    "pre", "s", "strong", "sub", "sup", "table", "tbody", "td", "th", "thead", "tr", "ul", "video",
+  ],
+  attributes: {
+    a: ["href", "title"],
+    img: ["src", "alt", "title", "className"],
+    video: ["src", "controls", "playsinline", "className"],
+    input: ["type", "disabled", "checked"],
+    code: ["className"],
+    div: ["className"],
+    span: ["className"],
+    p: ["className"],
+    pre: ["className"],
+    ol: ["start", "className"],
+    ul: ["className"],
+    li: ["className"],
+  },
+};
+
+function MessageContentMarkdown({
   content,
   className = "",
   onNavigateToSettings,
@@ -200,44 +197,65 @@ function MessageContentWithChips({
   className?: string;
   onNavigateToSettings?: () => void;
 }) {
-  const segments = parseContentWithAttachments(content);
+  const empty = !content || typeof content !== "string" || !content.trim();
+  if (empty) return <span className={cn(className)} />;
+
   return (
-    <span className={cn("whitespace-pre-wrap break-words", className)}>
-      {segments.map((seg, i) => {
-        if (seg.type === "text") {
-          return <React.Fragment key={i}>{seg.value}</React.Fragment>;
-        }
-        if (seg.type === "image") {
-          return <ImageChipFromPath key={i} path={seg.path} />;
-        }
-        if (seg.type === "file") {
-          return <FileChipFromPath key={i} path={seg.path} />;
-        }
-        if (seg.type === "link" && seg.target === "settings" && onNavigateToSettings) {
-          return (
-            <button
-              key={i}
-              type="button"
-              className="text-[#07C160] underline cursor-pointer hover:opacity-80"
-              onClick={(e) => {
-                e.preventDefault();
-                onNavigateToSettings();
-              }}
-            >
-              {seg.label}
-            </button>
-          );
-        }
-        if (seg.type === "link") {
-          return (
-            <span key={i} className="text-[#07C160] underline">
-              {seg.label}
-            </span>
-          );
-        }
-        return null;
-      })}
-    </span>
+    <div className={cn("message-markdown whitespace-pre-wrap break-words text-[14px] leading-relaxed", className)}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
+        components={{
+          img: ({ src, alt }) => {
+            if (!src) return null;
+            return <ImageChipFromPath path={src} />;
+          },
+          video: ({ src }) => {
+            if (!src) return null;
+            return <VideoChipFromUrl url={src} />;
+          },
+          a: ({ href, children }) => {
+            if (href === "settings" && onNavigateToSettings) {
+              return (
+                <button
+                  type="button"
+                  className="text-[#07C160] underline cursor-pointer hover:opacity-80 bg-transparent border-0 p-0"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onNavigateToSettings();
+                  }}
+                >
+                  {children}
+                </button>
+              );
+            }
+            return (
+              <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#07C160] underline">
+                {children}
+              </a>
+            );
+          },
+          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+          ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
+          ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
+          li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+          code: ({ className, children }) =>
+            className ? (
+              <code className={cn("rounded px-1 py-0.5 bg-gray-100 text-[13px]", className)}>{children}</code>
+            ) : (
+              <code className="rounded px-1 py-0.5 bg-gray-100 text-[13px] font-mono">{children}</code>
+            ),
+          pre: ({ children }) => (
+            <pre className="overflow-x-auto rounded-lg bg-gray-50 p-3 text-[13px] my-2 border border-gray-100">
+              {children}
+            </pre>
+          ),
+          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -441,7 +459,16 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   useEffect(() => {
     const offEvent = onAgentEvent((payload) => handleIncomingAgentEvent(payload));
     const offError = onAgentError((message) => {
-      const text = message || "Request failed.";
+      const rawMessage = message || "Request failed.";
+      let text = rawMessage;
+      // Shown when the model API (e.g. OpenRouter) returns 401 / auth error during reply
+      if (
+        /401|missing\s+authentication|invalid\s+.*authorization|unauthorized/i.test(String(rawMessage).trim())
+      ) {
+        console.warn("[creez:chat] model API auth error (original):", rawMessage);
+        text =
+          "模型 API 未授权。请在 设置 → Model Config 中填写当前模型的 API Key 并保存后重试。若已填写仍报错，请检查 Key 是否对应当前 Provider（如 OpenRouter）且未过期。";
+      }
       console.log("[creez:chat] reply_error", { message: text });
       chatLog("agent:error", text);
       if (initRejectRef.current && !agentReadyRef.current) {
@@ -1473,7 +1500,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
                           isMe ? "bg-[#95EC69] text-[#1a1a1a]" : "bg-white text-[#1a1a1a]"
                         )}
                       >
-                        <MessageContentWithChips content={showContent} onNavigateToSettings={onNavigateToSettings} />
+                        <MessageContentMarkdown content={showContent} onNavigateToSettings={onNavigateToSettings} />
                       </div>
                     )}
                     {!isMe && toolCalls && toolCalls.length > 0 && (

@@ -58,7 +58,7 @@ export async function buildSystemPrompt({
   const memoryFilePath = memoryPath || "~/.creez/memory/memory.md";
 
   const sections = [
-    "You are a desktop coding and productivity assistant inside Creez.",
+    `You are ${name}, a desktop coding and productivity assistant inside Creez. When the user asks who you are or when introducing yourself, use only this name (${name}); do not call yourself Pi or any other name.`,
     "",
     "## Safety",
     "- You do not have independent goals.",
@@ -89,7 +89,7 @@ export async function buildSystemPrompt({
     `- When accessing .env, memory, or skill configs, use the Creez config directory (${baseDir}), not the Workspace.`,
     "",
     "## Assistant Identity",
-    `- Name: ${name}`,
+    `- Name: ${name} (use this name when asked who you are or when introducing yourself; do not use "Pi" or other names)`,
     systemPrompt ? `- Product Prompt: ${systemPrompt}` : "- Product Prompt: (empty)",
     "",
     "## Enabled Skills",
@@ -119,6 +119,5 @@ export async function buildSystemPrompt({
   ];
 
   const result = sections.join("\n").trim();
-  console.log("[creez:system-prompt] full prompt:\n", result);
   return result;
 }

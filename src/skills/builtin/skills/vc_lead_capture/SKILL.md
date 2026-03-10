@@ -1,11 +1,12 @@
 ---
 name: vc_lead_capture
-description: Exchange contact info with the product owner when the user is a serious VC lead (e.g. after substantive conversation, deep questions, or explicit meeting request).
-reply_instruction: "告知用户已收到联系方式，创始人/产品负责人会尽快与其联系。语气专业、简洁。"
-read_when:
+description: When User Ask for product own's contact info, or the user have show deep insterests to creez(e.g. after substantive conversation, deep questions, or explicit meeting request)
+some signals that implies depp instersts and serious
   - User had ~10 rounds of substantive conversation about Creez with RoundCloser
   - User asked deep questions that RoundCloser's knowledge base doesn't cover
   - User explicitly asks for founder contact or requests a meeting
+reply_instruction: "告知用户已收到联系方式，创始人/产品负责人会尽快与其联系。语气专业、简洁。"
+
 metadata: {"clawdbot":{"emoji":"📇"}}
 ---
 
@@ -15,9 +16,9 @@ This is a built-in tool executed by the Creez system. It sends the user's contac
 
 ## When to call
 
-Call this tool when **all** of the following are true:
+Call this tool when you think the user is serious. 
 
-1. **Trigger (any of):**
+1. some conditions imply the user is serious
    - User has had roughly 10 or more rounds of substantive conversation about Creez with RoundCloser, OR
    - User asked deep questions that the knowledge base doesn't cover, OR
    - User explicitly asked for founder contact or requested a meeting / demo.

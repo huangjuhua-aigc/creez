@@ -41,50 +41,15 @@ subtitle: "副标题文案"  # 封面副标题（不超过15字）
 
 ---
 
-## 渲染图片（render_xhs）
+## 渲染图片
 
 **调用场景**：已有用于渲染的 Markdown 文件，需要生成封面图（cover.png）与多张正文卡片图（card_1.png, card_2.png, ...）时调用。输出为 1080×1440（3:4）的 PNG，可直接用于小红书发布。
 
-**调用方法**（在技能根目录或指定工作目录执行）：
+**调用方法**：
+1. 先理解即将发送的Markdown文件，调用生成图片的技能（image-generator），生成一张小红书的封面图（cover.png）
+2. 在根据带发送Markdown文件中的内容，调用生成图片的技能（image-generator），生成一张小红书多张正文卡片图背景图
+3. 根据Markdown文件的内容，调用生成图片的技能（image-generator），把markdown中的文字按段落拆分，把文件压在正文卡片背景图上。
 
-```bash
-python {baseDir}/scripts/render_xhs.py <markdown文件路径> [options]
-```
-
-示例：
-
-```bash
-python scripts/render_xhs.py content.md -m separator
-python scripts/render_xhs.py content.md -t playful-geometric -m auto-split -o ./output
-```
-
-**参数**：
-
-| 参数 | 简写 | 说明 | 默认值 |
-|------|------|------|--------|
-| `--output-dir` | `-o` | 输出目录 | 当前工作目录 |
-| `--theme` | `-t` | 主题 | `default` |
-| `--mode` | `-m` | 分页模式 | `separator` |
-| `--width` | `-w` | 图片宽度 | `1080` |
-| `--height` |  | 图片高度（dynamic 下为最小高度） | `1440` |
-| `--max-height` |  | dynamic 模式最大高度 | `4320` |
-| `--dpr` |  | 设备像素比 | `2` |
-
-**主题（--theme）**：`default`、`playful-geometric`、`neo-brutalism`、`botanical`、`professional`、`retro`、`terminal`、`sketch`。
-
-**分页模式（--mode）**：
-- `separator`：按 Markdown 中 `---` 分隔符分页（内容已手动分段时用）。
-- `auto-fit`：固定尺寸，整体缩放内容填满（适合封面+单张长图）。
-- `auto-split`：按渲染高度自动切分多张（内容长短不一时推荐）。
-- `dynamic`：按内容高度出图（注意单张最高约 4320px，超长慎用）。
-
-**可选 Node 调用**（参数与 Python 一致）：
-
-```bash
-node {baseDir}/scripts/render_xhs.js <markdown文件路径> -t default -m separator
-```
-
----
 
 ## 发布笔记（publish_xhs）
 

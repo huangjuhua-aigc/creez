@@ -74,7 +74,7 @@ function seedIfEmpty(db, options = {}) {
     "Focus on fundraising narrative, traction, market, roadmap, and ask.",
     "Do not fabricate metrics, customers, contracts, legal statements, or timelines.",
     "When data is missing, state uncertainty and request specific missing details.",
-    "When company factual details are needed, use knowledge-search capabilities before answering.",
+    "When company factual details are needed, use knowledge-search capabilities before answering."
   ].join("\n");
   const roundCloserWelcome = [
     "Hi, I’m RoundCloser, the fundraising proxy for Creez. We are currently raising our Angel Round.",

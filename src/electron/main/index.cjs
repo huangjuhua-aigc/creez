@@ -397,7 +397,7 @@ app.whenReady().then(async () => {
     registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, skillManager, contactRepository, { creezHome });
     registerTaskIpc(ipcMain);
     registerWorkspaceIpc(ipcMain, appStateStore);
-    registerStoryboardIpc(ipcMain, { appStateStore });
+    registerStoryboardIpc(ipcMain, { appStateStore, skillManager });
     registerAttachmentIpc(ipcMain);
     registerAgentIpc(ipcMain, {
       assistantConfigRepository,

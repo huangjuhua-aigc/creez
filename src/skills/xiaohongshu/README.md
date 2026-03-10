@@ -5,7 +5,8 @@
 ## 能力概览
 
 - 撰写小红书风格标题与正文
-- 生成用于渲染的 Markdown（YAML 头 + 正文），用 `scripts/render_xhs.py` 得到 cover.png + card_*.png
+- 生成用于渲染的 Markdown（YAML 头 + 正文）
+- 利用生成图片的技能创作 cover.png + card_*.png
 - 可选：`scripts/publish_xhs.py` 发布到小红书（需配置 Cookie）
 
 ## 目录结构
@@ -16,7 +17,7 @@ xiaohongshu/
 ├── README.md
 ├── requirements.txt   # Python 依赖（渲染+发布）
 ├── env.example.txt    # Cookie 配置示例
-├── scripts/           # render_xhs.py, render_xhs.js, publish_xhs.py
+├── scripts/           # publish_xhs.py
 └── assets/            # 封面/卡片模板、主题 CSS（themes/）
 ```
 

@@ -34,9 +34,43 @@ function StatusBadge({ status }: { status: ToolCall["status"] }) {
   );
 }
 
+/** Parse generate_image / generate_video tool result to get media URLs for display */
+function parseMediaFromToolResult(toolName: string, result: string | undefined): { images: string[]; videos: string[] } {
+  const images: string[] = [];
+  const videos: string[] = [];
+  if (!result || typeof result !== "string") return { images, videos };
+  try {
+    const data = JSON.parse(result) as Record<string, unknown>;
+    if (toolName === "generate_image") {
+      const gen = data.generation as Array<{ url?: string; image?: string }> | undefined;
+      if (Array.isArray(gen)) {
+        for (const g of gen) {
+          const u = g?.url || g?.image;
+          if (typeof u === "string" && u) images.push(u);
+        }
+      }
+      const imgList = data.data?.images as Array<{ data?: string }> | undefined;
+      if (Array.isArray(imgList)) {
+        for (const img of imgList) {
+          if (typeof img?.data === "string" && img.data) images.push(img.data);
+        }
+      }
+    }
+    if (toolName === "generate_video") {
+      const url = (data.data as { videoUrl?: string })?.videoUrl ?? (data as { videoUrl?: string }).videoUrl;
+      if (typeof url === "string" && url) videos.push(url);
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return { images, videos };
+}
+
 function ToolCard({ toolCall, isLastRunning }: { toolCall: ToolCall; isLastRunning: boolean }) {
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const prevStatusRef = useRef(toolCall.status);
+  const isMediaTool = toolCall.toolName === "generate_image" || toolCall.toolName === "generate_video";
+  const media = parseMediaFromToolResult(toolCall.toolName, toolCall.result);
 
   useEffect(() => {
     if (prevStatusRef.current === "running" && toolCall.status !== "running") {
@@ -58,7 +92,7 @@ function ToolCard({ toolCall, isLastRunning }: { toolCall: ToolCall; isLastRunni
           className={`text-zinc-400 transition-transform duration-200 shrink-0 ${isOpen ? "rotate-90" : ""}`}
         />
         <span
-          className={`flex-1 text-[11px] font-mono truncate ${toolCall.status === "running" ? "text-zinc-500" : "text-zinc-600"}`}
+          className={`flex-1 text-[11px] truncate ${toolCall.status === "running" ? "text-zinc-500" : "text-zinc-600"}`}
         >
           {toolCall.toolName}
         </span>
@@ -70,6 +104,32 @@ function ToolCard({ toolCall, isLastRunning }: { toolCall: ToolCall; isLastRunni
 
       {isOpen && (
         <div className="mx-3 mb-2.5 rounded-lg border border-zinc-100 overflow-hidden bg-white">
+          {(media.images.length > 0 || media.videos.length > 0) && (
+            <div className="px-2.5 py-2 border-b border-zinc-100">
+              <div className="flex items-center gap-1 text-[9px] text-zinc-400 uppercase tracking-widest mb-1.5">
+                Result
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {media.images.map((src, i) => (
+                  <img
+                    key={i}
+                    src={src}
+                    alt=""
+                    className="max-w-[160px] max-h-[120px] rounded-md object-cover border border-zinc-100"
+                  />
+                ))}
+                {media.videos.map((src, i) => (
+                  <video
+                    key={i}
+                    src={src}
+                    controls
+                    playsInline
+                    className="max-w-[200px] max-h-[120px] rounded-md border border-zinc-100"
+                  />
+                ))}
+              </div>
+            </div>
+          )}
           <div className="px-2.5 py-2 border-b border-zinc-100">
             <div className="flex items-center gap-1 text-[9px] text-zinc-400 uppercase tracking-widest mb-1.5">
               <Terminal size={8} />
@@ -126,7 +186,7 @@ export function ToolCallGroup({ toolCalls }: ToolCallGroupProps) {
         {!groupExpanded && lastTask && (
           <>
             <span className="text-[10px] text-zinc-300 ml-0.5">·</span>
-            <span className="text-[10px] text-zinc-500 font-mono truncate min-w-0" title={lastTask.toolName}>
+            <span className="text-[10px] text-zinc-500 truncate min-w-0">
               {lastTask.toolName}
             </span>
             <span className="text-[10px] text-zinc-300 ml-1 shrink-0">·</span>

@@ -70,14 +70,6 @@ function registerAgentIpc(ipcMain, deps = {}) {
   const agentDir = creezHome ? path.join(creezHome, ".creez") : path.join(os.homedir(), ".creez");
 
   ipcMain.on(CHANNELS.AGENT_INIT, async (event, payload) => {
-    console.log("[creez:flow] AGENT_INIT recv", {
-      contactId: payload?.contactId ?? null,
-      chatId: payload?.chatId ?? null,
-      modelConfigId: payload?.modelConfigId || null,
-      provider: payload?.provider || null,
-      modelId: payload?.modelId || null,
-      hasApiKey: Boolean(payload?.apiKey),
-    });
     log("agent:init:recv", {
       contactId: payload?.contactId ?? null,
       modelConfigId: payload?.modelConfigId || null,
@@ -115,16 +107,18 @@ function registerAgentIpc(ipcMain, deps = {}) {
         apiKey = assistantConfigRepository.getModelApiKey(payload.modelConfigId, defaultContactId);
         if (apiKey) apiKeySource = "getModelApiKey(default)";
       }
+      // New/non-default agent may have config without apiKey (e.g. created before key was saved); always try default config
+      if (!apiKey && assistantConfigId !== defaultContactId && activeModel?.id && assistantConfigRepository?.getModelApiKeyFromConfig) {
+        apiKey = assistantConfigRepository.getModelApiKeyFromConfig(defaultContactId, activeModel.id);
+        if (apiKey) apiKeySource = "getModelApiKeyFromConfig(default)";
+      }
 
-      console.log("[creez:flow] AGENT_INIT resolved", {
+      log("agent:init:resolved", {
         assistantConfigId,
-        defaultContactId,
-        activeModelId: activeModel?.id ?? null,
         provider,
         modelId,
         hasApiKey: Boolean(apiKey),
         apiKeySource,
-        rawConfigModelCount: rawConfig?.models?.length ?? 0,
       });
       log("agent:init:apiKey", {
         source: apiKeySource,
@@ -163,15 +157,6 @@ function registerAgentIpc(ipcMain, deps = {}) {
       });
 
       if (!provider || !modelId || !apiKey) {
-        console.log("[creez:flow] AGENT_INIT invalid", {
-          contactId: payload?.contactId ?? null,
-          chatId: payload?.chatId ?? null,
-          hasProvider: Boolean(provider),
-          hasModelId: Boolean(modelId),
-          hasApiKey: Boolean(apiKey),
-          apiKeySource,
-          assistantConfigId,
-        });
         log("agent:init:invalid", {
           hasProvider: Boolean(provider),
           hasModelId: Boolean(modelId),
@@ -223,20 +208,13 @@ function registerAgentIpc(ipcMain, deps = {}) {
     const textLen = userText.length;
     const imageCount = Array.isArray(payload?.images) ? payload.images.length : 0;
     const textPreview = userText.slice(0, 400).replace(/\s+/g, " ").trim();
-    console.log("[creez:chat] prompt", {
-      chatId: chatId || null,
-      textLen,
-      imageCount,
-      textPreview: textPreview ? `${textPreview}${userText.length > 400 ? "…" : ""}` : null,
-    });
     log("agent:prompt:recv", { chatId: chatId || null, textLen, imageCount });
     try {
       const engine = currentEngine || getPiEngine();
       const hasSession = await engine.hasSession(chatId);
       log("agent:prompt:session", { hasSession, chatId: chatId || null });
       if (!hasSession) {
-        console.log("[creez:chat] prompt no-session", { chatId: chatId || null });
-        log("agent:prompt:no-session", "Agent not initialized for this chat");
+        log("agent:prompt:no-session", { chatId: chatId || null });
         event.sender.send(CHANNELS.AGENT_EVENT_ERROR, "Agent not initialized.");
         return;
       }
@@ -246,12 +224,6 @@ function registerAgentIpc(ipcMain, deps = {}) {
         text: payload?.text || "",
         images: normalizeImages(payload?.images),
       });
-      const donePreview = userText.slice(0, 200).replace(/\s+/g, " ").trim();
-      console.log("[creez:chat] prompt done", {
-        chatId: chatId || null,
-        userTextLen: textLen,
-        userTextPreview: donePreview ? `${donePreview}${userText.length > 200 ? "…" : ""}` : null,
-      });
       log("agent:prompt:engine.prompt:done", "");
       log("agent:prompt:done", "prompt resolved");
       if (event.sender && typeof event.sender.isDestroyed === "function" && !event.sender.isDestroyed()) {
@@ -260,7 +232,6 @@ function registerAgentIpc(ipcMain, deps = {}) {
       }
     } catch (error) {
       const message = error?.message || String(error);
-      console.log("[creez:chat] prompt error", { chatId: chatId || null, error: message });
       console.error("[creezv2] agent:prompt error:", message);
       log("agent:prompt:error", message);
       event.sender.send(CHANNELS.AGENT_EVENT_ERROR, message);
