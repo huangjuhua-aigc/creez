@@ -279,7 +279,7 @@ function IdentitySettings() {
             className="w-full px-4 py-2.5 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] outline-none transition-all shadow-sm font-mono text-sm placeholder:text-gray-400"
             autoComplete="off"
           />
-          <p className="text-[11px] text-gray-400 px-1">保存到 ~/.creez/.env，调用后端时从此处读取（与小红书 Cookie 同文件）。</p>
+          <p className="text-[11px] text-gray-400 px-1">保存到 ~/.creez/.env</p>
         </div>
 
         <div className="space-y-2">

@@ -434,6 +434,12 @@ app.whenReady().then(async () => {
     await cronManager.initAll();
 
     loadMainAppInto(mainWindow);
+    if (isDev || isDebug) {
+      mainWindow.webContents.once("did-finish-load", () => {
+        mainWindow.webContents.openDevTools({ mode: "detach" });
+        startupLog("DevTools opened (isDev=" + isDev + " CREEZ_DEBUG=" + !!process.env.CREEZ_DEBUG + ")");
+      });
+    }
     startupLog("after loadMainAppInto");
     startSyncPullTask(contactRepository);
     startupLog("before channelManager.startAll");
