@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { SidebarNav } from './components/SidebarNav';
 import { ResourcePanel } from './components/ResourcePanel';
 import { ChatWindow } from './components/ChatWindow';
@@ -8,6 +9,9 @@ import { Aperture } from 'lucide-react';
 import { loadAppState, persistAppState } from './services/appState';
 import { readWorkspaceFile, writeWorkspaceFile } from './services/workspace';
 import { toast } from 'sonner';
+import { WorkshopLayout } from './workshop/WorkshopLayout';
+import { SceneboardMain } from './workshop/SceneboardMain';
+import { TimelineView } from './workshop/TimelineView';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('contacts'); // Default to contacts based on flow, or chat
@@ -84,13 +88,31 @@ export default function App() {
     toast.success('File saved');
   };
 
+  const navigate = useNavigate();
+  const location = useLocation();
+  const isWorkshop = location.pathname.startsWith('/workshop');
+  const effectiveTab = isWorkshop ? 'workshop' : activeTab;
+
   return (
     <div className="flex w-full h-screen bg-gray-100 overflow-hidden font-sans text-gray-900">
       {/* 1. Navigation Sidebar (Leftmost) */}
-      <SidebarNav activeTab={activeTab} setActiveTab={setActiveTab} />
-      
-      {/* 2. Main Content Area - Switches based on activeTab */}
+      <SidebarNav
+        activeTab={effectiveTab}
+        setActiveTab={setActiveTab}
+        onNavigateToWorkshop={() => navigate('/workshop')}
+      />
+
+      {/* 2. Main Content Area - Workshop routes or tab content */}
       <main className="flex-1 flex flex-col min-w-0 bg-white shadow-sm z-10 relative">
+        {isWorkshop ? (
+          <Routes>
+            <Route path="/workshop" element={<WorkshopLayout />}>
+              <Route path="sceneboard" element={<SceneboardMain />} />
+              <Route path="sceneboard/timeline" element={<TimelineView />} />
+            </Route>
+          </Routes>
+        ) : (
+          <>
         {activeTab === 'chat' && (
           <ChatWindow activeChatId={currentChatId} onSelectChat={handleSelectChat} onNavigateToSettings={() => setActiveTab('settings')} />
         )}
@@ -154,6 +176,8 @@ export default function App() {
             </div>
         )}
         {activeTab === 'settings' && <AdvancedSettings />}
+        </>
+        )}
       </main>
     </div>
   );

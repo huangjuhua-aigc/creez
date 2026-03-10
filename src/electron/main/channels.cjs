@@ -42,6 +42,20 @@ const CHANNELS = Object.freeze({
   SCHEDULED_TASKS_CREATE: "scheduledTasks:create",
   SCHEDULED_TASKS_UPDATE: "scheduledTasks:update",
   SCHEDULED_TASKS_DELETE: "scheduledTasks:delete",
+  STORYBOARD_LIST: "storyboard:list",
+  STORYBOARD_GET: "storyboard:get",
+  STORYBOARD_CREATE: "storyboard:create",
+  STORYBOARD_UPDATE: "storyboard:update",
+  STORYBOARD_GET_ASSET_URL: "storyboard:getAssetUrl",
+  STORYBOARD_SET_ACTIVE: "storyboard:setActive",
+  STORYBOARD_GENERATE_IMAGE: "storyboard:generateImage",
+  STORYBOARD_GENERATE_VIDEO: "storyboard:generateVideo",
+  STORYBOARD_DELETE_RESOURCE: "storyboard:deleteResource",
+  STORYBOARD_DELETE_GENERATION: "storyboard:deleteGeneration",
+  STORYBOARD_ADD_RESOURCE: "storyboard:addResource",
+  STORYBOARD_UPLOAD_LOCAL_ASSET: "storyboard:uploadLocalAsset",
+  STORYBOARD_AGENT_CREATE: "storyboard:agentCreate",
+  STORYBOARD_DELETE_PROJECT: "storyboard:deleteProject",
 });
 
 module.exports = {

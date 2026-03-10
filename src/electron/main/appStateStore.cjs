@@ -7,6 +7,7 @@ const DEFAULT_APP_STATE = Object.freeze({
   lastChatId: null,
   workspaceRoot: null,
   isLoggedIn: false,
+  creezApiKey: null,
 });
 
 function sanitizeState(raw) {
@@ -30,6 +31,13 @@ function sanitizeState(raw) {
     safe.workspaceRoot = String(safe.workspaceRoot);
   } else {
     safe.workspaceRoot = null;
+  }
+
+  if (safe.creezApiKey !== null && safe.creezApiKey !== undefined) {
+    const trimmed = String(safe.creezApiKey).trim();
+    safe.creezApiKey = trimmed !== "" ? trimmed : null;
+  } else {
+    safe.creezApiKey = null;
   }
 
   safe.isLoggedIn = Boolean(safe.isLoggedIn);

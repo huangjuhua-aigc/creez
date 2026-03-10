@@ -30,10 +30,11 @@ test("assistant config repository read/save works with masking", async () => {
   const dbWrapper = new CreezDatabase({ homeDir }).init();
   const repo = new AssistantConfigRepository(dbWrapper.db);
 
-  const initial = repo.getConfig();
-  assert.equal(initial.name.length > 0, true);
+  const defaultId = dbWrapper.db.prepare("SELECT id FROM contacts WHERE type = 'bot' AND is_default = 1 LIMIT 1").get()?.id ?? "11111111-1111-1111-1111-111111111111";
+  const initial = repo.getConfigById(defaultId);
+  assert.equal(initial != null && initial.name.length > 0, true);
 
-  const saved = repo.saveConfigById(1, {
+  const saved = repo.saveConfigById(defaultId, {
     name: "My Assistant",
     systemPrompt: "You are concise.",
     skills: { webSearch: true },
@@ -43,7 +44,7 @@ test("assistant config repository read/save works with masking", async () => {
   assert.equal(saved.name, "My Assistant");
   assert.equal(saved.models[0].apiKey, "");
   assert.equal(saved.models[0].apiKeyMasked.length > 0, true);
-  assert.equal(repo.getModelApiKey("m1"), "sk-123456789");
+  assert.equal(repo.getModelApiKeyFromConfig(defaultId, "m1"), "sk-123456789");
 
   dbWrapper.close();
 });
@@ -53,22 +54,24 @@ test("assistant config repository supports by-id save isolation", async () => {
   const dbWrapper = new CreezDatabase({ homeDir }).init();
   const repo = new AssistantConfigRepository(dbWrapper.db);
 
-  const defaultBefore = repo.getConfigById(1);
+  const defaultId = dbWrapper.db.prepare("SELECT id FROM contacts WHERE type = 'bot' AND is_default = 1 LIMIT 1").get()?.id ?? "11111111-1111-1111-1111-111111111111";
+  const defaultBefore = repo.getConfigById(defaultId);
   assert.equal(Boolean(defaultBefore), true);
 
-  const savedTwo = repo.saveConfigById(2, {
+  const configTwoId = "config-vc-bot-002";
+  const savedTwo = repo.saveConfigById(configTwoId, {
     name: "VC Bot",
     systemPrompt: "You are a fundraising assistant.",
     skills: { knowledge_search: true },
     models: [{ id: "m2", provider: "OpenRouter", model: "minimax/minimax-m2.5", apiKey: "sk-vc-002", active: true }],
   });
-  assert.equal(savedTwo?.id, 2);
+  assert.equal(savedTwo?.id, configTwoId);
   assert.equal(savedTwo?.name, "VC Bot");
   assert.equal(savedTwo?.models?.[0]?.apiKey, "");
 
-  const defaultAfter = repo.getConfigById(1);
+  const defaultAfter = repo.getConfigById(defaultId);
   assert.equal(defaultAfter?.name, defaultBefore?.name);
-  assert.equal(repo.getModelApiKeyFromConfig(2, "m2"), "sk-vc-002");
+  assert.equal(repo.getModelApiKeyFromConfig(configTwoId, "m2"), "sk-vc-002");
 
   dbWrapper.close();
 });
@@ -161,35 +164,37 @@ test("settings IPC resolves assistant config by contactId", async () => {
   const memoryStore = new MemoryStore({ homeDir });
   const ipcMain = createIpcMainMock();
 
-  assistantConfigRepository.saveConfigById(2, {
+  const contactVcId = "contact_vc";
+  const ts = Math.floor(Date.now() / 1000);
+  assistantConfigRepository.saveConfigById(contactVcId, {
     name: "VC Bot",
     models: [{ id: "vc-m1", provider: "OpenRouter", model: "minimax/minimax-m2.5", apiKey: "sk-vc-999", active: true }],
   });
   dbWrapper.db.prepare(`
-    INSERT OR REPLACE INTO contacts (id, type, name, avatar_path, assistant_config_id, is_default, created_at, updated_at)
-    VALUES (?, 'bot', 'VC Bot', NULL, 2, 0, ?, ?)
-  `).run("contact_vc", 123, 123);
+    INSERT OR REPLACE INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at)
+    VALUES (?, 'bot', 'VC Bot', NULL, 0, ?, ?)
+  `).run(contactVcId, ts, ts);
 
   registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, null, contactRepository);
 
-  const getConfig = await ipcMain.handlers.get(CHANNELS.SETTINGS_GET_ASSISTANT_CONFIG)(null, { contactId: "contact_vc" });
+  const getConfig = await ipcMain.handlers.get(CHANNELS.SETTINGS_GET_ASSISTANT_CONFIG)(null, { contactId: contactVcId });
   assert.equal(getConfig.ok, true);
   assert.equal(getConfig.data.name, "VC Bot");
 
   const getKey = await ipcMain.handlers.get(CHANNELS.SETTINGS_GET_MODEL_API_KEY)(null, {
-    contactId: "contact_vc",
+    contactId: contactVcId,
     modelId: "vc-m1",
   });
   assert.equal(getKey.ok, true);
   assert.equal(getKey.data.apiKey, "sk-vc-999");
 
   const saveConfig = await ipcMain.handlers.get(CHANNELS.SETTINGS_SAVE_ASSISTANT_CONFIG)(null, {
-    contactId: "contact_vc",
+    contactId: contactVcId,
     name: "VC Bot Updated",
   });
   assert.equal(saveConfig.ok, false);
   assert.equal(saveConfig.error?.code, "FORBIDDEN");
-  const updated = assistantConfigRepository.getConfigById(2);
+  const updated = assistantConfigRepository.getConfigById(contactVcId);
   assert.equal(updated?.name, "VC Bot");
 
   dbWrapper.close();

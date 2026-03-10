@@ -722,22 +722,20 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
 
   const appendFiles = (files: File[]) => {
     if (!Array.isArray(files) || files.length === 0) return;
-    const appended: PendingAttachment[] = [];
-    setPendingAttachments((prev) => {
-      const merged = [...prev];
-      const exists = new Set(prev.map((a) => getFileSignature(a.file)));
-      for (const file of files) {
-        const signature = getFileSignature(file);
-        if (exists.has(signature)) continue;
-        const created = createAttachment(file);
-        merged.push(created);
-        appended.push(created);
-        exists.add(signature);
-      }
-      return merged;
-    });
-    if (appended.length === 0) return;
-    for (const item of appended) {
+
+    const existingSignatures = new Set(pendingAttachments.map((a) => getFileSignature(a.file)));
+    const newAttachments: PendingAttachment[] = [];
+    for (const file of files) {
+      const signature = getFileSignature(file);
+      if (existingSignatures.has(signature)) continue;
+      newAttachments.push(createAttachment(file));
+      existingSignatures.add(signature);
+    }
+    if (newAttachments.length === 0) return;
+
+    setPendingAttachments((prev) => [...prev, ...newAttachments]);
+
+    for (const item of newAttachments) {
       const chip = makeAttachmentChip(item);
       insertNodeAtCaret(chip);
       insertTextAtCaret(" ");

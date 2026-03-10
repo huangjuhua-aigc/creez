@@ -23,9 +23,8 @@ class TaskRepository {
     const chatId = String(raw.chat_id || "").trim();
     const cronExpression = String(raw.cron_expression || "").trim();
     const taskPrompt = String(raw.task_prompt || "").trim();
-    const status = ["active", "paused", "deleted"].includes(String(raw.status || "active").trim())
-      ? String(raw.status).trim()
-      : "active";
+    const statusRaw = String(raw.status ?? "active").trim();
+    const status = ["active", "paused", "deleted"].includes(statusRaw) ? statusRaw : "active";
     const ts = nowTs();
 
     if (!contactId || !chatId || !cronExpression || !taskPrompt) {
