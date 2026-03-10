@@ -87,11 +87,12 @@ class SkillManager {
     return this.path.join(this.homeDir, ".creez", ".env");
   }
 
-  /** Which env keys each skill uses (for reading subset only). */
+  /** Which env keys each skill uses (for reading subset only). "creez" = app-level env in ~/.creez/.env (Creez API / 后端调用). */
   static getSkillEnvKeys() {
     return {
       xiaohongshu: ["XHS_COOKIE"],
       "tavily-search": ["TAVILY_API_KEY"],
+      creez: ["CREEZ_API_KEY", "CREEZ_BACKEND_URL"],
     };
   }
 

@@ -120,17 +120,23 @@ function err(code, message) {
 
 /**
  * @param {import('electron').IpcMain} ipcMain
- * @param {{ appStateStore: { getState: () => Promise<{ workspaceRoot?: string | null; creezApiKey?: string | null }> } }} deps
+ * @param {{ appStateStore: { getState: () => Promise<{ workspaceRoot?: string | null; creezApiKey?: string | null }> }; skillManager?: { getSkillEnv: (skillId: string) => Promise<Record<string, string>> } }} deps
  */
 function registerStoryboardIpc(ipcMain, deps) {
-  const { appStateStore } = deps;
+  const { appStateStore, skillManager } = deps;
 
   async function getRoot() {
     const state = appStateStore ? await appStateStore.getState() : {};
     return getStoryboardRoot(state.workspaceRoot ?? null);
   }
 
+  /** Creez API Key: 优先 ~/.creez/.env（与小红书技能一致），其次应用状态，再环境变量，最后默认值。 */
   async function getCreezApiKey() {
+    if (skillManager && typeof skillManager.getSkillEnv === "function") {
+      const env = await skillManager.getSkillEnv("creez");
+      const fromEnv = env.CREEZ_API_KEY != null && String(env.CREEZ_API_KEY).trim() !== "" ? String(env.CREEZ_API_KEY).trim() : null;
+      if (fromEnv) return fromEnv;
+    }
     const state = appStateStore ? await appStateStore.getState() : {};
     const fromState = state.creezApiKey != null && String(state.creezApiKey).trim() !== "" ? String(state.creezApiKey).trim() : null;
     if (fromState) return fromState;

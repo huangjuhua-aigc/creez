@@ -66,16 +66,6 @@ function getEngineForContact(contactId, deps) {
     else engine = getPiEngine(); // fallback to pi for unknown type
   }
 
-  console.log("[creez:flow] getEngineForContact", {
-    contactId: contactId ?? null,
-    contactResolved,
-    assistantConfigId,
-    defaultContactId,
-    engineType,
-    modelCount: rawConfig?.models?.length ?? 0,
-    firstModelId: rawConfig?.models?.[0]?.id ?? null,
-  });
-
   return { engine, rawConfig, assistantConfigId, defaultContactId };
 }
 
