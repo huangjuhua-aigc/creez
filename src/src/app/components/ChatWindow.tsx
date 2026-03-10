@@ -185,8 +185,22 @@ const markdownSanitizeSchema = {
     ol: ["start", "className"],
     ul: ["className"],
     li: ["className"],
+    table: ["className"],
+    thead: ["className"],
+    tbody: ["className"],
+    tr: ["className"],
+    th: ["className"],
+    td: ["className"],
   },
 };
+
+/** Normalize line endings, collapse 3+ newlines, and fix table lines so GFM parses them (no leading indent). */
+function normalizeMarkdownNewlines(text: string): string {
+  const unified = text.replace(/\r\n?/g, "\n");
+  const collapsed = unified.replace(/\n{3,}/g, "\n\n");
+  // GFM treats lines indented with 4+ spaces as code; strip leading spaces from table-like lines so table parses
+  return collapsed.replace(/^(\s*)(\|.+\|)\s*$/gm, (_, spaces, line) => (spaces.length >= 2 ? line : spaces + line));
+}
 
 function MessageContentMarkdown({
   content,
@@ -200,8 +214,10 @@ function MessageContentMarkdown({
   const empty = !content || typeof content !== "string" || !content.trim();
   if (empty) return <span className={cn(className)} />;
 
+  const normalizedContent = normalizeMarkdownNewlines(content);
+
   return (
-    <div className={cn("message-markdown whitespace-pre-wrap break-words text-[14px] leading-relaxed", className)}>
+    <div className={cn("message-markdown break-words text-[14px] leading-relaxed", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
@@ -235,10 +251,14 @@ function MessageContentMarkdown({
               </a>
             );
           },
-          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+          p: ({ children }) => <p className="mb-2 last:mb-0 whitespace-pre-wrap">{children}</p>,
+          h1: ({ children }) => <h1 className="text-lg font-semibold mt-3 mb-1 first:mt-0">{children}</h1>,
+          h2: ({ children }) => <h2 className="text-base font-semibold mt-3 mb-1 first:mt-0">{children}</h2>,
+          h3: ({ children }) => <h3 className="text-[15px] font-semibold mt-2 mb-1 first:mt-0">{children}</h3>,
+          hr: () => <hr className="my-2 border-gray-200" />,
           ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
-          li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+          li: ({ children }) => <li className="leading-relaxed whitespace-pre-wrap">{children}</li>,
           code: ({ className, children }) =>
             className ? (
               <code className={cn("rounded px-1 py-0.5 bg-gray-100 text-[13px]", className)}>{children}</code>
@@ -246,14 +266,32 @@ function MessageContentMarkdown({
               <code className="rounded px-1 py-0.5 bg-gray-100 text-[13px] font-mono">{children}</code>
             ),
           pre: ({ children }) => (
-            <pre className="overflow-x-auto rounded-lg bg-gray-50 p-3 text-[13px] my-2 border border-gray-100">
+            <pre className="overflow-x-auto rounded-lg bg-gray-50 p-3 text-[13px] my-2 border border-gray-100 min-h-0">
               {children}
             </pre>
           ),
           strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+          table: ({ children }) => (
+            <div className="my-2 overflow-x-auto rounded-lg border border-gray-200 min-h-0">
+              <table className="w-full border-collapse text-[13px]">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
+          tbody: ({ children }) => <tbody className="bg-white">{children}</tbody>,
+          tr: ({ children }) => <tr className="border-b border-gray-100 last:border-b-0">{children}</tr>,
+          th: ({ children }) => (
+            <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-100 last:border-r-0 whitespace-nowrap">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="px-3 py-2 text-gray-800 border-r border-gray-100 last:border-r-0 align-top whitespace-pre-wrap">
+              {children}
+            </td>
+          ),
         }}
       >
-        {content}
+        {normalizedContent}
       </ReactMarkdown>
     </div>
   );
@@ -1471,11 +1509,13 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
               }
               const isMe = msg.sender === "me";
               const toolCalls = (msg as ChatMessageItemWithTools).toolCalls;
-              const showContent =
-                msg.content ||
-                (isStreaming && msg.id === activeAssistantMessageIdRef.current ? waitingDots : "");
+              const isActiveStreamingReply =
+                !isMe && isStreaming && msg.id === activeAssistantMessageIdRef.current;
+              const showContent = isActiveStreamingReply
+                ? (msg.content || "") + (msg.content?.trim() ? " " : "") + waitingDots
+                : (msg.content || "");
               const hasContent = Boolean(msg.content?.trim());
-              const showContentBubble = hasContent || (isStreaming && msg.id === activeAssistantMessageIdRef.current);
+              const showContentBubble = hasContent || isActiveStreamingReply;
               return (
                 <div key={msg.id} className={cn("flex gap-3", isMe ? "flex-row-reverse" : "flex-row")}>
                   <div className="flex-shrink-0">

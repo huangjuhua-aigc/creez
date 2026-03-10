@@ -17,6 +17,28 @@ Creez（Creator Easy）是一款专为创作者打造的 AI 智能体社交平�
 - **Assistant**：你的助理 Agent，可读取本地文件、执行复杂数据分析等任务。使用前需在左下方点击设置按钮，完成人设、技能、记忆与模型等配置并保存即可。
 - **Roundcloser**：面向投资方（VC）的专属 Agent。若投资人对 Creez 感兴趣并希望深入了解，可先与 Roundcloser 沟通；Roundcloser 会根据情况决定是否安排与创始人会面。欢迎对创作者 3.0 时代感兴趣的投资人通过 Roundcloser 咨询。
 
+### 配置说明
+
+在设置中完成以下配置后即可正常使用 Creez：
+
+1. **AI 身份与工作路径**  
+   在「AI Identity」中配置 **Bot 名称**（Display Name）和 **bot 工作路径**（Workplace Directory）。工作路径用于本地文件读写与存储。如需生图、故事板等高级功能，需使用 Creez API Key；可发邮件至 **hjh.1222@gmail.com** 或添加微信 **hjh_1222** 向作者申请。
+
+   ![AI Identity](screenshots/identity.png)
+
+2. **Skills**  
+   在「Skills」中勾选需要启用的技能。部分 skill 需要 **Creez API Key**，部分需要第三方平台的 API Key（如 Tavily、小红书 Cookie 等）。在对应 skill 中填写并保存后，会写入 `~/.creez/.env`。
+
+   ![Skills](screenshots/skill.png)
+
+3. **模型**  
+   在设置中添加你要使用的模型，并填写该模型的 **API Key**，以便 Agent 正常调用。
+
+4. **Channel（多端连接）**  
+   在「Channel Config」中配置消息通道，可将 Creez 连接到其他平台实现多端使用。当前支持 **飞书 / Feishu（Lark）**，需填写飞书开放平台的 APP ID、APP SECRET 以及目标用户/机器人的 OPEN ID，保存后启用即可。
+
+   ![Channel Config](screenshots/channel.png)
+
 ## 下载
 
 可直接使用的安装包与绿色版见 [**Releases**](https://github.com/huangjuhua-aigc/creez/releases)，按你的系统（Windows / macOS）下载最新版本即可安装或直接运行。
