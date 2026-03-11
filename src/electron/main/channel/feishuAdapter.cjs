@@ -391,13 +391,29 @@ class FeishuChannelAdapter {
     }
   }
 
+  /**
+   * Send outbound to the target configured in channel config (FEISHU_OPEN_ID).
+   * Standard adapter interface used by ChannelManager.sendMessage.
+   */
+  async sendOutbound(content) {
+    const openId = this._config?.openId;
+    if (!openId) {
+      return { ok: false, error: "FEISHU_OPEN_ID not configured. Set it in Advanced Settings → Channel → Feishu." };
+    }
+    return this.sendMessage(openId, content, "open_id");
+  }
+
   async sendReply(feishuChatId, text) {
+    return this.sendMessage(feishuChatId, text, "chat_id");
+  }
+
+  async sendMessage(receiveId, text, receiveIdType = "chat_id") {
     const token = await this._getToken();
     if (!token) {
-      console.error("[channel:feishu] no token, cannot reply");
-      return;
+      console.error("[channel:feishu] no token, cannot send");
+      return { ok: false, error: "token failed" };
     }
-    const url = `${FEISHU_MSG_URL}?receive_id_type=chat_id`;
+    const url = `${FEISHU_MSG_URL}?receive_id_type=${receiveIdType}`;
     const res = await fetch(url, {
       method: "POST",
       headers: {
@@ -405,15 +421,17 @@ class FeishuChannelAdapter {
         Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
-        receive_id: feishuChatId,
+        receive_id: receiveId,
         msg_type: "text",
         content: JSON.stringify({ text }),
       }),
     });
     const result = await res.json().catch(() => ({}));
     if (!res.ok || result.code !== 0) {
-      console.error("[channel:feishu] reply failed:", result.msg || res.status);
+      console.error("[channel:feishu] send failed:", result.msg || res.status);
+      return { ok: false, error: result.msg || String(res.status) };
     }
+    return { ok: true, message_id: result.data?.message_id };
   }
 
   async _getToken() {

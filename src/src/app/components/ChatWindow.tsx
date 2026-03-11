@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import { cn } from "../../utils/cn";
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { SearchBar } from "./ui/SearchBar";
 import { ToolCallGroup, type ToolCall } from "./ToolCallPanel";
 import {
@@ -104,22 +104,168 @@ function isHttpUrl(s: string): boolean {
   return t.startsWith("http://") || t.startsWith("https://");
 }
 
-function ImageChipFromPath({ path, className = "" }: { path: string; className?: string }) {
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
-  const isUrl = isHttpUrl(path);
+const LOCAL_IMG_MARKER = "https://__creez_local_img__/";
+
+function isLocalImageMarker(s: string): boolean {
+  return s.startsWith(LOCAL_IMG_MARKER);
+}
+
+function decodeLocalImageMarker(s: string): string {
+  return decodeURIComponent(s.slice(LOCAL_IMG_MARKER.length));
+}
+
+function encodeLocalImageMarker(localPath: string): string {
+  return LOCAL_IMG_MARKER + encodeURIComponent(localPath.replace(/\\/g, "/"));
+}
+
+function ImageLightbox({ src, onClose }: { src: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <img
+        src={src}
+        alt=""
+        className="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>
+  );
+}
+
+function ImageContextMenu({
+  x,
+  y,
+  onCopy,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  onCopy: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    window.addEventListener("mousedown", handler);
+    return () => window.removeEventListener("mousedown", handler);
+  }, [onClose]);
+
+  const menuStyle: React.CSSProperties = {
+    position: "fixed",
+    left: x,
+    top: y,
+    zIndex: 10000,
+  };
+
+  return (
+    <div ref={ref} style={menuStyle} className="bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[100px]">
+      <button
+        type="button"
+        className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
+        onClick={() => { onCopy(); onClose(); }}
+      >
+        复制图片
+      </button>
+    </div>
+  );
+}
+
+async function copyImageToClipboard(src: string): Promise<void> {
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  const loaded = new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("image load failed"));
+  });
+  img.src = src;
+  await loaded;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas context unavailable");
+  ctx.drawImage(img, 0, 0);
+  const blob = await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png"),
+  );
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+}
+
+const imageDataUrlCache = new Map<string, string>();
+
+function ImageChipFromPath({ path: rawPath, className = "" }: { path: string; className?: string }) {
+  const resolvedPath = isLocalImageMarker(rawPath) ? decodeLocalImageMarker(rawPath) : rawPath;
+  const cached = imageDataUrlCache.get(resolvedPath) ?? null;
+  const [dataUrl, setDataUrl] = useState<string | null>(cached);
+  const [error, setError] = useState<string | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [copyToast, setCopyToast] = useState(false);
+  const isUrl = isHttpUrl(resolvedPath) && !isLocalImageMarker(rawPath);
+
   useEffect(() => {
     if (isUrl) {
-      setDataUrl(path);
+      imageDataUrlCache.set(resolvedPath, resolvedPath);
+      setDataUrl(resolvedPath);
+      return;
+    }
+    if (imageDataUrlCache.has(resolvedPath)) {
+      setDataUrl(imageDataUrlCache.get(resolvedPath)!);
       return;
     }
     let cancelled = false;
-    readLocalImageDataUrl(path).then((url) => {
-      if (!cancelled && url) setDataUrl(url);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [path, isUrl]);
+    readLocalImageDataUrl(resolvedPath)
+      .then((url) => {
+        if (cancelled) return;
+        if (url) {
+          imageDataUrlCache.set(resolvedPath, url);
+          setDataUrl(url);
+        } else {
+          setError("empty result");
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) setError(String(e));
+      });
+    return () => { cancelled = true; };
+  }, [resolvedPath, isUrl]);
+
+  const handleCopy = useCallback(async () => {
+    if (!dataUrl) return;
+    try {
+      await copyImageToClipboard(dataUrl);
+      setCopyToast(true);
+      setTimeout(() => setCopyToast(false), 1500);
+    } catch (e) {
+      console.warn("[ImageChip] copy failed:", e);
+    }
+  }, [dataUrl]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  if (error) {
+    return (
+      <span className={cn("inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-red-50 text-red-500 text-xs", className)}>
+        图片加载失败: {error}
+      </span>
+    );
+  }
   if (!dataUrl) {
     return (
       <span className={cn("inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-gray-100 text-gray-500 text-xs", className)}>
@@ -128,9 +274,31 @@ function ImageChipFromPath({ path, className = "" }: { path: string; className?:
     );
   }
   return (
-    <span className={cn("inline-flex mr-1 mb-1", className)}>
-      <img src={dataUrl} alt="" className="max-w-[200px] max-h-[200px] w-auto h-auto rounded-lg object-cover bg-white border border-gray-200" />
-    </span>
+    <>
+      <span className={cn("inline-flex mr-1 mb-1 relative", className)}>
+        <img
+          src={dataUrl}
+          alt=""
+          className="max-w-[200px] max-h-[200px] w-auto h-auto rounded-lg object-cover bg-white border border-gray-200 cursor-pointer hover:brightness-95 transition-[filter]"
+          onClick={() => setLightboxOpen(true)}
+          onContextMenu={handleContextMenu}
+        />
+        {copyToast && (
+          <span className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/75 text-white text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none">
+            已复制
+          </span>
+        )}
+      </span>
+      {lightboxOpen && <ImageLightbox src={dataUrl} onClose={() => setLightboxOpen(false)} />}
+      {ctxMenu && (
+        <ImageContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          onCopy={handleCopy}
+          onClose={() => setCtxMenu(null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -172,6 +340,9 @@ const markdownSanitizeSchema = {
     "a", "b", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3", "hr", "i", "img", "input", "li", "ol", "p",
     "pre", "s", "strong", "sub", "sup", "table", "tbody", "td", "th", "thead", "tr", "ul", "video",
   ],
+  protocols: {
+    href: ["http", "https", "mailto"],
+  },
   attributes: {
     a: ["href", "title"],
     img: ["src", "alt", "title", "className"],
@@ -194,13 +365,26 @@ const markdownSanitizeSchema = {
   },
 };
 
-/** Normalize line endings, collapse 3+ newlines, and fix table lines so GFM parses them (no leading indent). */
+/** Normalize line endings, collapse 3+ newlines, fix table lines, wrap local image paths. */
 function normalizeMarkdownNewlines(text: string): string {
   const unified = text.replace(/\r\n?/g, "\n");
   const collapsed = unified.replace(/\n{3,}/g, "\n\n");
-  // GFM treats lines indented with 4+ spaces as code; strip leading spaces from table-like lines so table parses
-  return collapsed.replace(/^(\s*)(\|.+\|)\s*$/gm, (_, spaces, line) => (spaces.length >= 2 ? line : spaces + line));
+  const tables = collapsed.replace(/^(\s*)(\|.+\|)\s*$/gm, (_, spaces, line) => (spaces.length >= 2 ? line : spaces + line));
+  // Wrap local file paths in Markdown image refs with a fake https marker
+  // so rehype-sanitize always allows them. The img component decodes the marker back.
+  // Matches: ![alt](C:/...) ![alt](D:\...) ![alt](file:///C:/...) ![alt](/Users/...)
+  return tables.replace(
+    /(!\[[^\]]*\]\()([^)]+)(\))/g,
+    (match, before, url, after) => {
+      const trimmed = url.trim();
+      if (isHttpUrl(trimmed)) return match;
+      return `${before}${encodeLocalImageMarker(trimmed)}${after}`;
+    }
+  );
 }
+
+const remarkPluginList = [remarkGfm] as const;
+const rehypePluginList = [rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]] as const;
 
 function MessageContentMarkdown({
   content,
@@ -216,80 +400,85 @@ function MessageContentMarkdown({
 
   const normalizedContent = normalizeMarkdownNewlines(content);
 
+  const mdComponents = React.useMemo(
+    () => ({
+      img: ({ src }: { src?: string; alt?: string }) => {
+        if (!src) return null;
+        return <ImageChipFromPath path={src} />;
+      },
+      video: ({ src }: { src?: string }) => {
+        if (!src) return null;
+        return <VideoChipFromUrl url={src} />;
+      },
+      a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+        if (href === "settings" && onNavigateToSettings) {
+          return (
+            <button
+              type="button"
+              className="text-[#07C160] underline cursor-pointer hover:opacity-80 bg-transparent border-0 p-0"
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigateToSettings();
+              }}
+            >
+              {children}
+            </button>
+          );
+        }
+        return (
+          <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#07C160] underline">
+            {children}
+          </a>
+        );
+      },
+      p: ({ children }: { children?: React.ReactNode }) => <p className="mb-2 last:mb-0 whitespace-pre-wrap">{children}</p>,
+      h1: ({ children }: { children?: React.ReactNode }) => <h1 className="text-lg font-semibold mt-3 mb-1 first:mt-0">{children}</h1>,
+      h2: ({ children }: { children?: React.ReactNode }) => <h2 className="text-base font-semibold mt-3 mb-1 first:mt-0">{children}</h2>,
+      h3: ({ children }: { children?: React.ReactNode }) => <h3 className="text-[15px] font-semibold mt-2 mb-1 first:mt-0">{children}</h3>,
+      hr: () => <hr className="my-2 border-gray-200" />,
+      ul: ({ children }: { children?: React.ReactNode }) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
+      ol: ({ children }: { children?: React.ReactNode }) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
+      li: ({ children }: { children?: React.ReactNode }) => <li className="leading-relaxed whitespace-pre-wrap">{children}</li>,
+      code: ({ className: codeClassName, children }: { className?: string; children?: React.ReactNode }) =>
+        codeClassName ? (
+          <code className={cn("rounded px-1 py-0.5 bg-gray-100 text-[13px]", codeClassName)}>{children}</code>
+        ) : (
+          <code className="rounded px-1 py-0.5 bg-gray-100 text-[13px] font-mono">{children}</code>
+        ),
+      pre: ({ children }: { children?: React.ReactNode }) => (
+        <pre className="overflow-x-auto rounded-lg bg-gray-50 p-3 text-[13px] my-2 border border-gray-100 min-h-0">
+          {children}
+        </pre>
+      ),
+      strong: ({ children }: { children?: React.ReactNode }) => <strong className="font-semibold">{children}</strong>,
+      table: ({ children }: { children?: React.ReactNode }) => (
+        <div className="my-2 overflow-x-auto rounded-lg border border-gray-200 min-h-0">
+          <table className="w-full border-collapse text-[13px]">{children}</table>
+        </div>
+      ),
+      thead: ({ children }: { children?: React.ReactNode }) => <thead className="bg-gray-50">{children}</thead>,
+      tbody: ({ children }: { children?: React.ReactNode }) => <tbody className="bg-white">{children}</tbody>,
+      tr: ({ children }: { children?: React.ReactNode }) => <tr className="border-b border-gray-100 last:border-b-0">{children}</tr>,
+      th: ({ children }: { children?: React.ReactNode }) => (
+        <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-100 last:border-r-0 whitespace-nowrap">
+          {children}
+        </th>
+      ),
+      td: ({ children }: { children?: React.ReactNode }) => (
+        <td className="px-3 py-2 text-gray-800 border-r border-gray-100 last:border-r-0 align-top whitespace-pre-wrap">
+          {children}
+        </td>
+      ),
+    }),
+    [onNavigateToSettings],
+  );
+
   return (
     <div className={cn("message-markdown break-words text-[14px] leading-relaxed", className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, markdownSanitizeSchema]]}
-        components={{
-          img: ({ src, alt }) => {
-            if (!src) return null;
-            return <ImageChipFromPath path={src} />;
-          },
-          video: ({ src }) => {
-            if (!src) return null;
-            return <VideoChipFromUrl url={src} />;
-          },
-          a: ({ href, children }) => {
-            if (href === "settings" && onNavigateToSettings) {
-              return (
-                <button
-                  type="button"
-                  className="text-[#07C160] underline cursor-pointer hover:opacity-80 bg-transparent border-0 p-0"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    onNavigateToSettings();
-                  }}
-                >
-                  {children}
-                </button>
-              );
-            }
-            return (
-              <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#07C160] underline">
-                {children}
-              </a>
-            );
-          },
-          p: ({ children }) => <p className="mb-2 last:mb-0 whitespace-pre-wrap">{children}</p>,
-          h1: ({ children }) => <h1 className="text-lg font-semibold mt-3 mb-1 first:mt-0">{children}</h1>,
-          h2: ({ children }) => <h2 className="text-base font-semibold mt-3 mb-1 first:mt-0">{children}</h2>,
-          h3: ({ children }) => <h3 className="text-[15px] font-semibold mt-2 mb-1 first:mt-0">{children}</h3>,
-          hr: () => <hr className="my-2 border-gray-200" />,
-          ul: ({ children }) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
-          ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
-          li: ({ children }) => <li className="leading-relaxed whitespace-pre-wrap">{children}</li>,
-          code: ({ className, children }) =>
-            className ? (
-              <code className={cn("rounded px-1 py-0.5 bg-gray-100 text-[13px]", className)}>{children}</code>
-            ) : (
-              <code className="rounded px-1 py-0.5 bg-gray-100 text-[13px] font-mono">{children}</code>
-            ),
-          pre: ({ children }) => (
-            <pre className="overflow-x-auto rounded-lg bg-gray-50 p-3 text-[13px] my-2 border border-gray-100 min-h-0">
-              {children}
-            </pre>
-          ),
-          strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-          table: ({ children }) => (
-            <div className="my-2 overflow-x-auto rounded-lg border border-gray-200 min-h-0">
-              <table className="w-full border-collapse text-[13px]">{children}</table>
-            </div>
-          ),
-          thead: ({ children }) => <thead className="bg-gray-50">{children}</thead>,
-          tbody: ({ children }) => <tbody className="bg-white">{children}</tbody>,
-          tr: ({ children }) => <tr className="border-b border-gray-100 last:border-b-0">{children}</tr>,
-          th: ({ children }) => (
-            <th className="px-3 py-2 text-left font-semibold text-gray-700 border-r border-gray-100 last:border-r-0 whitespace-nowrap">
-              {children}
-            </th>
-          ),
-          td: ({ children }) => (
-            <td className="px-3 py-2 text-gray-800 border-r border-gray-100 last:border-r-0 align-top whitespace-pre-wrap">
-              {children}
-            </td>
-          ),
-        }}
+        remarkPlugins={remarkPluginList as any}
+        rehypePlugins={rehypePluginList as any}
+        components={mdComponents}
       >
         {normalizedContent}
       </ReactMarkdown>
@@ -1680,6 +1869,21 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
               onKeyUp={saveSelectionInComposer}
               onMouseUp={saveSelectionInComposer}
               onBlur={saveSelectionInComposer}
+              onPaste={(e) => {
+                const clipboardData = e.clipboardData;
+                if (!clipboardData) return;
+                let textToInsert = "";
+                const html = clipboardData.getData("text/html");
+                if (html) {
+                  const hrefMatch = html.match(/<a\s[^>]*\bhref=["']([^"']+)["']/i);
+                  if (hrefMatch) textToInsert = hrefMatch[1];
+                }
+                if (!textToInsert) textToInsert = clipboardData.getData("text/plain") || "";
+                if (textToInsert) {
+                  e.preventDefault();
+                  insertTextAtCaret(textToInsert);
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -1725,7 +1929,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
                     : "bg-[#F0F0F0] text-gray-400 cursor-not-allowed"
               )}
             >
-              {isStreaming ? "停止" : "发送(S)"}
+              {isStreaming ? "Stop" : "Send (S)"}
             </button>
           </div>
         </div>
