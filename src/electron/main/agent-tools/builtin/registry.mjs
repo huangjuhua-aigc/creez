@@ -3,31 +3,42 @@ import { Type } from "@sinclair/typebox";
 import { createKnowledgeSearchHandler } from "./handlers/knowledgeSearchHandler.mjs";
 import { createVcLeadCaptureHandler } from "./handlers/vcLeadCaptureHandler.mjs";
 import { scheduledTaskHandler } from "./handlers/scheduledTaskHandler.mjs";
+import { createWebFetchHandler } from "./handlers/webFetchHandler.mjs";
+import { createImageGeneratorHandler } from "./handlers/imageGeneratorHandler.mjs";
+import { createVideoGeneratorHandler } from "./handlers/videoGeneratorHandler.mjs";
+import { createChannelSendHandler } from "./handlers/channelSendHandler.mjs";
 
 const require = createRequire(import.meta.url);
 const { BUILTIN_SKILL_IDS } = require("../../builtinSkillIds.cjs");
 
-function isKnowledgeSearchEnabled(runtimeContext = {}) {
-  const allowDefault = String(process.env.CREEZ_ENABLE_DEFAULT_BOT_KNOWLEDGE || "") === "1";
-  const assistantConfigId = runtimeContext?.assistantConfigId;
-  const defaultContactId = runtimeContext?.defaultContactId;
-  if (allowDefault) return true;
+function isDefaultBot(runtimeContext = {}) {
+  const { assistantConfigId, defaultContactId } = runtimeContext;
+  if (assistantConfigId == null || defaultContactId == null) return false;
+  return String(assistantConfigId) === String(defaultContactId);
+}
+
+function isNonDefaultBot(runtimeContext = {}) {
+  const { assistantConfigId, defaultContactId } = runtimeContext;
   if (assistantConfigId == null || defaultContactId == null) return false;
   return String(assistantConfigId) !== String(defaultContactId);
+}
+
+function isKnowledgeSearchEnabled(runtimeContext = {}) {
+  const allowDefault = String(process.env.CREEZ_ENABLE_DEFAULT_BOT_KNOWLEDGE || "") === "1";
+  if (allowDefault) return true;
+  return isNonDefaultBot(runtimeContext);
 }
 
 function isVcLeadCaptureEnabled(runtimeContext = {}) {
-  const assistantConfigId = runtimeContext?.assistantConfigId;
-  const defaultContactId = runtimeContext?.defaultContactId;
-  if (assistantConfigId == null || defaultContactId == null) return false;
-  return String(assistantConfigId) !== String(defaultContactId);
+  return isNonDefaultBot(runtimeContext);
 }
 
 function isScheduledTaskEnabled(runtimeContext = {}) {
-  const assistantConfigId = runtimeContext?.assistantConfigId;
-  const defaultContactId = runtimeContext?.defaultContactId;
-  if (assistantConfigId == null || defaultContactId == null) return false;
-  return String(assistantConfigId) === String(defaultContactId);
+  return isDefaultBot(runtimeContext);
+}
+
+function isDefaultBotToolEnabled(runtimeContext = {}) {
+  return isDefaultBot(runtimeContext);
 }
 
 function createBuiltinSkillRegistry() {
@@ -80,6 +91,72 @@ function createBuiltinSkillRegistry() {
     }),
     isEnabled: isScheduledTaskEnabled,
     createHandler: scheduledTaskHandler,
+  });
+
+  definitions.set("web_fetch", {
+    id: "web_fetch",
+    label: "Web Fetch",
+    description:
+      "Fetch and extract readable content from a URL (HTML pages, JSON APIs, plain text). Returns text content with metadata. Use for lightweight page access.",
+    parameters: Type.Object({
+      url: Type.String({ description: "HTTP or HTTPS URL to fetch." }),
+      extractMode: Type.Optional(
+        Type.Union([Type.Literal("markdown"), Type.Literal("text")], {
+          description: 'Extraction mode: "markdown" or "text". Default "text".',
+        }),
+      ),
+      maxChars: Type.Optional(
+        Type.Integer({ minimum: 100, maximum: 50000, description: "Max characters to return (default 50000)." }),
+      ),
+    }),
+    isEnabled: isDefaultBotToolEnabled,
+    createHandler: createWebFetchHandler,
+  });
+
+  definitions.set("image_generator", {
+    id: "image_generator",
+    label: "Image Generator",
+    description:
+      "Generate images from a text prompt via Creez backend. Returns image URLs. Use when user asks for image generation or the task requires creating images.",
+    parameters: Type.Object({
+      prompt: Type.String({ description: "Text description of the image to generate." }),
+      ratio: Type.Optional(Type.String({ description: 'Aspect ratio, e.g. "16:9", "1:1". Default "16:9".' })),
+      numImages: Type.Optional(Type.Integer({ minimum: 1, maximum: 10, description: "Number of images to generate (1-10, default 1)." })),
+      enableWebSearch: Type.Optional(Type.Boolean({ description: "Enable web search to enhance prompt. Default false." })),
+    }),
+    isEnabled: isDefaultBotToolEnabled,
+    createHandler: createImageGeneratorHandler,
+  });
+
+  definitions.set("video_generator", {
+    id: "video_generator",
+    label: "Video Generator",
+    description:
+      "Generate a short video from a start frame image (and optional end frame) with a motion prompt. Returns video URL. Use when user asks for video generation.",
+    parameters: Type.Object({
+      startFrameUrl: Type.Optional(Type.String({ description: "URL of the first frame image (required unless keyframes provided)." })),
+      endFrameUrl: Type.Optional(Type.String({ description: "URL of the last frame image (optional)." })),
+      keyframes: Type.Optional(Type.Array(Type.String(), { description: "Array of frame URLs; first = start, last = end." })),
+      prompt: Type.Optional(Type.String({ description: "Motion/action description for the video." })),
+      duration: Type.Optional(Type.String({ description: 'Video duration in seconds, e.g. "5", "10". Default "5".' })),
+      ratio: Type.Optional(Type.String({ description: 'Aspect ratio, e.g. "16:9", "adaptive". Default "adaptive".' })),
+      wait: Type.Optional(Type.Boolean({ description: "Wait for generation to complete. Default true." })),
+    }),
+    isEnabled: isDefaultBotToolEnabled,
+    createHandler: createVideoGeneratorHandler,
+  });
+
+  definitions.set("channel_send", {
+    id: "channel_send",
+    label: "Channel Send",
+    description:
+      "Send a message to an external channel by user request. When the user says to send something to Feishu (飞书), e.g. '通过飞书发送xxx', '发送xxx给飞书', use channel 'feishu'. When the user says to send something to WeCom (企业微信/企微), e.g. '通过企微发送xxx', '发送xxx给企业微信', use channel 'wecom'. Target recipient is read from channel config automatically.",
+    parameters: Type.Object({
+      channel: Type.String({ description: "Channel to send to. Use 'feishu' for Feishu / 飞书, 'wecom' for WeCom / 企业微信 / 企微." }),
+      content: Type.String({ description: "The message text to send." }),
+    }),
+    isEnabled: isDefaultBotToolEnabled,
+    createHandler: createChannelSendHandler,
   });
 
   return {

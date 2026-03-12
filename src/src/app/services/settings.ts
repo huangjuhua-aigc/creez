@@ -104,6 +104,10 @@ export async function saveSkillEnv(skillId: string, env: Record<string, string>)
 export async function readLocalImageDataUrl(path: string): Promise<string | null> {
   const api = window.electron?.settings;
   if (!path) return null;
+  if (path.startsWith("file://")) {
+    path = path.slice(7);
+    if (/^\/[A-Za-z]:/.test(path)) path = path.slice(1);
+  }
   const toFileUrl = (p: string) => {
     const normalized = p.replace(/\\/g, "/");
     return encodeURI(normalized.startsWith("/") ? `file://${normalized}` : `file:///${normalized}`);

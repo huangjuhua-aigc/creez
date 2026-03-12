@@ -168,6 +168,11 @@ function registerAgentIpc(ipcMain, deps = {}) {
       }
 
       const initSender = event.sender;
+      const cm = deps.channelManager;
+      const channelSend =
+        cm && typeof cm.sendMessage === "function"
+          ? (channelType, opts) => cm.sendMessage(channelType, opts)
+          : undefined;
       const context = {
         chatId: payload?.chatId ?? null,
         contactId: payload?.contactId ?? null,
@@ -181,6 +186,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
         provider,
         modelId,
         apiKey,
+        channelSend,
         sendEvent: (data) => {
           if (initSender && typeof initSender.isDestroyed === "function" && !initSender.isDestroyed()) {
             initSender.send(CHANNELS.AGENT_EVENT, data);

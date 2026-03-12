@@ -406,6 +406,7 @@ app.whenReady().then(async () => {
       contactRepository,
       chatRepository,
       creezHome,
+      channelManager,
     });
 
     function sendToRenderer(payload) {

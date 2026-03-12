@@ -26,7 +26,11 @@ const ROUND_CLOSER_CONTACT_ID = "a3e6d3f0-9d91-4dc0-8f84-7f3ca8a0619c";
 
 /** Skills allowed per bot type (controls which SKILL.md entries appear in system prompt). */
 const ROUNDCLOSER_SKILLS = new Set(["knowledge_search", "vc_lead_capture"]);
-const DEFAULT_BOT_SKILLS = new Set(["scheduled_task", "xiaohongshu", "image-generator"]);
+const DEFAULT_BOT_SKILLS = new Set([
+  "scheduled_task", "xiaohongshu",
+  "web_fetch", "image_generator", "video_generator",
+  "channel_send",
+]);
 
 /** Sessions keyed by contactId (bot id). One session per bot, shared across channels. */
 const sessionsByBot = new Map();
@@ -72,6 +76,16 @@ function serializeEvent(ev) {
 
 function resolveModel(provider, modelId) {
   return getModel(provider, modelId) || null;
+}
+
+/** Fingerprint of assistant config that affects session (skills, systemPrompt). Used to invalidate session when user changes config. */
+function configFingerprint(assistantConfig) {
+  if (!assistantConfig) return "";
+  const skills = assistantConfig.skills && typeof assistantConfig.skills === "object"
+    ? Object.keys(assistantConfig.skills).sort().map((k) => `${k}:${!!assistantConfig.skills[k]}`).join("|")
+    : "";
+  const systemPrompt = (assistantConfig.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
+  return `${skills}\n${systemPrompt}`;
 }
 
 /**
@@ -136,8 +150,9 @@ export async function createAndSubscribe(sender, config) {
 
   const cwd = workDir || process.cwd();
   const existing = sessionsByBot.get(botKey);
-  // Reuse only if workDir matches, so pi's bash/read/edit/write always run in current user workspace
-  if (existing?.session && existing.workDir === cwd) {
+  const fingerprint = configFingerprint(assistantConfig);
+  // Reuse only if workDir and assistant config (skills, systemPrompt) match
+  if (existing?.session && existing.workDir === cwd && existing.configFingerprint === fingerprint) {
     existing.listeners.set(listenerId, sender);
     if (existing.authStorage && apiKey) {
       existing.authStorage.setRuntimeApiKey(provider, apiKey);
@@ -206,6 +221,7 @@ export async function createAndSubscribe(sender, config) {
       defaultContactId: defaultContactId || null,
       chatId: chatId || null,
       workDir: cwd,
+      channelSend: config.channelSend,
     },
     onEvent: (builtinEv) => {
       broadcast("agent:event", { ...builtinEv, chatId: chatId ?? undefined });
@@ -265,7 +281,7 @@ export async function createAndSubscribe(sender, config) {
     customTools,
   });
 
-  const sessionEntry = { session, unsubscribe: null, authStorage, listeners, workDir: cwd };
+  const sessionEntry = { session, unsubscribe: null, authStorage, listeners, workDir: cwd, configFingerprint: fingerprint, resourceLoader };
   let errorNotifiedThisTurn = false;
   const unsubscribe = session.subscribe((ev) => {
     try {
@@ -280,6 +296,9 @@ export async function createAndSubscribe(sender, config) {
       const textLen = contentStr.length;
       if (ev.type !== "message_update") {
         log("event", { type: ev.type, role, toolName, textLen, botKey });
+      }
+      if (ev.type === "message_end" && ev.message?.role === "assistant" && contentStr) {
+        console.log("[creez:agent] LLM reply:\n", contentStr);
       }
       if (ev.type === "agent_end") {
         log("reply_done", { botKey, chatId: chatId ?? undefined });
@@ -321,11 +340,17 @@ export async function prompt(payload) {
   entry.lastPromptText = promptText.slice(0, 300).replace(/\s+/g, " ").trim();
   if (promptText.length > 300) entry.lastPromptText += "…";
 
+  // 每次发消息前从目录重新加载技能，新增/修改的 SKILL.md 会生效
+  if (entry.resourceLoader && typeof entry.resourceLoader.reload === "function") {
+    try {
+      await entry.resourceLoader.reload();
+    } catch (e) {
+      log("prompt:reload_skills", e?.message || String(e));
+    }
+  }
+
   const imageCount = Array.isArray(images) ? images.length : 0;
   log("prompt", { botKey, chatId: rawKey || undefined, textLen: promptText.length, imageCount });
-
-  const effectivePrompt = entry.session.systemPrompt ?? "";
-  console.log("[creez:agent] system prompt (before reply):\n", effectivePrompt || "(empty)");
 
   log("prompt:start", { botKey, textLen: promptText.length });
   const options = {

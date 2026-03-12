@@ -956,6 +956,14 @@ const CHANNEL_DEFS: Record<string, { label: string; color: string; fields: Chann
       { key: 'FEISHU_OPEN_ID',    label: 'Open ID',    type: 'text',     placeholder: 'ou_xxxxxxxxxxxxxxxx',     hint: 'Target user / bot Open ID' },
     ],
   },
+  wecom: {
+    label: 'WeCom',
+    color: 'bg-green-50 text-green-600',
+    fields: [
+      { key: 'WECOM_BOT_ID', label: 'Bot ID',  type: 'text', placeholder: 'Enter Bot ID', hint: 'Found in WeCom AI Bot console' },
+      { key: 'WECOM_SECRET', label: 'Secret',   type: 'text', placeholder: 'Enter Secret', hint: 'Keep this private — do not share' },
+    ],
+  },
   slack: {
     label: 'Slack',
     color: 'bg-yellow-50 text-yellow-600',
@@ -987,7 +995,7 @@ const CHANNEL_DEFS: Record<string, { label: string; color: string; fields: Chann
 const CHANNEL_OPTIONS = Object.entries(CHANNEL_DEFS).map(([id, def]) => ({
   id,
   label: def.label,
-  available: id === 'feishu', // only Feishu is available for now
+  available: id === 'feishu' || id === 'wecom',
 }));
 
 interface ChannelConfigItem {

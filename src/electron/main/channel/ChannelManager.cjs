@@ -7,18 +7,20 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { FeishuChannelAdapter } = require("./feishuAdapter.cjs");
+const { WeComChannelAdapter } = require("./wecomAdapter.cjs");
 
 const ADAPTERS = {
   feishu: FeishuChannelAdapter,
+  wecom: WeComChannelAdapter,
 };
 
 function channelLog(message) {
   const line = `[${new Date().toISOString()}] [ChannelManager] ${message}`;
   console.log(line);
   try {
-    const logPath = path.join(os.homedir(), ".creez", "logs", "startup.log");
-    fs.mkdirSync(path.dirname(logPath), { recursive: true });
-    fs.appendFileSync(logPath, line + "\n", "utf8");
+    const logDir = path.join(os.homedir(), ".creez", "logs");
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, "startup.log"), line + "\n", "utf8");
   } catch (_) {}
 }
 
@@ -40,7 +42,8 @@ class ChannelManager {
         const full = channelConfigRepository.getByBotAndType(defaultBotId, item.channelType);
         const hasCreds = full?.credentials && typeof full.credentials === "object";
         const feishuReady = item.channelType === "feishu" && hasCreds && full.credentials.appId && full.credentials.appSecret;
-        const otherReady = item.channelType !== "feishu" && hasCreds;
+        const wecomReady = item.channelType === "wecom" && hasCreds && full.credentials.botId && full.credentials.secret;
+        const otherReady = item.channelType !== "feishu" && item.channelType !== "wecom" && hasCreds;
         if (!full || !hasCreds) {
           channelLog("skip " + item.channelType + ": no config or credentials");
           continue;
@@ -49,7 +52,11 @@ class ChannelManager {
           channelLog("skip feishu: missing appId or appSecret (check Advanced Settings → Channel)");
           continue;
         }
-        if (item.channelType !== "feishu" && !otherReady) continue;
+        if (item.channelType === "wecom" && !wecomReady) {
+          channelLog("skip wecom: missing botId or secret (check Advanced Settings → Channel)");
+          continue;
+        }
+        if (item.channelType !== "feishu" && item.channelType !== "wecom" && !otherReady) continue;
         channelLog("starting " + item.channelType + " ...");
         await this.startOne({
           botId: defaultBotId,
@@ -117,6 +124,69 @@ class ChannelManager {
       credentials: full.credentials,
       extra: full.extra || {},
     });
+  }
+
+  /**
+   * Send a message via an already-running adapter. Used by builtin tool channel_send.
+   * All adapters implement sendOutbound(content) → { ok, message_id?, error? }.
+   * @param {string} channelType - e.g. "feishu"
+   * @param {{ content: string, chatId?: string }} opts - chatId is the Creez chatId for message persistence
+   * @returns {{ ok: boolean, message_id?: string, error?: string }}
+   */
+  async sendMessage(channelType, opts = {}) {
+    const { contactRepository, chatRepository } = this._deps;
+    const defaultBotId = contactRepository?.getDefaultAssistantConfigId?.() ?? "11111111-1111-1111-1111-111111111111";
+    const key = `${defaultBotId}:${channelType}`;
+    const adapter = this._adapters.get(key);
+    if (!adapter || !adapter.running) {
+      return { ok: false, error: `Channel ${channelType} is not running. Enable it in Advanced Settings → Channel.` };
+    }
+    const content = String(opts.content ?? "").trim();
+    if (!content) {
+      return { ok: false, error: "content is empty" };
+    }
+    if (typeof adapter.sendOutbound !== "function") {
+      return { ok: false, error: `Channel ${channelType} adapter does not support sendOutbound.` };
+    }
+    try {
+      const result = await adapter.sendOutbound(content);
+      if (result?.ok && chatRepository) {
+        try {
+          const { chatId } = chatRepository.getOrCreateMainChatForContact({ contactId: defaultBotId });
+          const { randomUUID } = require("node:crypto");
+          const nowTs = Math.floor(Date.now() / 1000);
+          chatRepository.appendMessage({
+            id: randomUUID(),
+            chatId,
+            sender: "assistant",
+            botId: defaultBotId,
+            content: `[via ${channelType}] ${content}`,
+            status: "done",
+            createdAt: nowTs,
+            updatedAt: nowTs,
+            channelType,
+            channelMessageId: result.message_id || null,
+          });
+          this._notifyRenderer("channel:newMessage", { chatId, channelType });
+        } catch (e) {
+          console.warn("[ChannelManager] message persistence failed:", e?.message || String(e));
+        }
+      }
+      return result;
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  }
+
+  _notifyRenderer(channel, data) {
+    try {
+      const { BrowserWindow } = require("electron");
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.webContents && !win.isDestroyed()) {
+          win.webContents.send(channel, data);
+        }
+      }
+    } catch { /* ignore */ }
   }
 }
 

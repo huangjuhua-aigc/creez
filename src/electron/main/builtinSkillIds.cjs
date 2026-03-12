@@ -2,6 +2,10 @@ const BUILTIN_SKILL_IDS = Object.freeze([
   "knowledge_search",
   "vc_lead_capture",
   "scheduled_task",
+  "web_fetch",
+  "image_generator",
+  "video_generator",
+  "channel_send",
 ]);
 
 function isBuiltinSkillId(skillId) {
