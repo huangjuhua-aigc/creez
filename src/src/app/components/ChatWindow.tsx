@@ -1857,7 +1857,11 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
               const files = Array.from(e.dataTransfer.files || []);
               appendFiles(files);
             }}
-            onClick={focusInputToEnd}
+            onClick={(e) => {
+              if (!composerRef.current?.contains(e.target as Node)) {
+                focusInputToEnd();
+              }
+            }}
           >
             <div
               ref={composerRef}
