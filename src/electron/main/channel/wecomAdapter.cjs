@@ -83,6 +83,21 @@ class WeComChannelAdapter {
     const wsClient = new WSClient({
       botId: wecomBotId,
       secret,
+      logger: {
+        debug(msg, ...args) {
+          if (typeof msg === "string" && /heartbeat/i.test(msg)) return;
+          wecomLog("[DEBUG] " + msg);
+        },
+        info(msg, ...args) {
+          wecomLog("[INFO] " + msg);
+        },
+        warn(msg, ...args) {
+          console.warn("[channel:wecom]", msg, ...args);
+        },
+        error(msg, ...args) {
+          console.error("[channel:wecom]", msg, ...args);
+        },
+      },
     });
 
     wsClient.on("connected", () => {
