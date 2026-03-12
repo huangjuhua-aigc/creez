@@ -25,6 +25,7 @@
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@larksuiteoapi/node-sdk": "^1.59.0",
+    "@wecom/aibot-node-sdk": "^1.0.1",
     "@mariozechner/pi-ai": "^0.57.1",
     "@mariozechner/pi-coding-agent": "^0.57.1",
     "@mui/icons-material": "7.3.5",

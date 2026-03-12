@@ -150,9 +150,9 @@ function createBuiltinSkillRegistry() {
     id: "channel_send",
     label: "Channel Send",
     description:
-      "Send a message to an external channel by user request. When the user says to send something to Feishu (飞书), e.g. '通过飞书发送xxx', '发送xxx给飞书', use channel 'feishu' with the message content. Target recipient is read from channel config automatically.",
+      "Send a message to an external channel by user request. When the user says to send something to Feishu (飞书), e.g. '通过飞书发送xxx', '发送xxx给飞书', use channel 'feishu'. When the user says to send something to WeCom (企业微信/企微), e.g. '通过企微发送xxx', '发送xxx给企业微信', use channel 'wecom'. Target recipient is read from channel config automatically.",
     parameters: Type.Object({
-      channel: Type.String({ description: "Channel to send to. Use 'feishu' for Feishu / 飞书." }),
+      channel: Type.String({ description: "Channel to send to. Use 'feishu' for Feishu / 飞书, 'wecom' for WeCom / 企业微信 / 企微." }),
       content: Type.String({ description: "The message text to send." }),
     }),
     isEnabled: isDefaultBotToolEnabled,

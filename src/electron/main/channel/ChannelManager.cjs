@@ -7,9 +7,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { FeishuChannelAdapter } = require("./feishuAdapter.cjs");
+const { WeComChannelAdapter } = require("./wecomAdapter.cjs");
 
 const ADAPTERS = {
   feishu: FeishuChannelAdapter,
+  wecom: WeComChannelAdapter,
 };
 
 function channelLog(message) {
@@ -40,7 +42,8 @@ class ChannelManager {
         const full = channelConfigRepository.getByBotAndType(defaultBotId, item.channelType);
         const hasCreds = full?.credentials && typeof full.credentials === "object";
         const feishuReady = item.channelType === "feishu" && hasCreds && full.credentials.appId && full.credentials.appSecret;
-        const otherReady = item.channelType !== "feishu" && hasCreds;
+        const wecomReady = item.channelType === "wecom" && hasCreds && full.credentials.botId && full.credentials.secret;
+        const otherReady = item.channelType !== "feishu" && item.channelType !== "wecom" && hasCreds;
         if (!full || !hasCreds) {
           channelLog("skip " + item.channelType + ": no config or credentials");
           continue;
@@ -49,7 +52,11 @@ class ChannelManager {
           channelLog("skip feishu: missing appId or appSecret (check Advanced Settings → Channel)");
           continue;
         }
-        if (item.channelType !== "feishu" && !otherReady) continue;
+        if (item.channelType === "wecom" && !wecomReady) {
+          channelLog("skip wecom: missing botId or secret (check Advanced Settings → Channel)");
+          continue;
+        }
+        if (item.channelType !== "feishu" && item.channelType !== "wecom" && !otherReady) continue;
         channelLog("starting " + item.channelType + " ...");
         await this.startOne({
           botId: defaultBotId,

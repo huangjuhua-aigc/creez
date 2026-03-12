@@ -1716,6 +1716,8 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
                         <span className="text-xs text-gray-500">{msg.name}</span>
                         {(msg as { channelType?: string | null }).channelType === "feishu" ? (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600">来自飞书</span>
+                        ) : (msg as { channelType?: string | null }).channelType === "wecom" ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600">来自企微</span>
                         ) : (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">Creez</span>
                         )}
