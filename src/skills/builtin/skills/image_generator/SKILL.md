@@ -26,4 +26,4 @@ Generate images from a text prompt. Images are saved under the user's workplace 
 
 ## Reply
 
-Always include the generated image(s) in your reply using the exact Markdown image syntax returned by the tool (e.g. `![Generated image 1](fill://path)`), so the images are displayed to the user.
+Always include the generated image(s) in your reply using the exact Markdown image syntax returned by the tool (e.g. `![Generated image 1](file:///path)`), so the images are displayed to the user.

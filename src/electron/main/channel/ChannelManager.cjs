@@ -16,9 +16,9 @@ function channelLog(message) {
   const line = `[${new Date().toISOString()}] [ChannelManager] ${message}`;
   console.log(line);
   try {
-    const logPath = path.join(os.homedir(), ".creez", "logs", "startup.log");
-    fs.mkdirSync(path.dirname(logPath), { recursive: true });
-    fs.appendFileSync(logPath, line + "\n", "utf8");
+    const logDir = path.join(os.homedir(), ".creez", "logs");
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.appendFileSync(path.join(logDir, "startup.log"), line + "\n", "utf8");
   } catch (_) {}
 }
 

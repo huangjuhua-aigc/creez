@@ -1,7 +1,8 @@
 /**
  * Channel config persistence. Maps UI field keys (e.g. FEISHU_APP_ID) to stored credentials.
- * Design: AdvancedSettings Channel Config uses FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_OPEN_ID etc.
- * Stored: credentials JSON = { appId, appSecret, openId } for feishu (backend/channel adapter use).
+ * Storage: SQLite table `channel_configs` (bot_id, channel_type, enabled, credentials JSON).
+ * DB file: ~/.creez/ 下与 Creez 主库同库（见 index.cjs 中 creezDb）。
+ * UI: 设置 → 高级设置 → Channel 里编辑；credentials 存为 { appId, appSecret, openId }（feishu）等。
  */
 
 const { randomUUID } = require("node:crypto");
