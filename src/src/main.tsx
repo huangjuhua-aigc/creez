@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
+import { HashRouter } from "react-router-dom";
 import App from "./app/App.tsx";
 import "./styles/index.css";
 
@@ -10,9 +10,9 @@ try {
     throw new Error("root element #root not found");
   }
   createRoot(rootEl).render(
-    <BrowserRouter>
+    <HashRouter>
       <App />
-    </BrowserRouter>
+    </HashRouter>
   );
   console.log("[Creez] main.tsx app mount done");
 } catch (err) {

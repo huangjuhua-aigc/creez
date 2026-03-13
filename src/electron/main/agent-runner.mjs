@@ -78,13 +78,16 @@ function resolveModel(provider, modelId) {
   return getModel(provider, modelId) || null;
 }
 
-/** Fingerprint of assistant config that affects session (skills, systemPrompt). Used to invalidate session when user changes config. */
-function configFingerprint(assistantConfig) {
+/** Fingerprint of assistant config that affects session (skills, systemPrompt). Used to invalidate session when user changes config. Default bot excludes skills so toggling "copy to ~/.creez/skills" does not rebuild session. */
+function configFingerprint(assistantConfig, assistantConfigId, defaultContactId) {
   if (!assistantConfig) return "";
+  const systemPrompt = (assistantConfig.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
+  const isDefaultBot = assistantConfigId != null && defaultContactId != null
+    && String(assistantConfigId) === String(defaultContactId);
+  if (isDefaultBot) return systemPrompt;
   const skills = assistantConfig.skills && typeof assistantConfig.skills === "object"
     ? Object.keys(assistantConfig.skills).sort().map((k) => `${k}:${!!assistantConfig.skills[k]}`).join("|")
     : "";
-  const systemPrompt = (assistantConfig.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
   return `${skills}\n${systemPrompt}`;
 }
 
@@ -150,7 +153,7 @@ export async function createAndSubscribe(sender, config) {
 
   const cwd = workDir || process.cwd();
   const existing = sessionsByBot.get(botKey);
-  const fingerprint = configFingerprint(assistantConfig);
+  const fingerprint = configFingerprint(assistantConfig, assistantConfigId, defaultContactId);
   // Reuse only if workDir and assistant config (skills, systemPrompt) match
   if (existing?.session && existing.workDir === cwd && existing.configFingerprint === fingerprint) {
     existing.listeners.set(listenerId, sender);
@@ -209,6 +212,14 @@ export async function createAndSubscribe(sender, config) {
   const sessionManager = SessionManager.continueRecent(cwd, sessionDir);
   const settingsManager = SettingsManager.create(cwd, resolvedAgentDir);
 
+  const isDefaultBot = assistantConfigId != null && defaultContactId != null
+    && String(assistantConfigId) === String(defaultContactId);
+  const skillsConfig = assistantConfig?.skills && typeof assistantConfig.skills === "object" ? assistantConfig.skills : {};
+  const allowedBuiltinIds = isDefaultBot
+    ? undefined
+    : new Set([...ROUNDCLOSER_SKILLS].filter((id) => skillsConfig[id] !== false));
+  const allowedSkillsForRoundCloser = isDefaultBot ? null : allowedBuiltinIds;
+
   const additionalSkillPath = path.join(cwd, ".creez", "skills");
   const builtinSkillPath = path.join(APP_ROOT_DIR, "skills", "builtin", "skills");
   const replyInstructions = loadBuiltinReplyInstructions(builtinSkillPath, BUILTIN_SKILL_IDS);
@@ -222,6 +233,7 @@ export async function createAndSubscribe(sender, config) {
       chatId: chatId || null,
       workDir: cwd,
       channelSend: config.channelSend,
+      ...(isDefaultBot ? {} : { allowedBuiltinIds }),
     },
     onEvent: (builtinEv) => {
       broadcast("agent:event", { ...builtinEv, chatId: chatId ?? undefined });
@@ -250,10 +262,6 @@ export async function createAndSubscribe(sender, config) {
     });
   }
 
-  const isDefaultBot = assistantConfigId != null && defaultContactId != null
-    && String(assistantConfigId) === String(defaultContactId);
-  const allowedSkills = isDefaultBot ? DEFAULT_BOT_SKILLS : ROUNDCLOSER_SKILLS;
-
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: resolvedAgentDir,
@@ -261,10 +269,12 @@ export async function createAndSubscribe(sender, config) {
     noExtensions: true,
     additionalSkillPaths: [additionalSkillPath, builtinSkillPath],
     systemPrompt: systemPrompt || undefined,
-    skillsOverride: (base) => ({
-      ...base,
-      skills: base.skills.filter((s) => allowedSkills.has(s.name)),
-    }),
+    skillsOverride: isDefaultBot
+      ? (base) => base
+      : (base) => ({
+          ...base,
+          skills: base.skills.filter((s) => allowedSkillsForRoundCloser.has(s.name)),
+        }),
   });
   await resourceLoader.reload();
 
@@ -294,6 +304,17 @@ export async function createAndSubscribe(sender, config) {
             ? String(ev.message.content.find((c) => c?.type === "text")?.text || "")
             : "";
       const textLen = contentStr.length;
+      if (ev.type === "agent_start") {
+        const activeTools = session.getActiveToolNames ? session.getActiveToolNames() : [];
+        const toolDefs = (session.state?.tools || []).map((t) => `  - ${t.name}: ${t.description || "(no desc)"}`);
+        const loadedSkills = resourceLoader.getSkills ? resourceLoader.getSkills().skills || [] : [];
+        const skillDefs = loadedSkills.map((s) => `  - ${s.name}: ${(s.description || "").slice(0, 120)}`);
+        console.log("[creez:agent] === DEBUG: agent_start ===");
+        console.log("[creez:agent] active tools (" + activeTools.length + "):\n" + (toolDefs.join("\n") || "  (none)"));
+        console.log("[creez:agent] loaded skills (" + loadedSkills.length + "):\n" + (skillDefs.join("\n") || "  (none)"));
+        console.log("[creez:agent] system prompt (sent to model):\n", session.systemPrompt || "(empty)");
+        console.log("[creez:agent] === END DEBUG ===");
+      }
       if (ev.type !== "message_update") {
         log("event", { type: ev.type, role, toolName, textLen, botKey });
       }

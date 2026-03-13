@@ -165,6 +165,11 @@ function createBuiltinSkillRegistry() {
       return definitions.get(skillId);
     },
     listEnabled(runtimeContext = {}) {
+      const allowedIds = runtimeContext.allowedBuiltinIds;
+      if (allowedIds != null) {
+        const set = allowedIds instanceof Set ? allowedIds : new Set(Array.isArray(allowedIds) ? allowedIds : []);
+        return [...definitions.values()].filter((d) => set.has(d.id));
+      }
       const out = [];
       for (const definition of definitions.values()) {
         if (typeof definition.isEnabled !== "function" || definition.isEnabled(runtimeContext)) {

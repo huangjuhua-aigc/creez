@@ -196,12 +196,13 @@ function seedIfEmpty(db, options = {}) {
       id: BOT_CHAT_ID,
       updatedAt: base,
     });
+    const roundCloserSkills = { knowledge_search: true, vc_lead_capture: true };
     insertAssistantConfig.run({
       id: ROUND_CLOSER_CONTACT_ID,
       name: roundCloserName,
       avatarPath: roundCloserAvatarPath,
       systemPrompt: roundCloserPrompt,
-      skillsJson: JSON.stringify({}),
+      skillsJson: JSON.stringify(roundCloserSkills),
       modelsJson: JSON.stringify(Array.isArray(models) ? models : []),
       updatedAt: base,
       engineType: "pi",
@@ -215,7 +216,7 @@ function seedIfEmpty(db, options = {}) {
     }
     updateAssistantConfigSkills.run({
       id: ROUND_CLOSER_CONTACT_ID,
-      skillsJson: JSON.stringify({}),
+      skillsJson: JSON.stringify(roundCloserSkills),
       updatedAt: base,
     });
 
