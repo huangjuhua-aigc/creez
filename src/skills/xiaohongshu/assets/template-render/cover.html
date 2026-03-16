@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=750">
+  <title>封面</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+    #render-target {
+      position: relative;
+      width: 750px;
+      height: 1000px;
+      overflow: hidden;
+      border-radius: 8px;
+      background: #fff;
+      background-size: cover;
+      background-position: center;
+    }
+    .inner {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px;
+      text-align: center;
+    }
+    .title {
+      font-size: 60px;
+      font-weight: 900;
+      color: #0f172a;
+      line-height: 1.2;
+      letter-spacing: 0.1em;
+      white-space: pre-wrap;
+      margin-bottom: 24px;
+    }
+    .subtitle {
+      font-size: 24px;
+      font-weight: 500;
+      color: #334155;
+      letter-spacing: 0.1em;
+      white-space: pre-wrap;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div id="render-target">
+    <div class="inner">
+      <h1 class="title" id="title">缺少标题</h1>
+      <p class="subtitle" id="subtitle"></p>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var q = new URLSearchParams(location.search);
+      var title = q.get('title') || '缺少标题';
+      var subtitle = q.get('subtitle') || '';
+      var bg = q.get('backgroundImage');
+      var base = location.href.replace(/\?.*$/, '').replace(/\/[^/]+$/, '/');
+      var defaultBg = base + '../template/default-bg.png';
+      document.getElementById('title').textContent = decodeURIComponent(title);
+      var subEl = document.getElementById('subtitle');
+      if (subtitle) { subEl.textContent = decodeURIComponent(subtitle); subEl.style.display = 'block'; } else { subEl.style.display = 'none'; }
+      var target = document.getElementById('render-target');
+      target.style.backgroundImage = 'url(' + (bg ? decodeURIComponent(bg) : defaultBg) + ')';
+      window.RENDER_READY = true;
+    })();
+  </script>
+</body>
+</html>
