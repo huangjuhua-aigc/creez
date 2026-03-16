@@ -232,10 +232,6 @@ function registerAgentIpc(ipcMain, deps = {}) {
       });
       log("agent:prompt:engine.prompt:done", "");
       log("agent:prompt:done", "prompt resolved");
-      if (event.sender && typeof event.sender.isDestroyed === "function" && !event.sender.isDestroyed()) {
-        event.sender.send(CHANNELS.AGENT_EVENT, { type: "agent_end", chatId: chatId || undefined });
-        log("agent:prompt:agent_end:sent", "fallback agent_end after prompt done");
-      }
     } catch (error) {
       const message = error?.message || String(error);
       console.error("[creezv2] agent:prompt error:", message);
