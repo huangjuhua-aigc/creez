@@ -165,7 +165,7 @@ export function ToolCallGroup({ toolCalls }: ToolCallGroupProps) {
   const lastTask = toolCalls.length > 0 ? toolCalls[toolCalls.length - 1] : null;
 
   return (
-    <div className="mt-2 rounded-xl border border-zinc-200/80 overflow-hidden bg-zinc-50/60 max-w-xs w-full text-xs">
+    <div className="mt-2 rounded-xl border border-zinc-200/80 overflow-hidden bg-zinc-50/60 max-w-md w-full text-xs">
       <button
         type="button"
         onClick={() => setGroupExpanded((prev) => !prev)}

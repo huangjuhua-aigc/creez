@@ -357,32 +357,46 @@ export async function prompt(payload) {
   if (!entry?.session) return;
   const { text, images, streamingBehavior } = payload || {};
   if (!text && (!images || images.length === 0)) return;
-  const promptText = String(text || "");
-  entry.lastPromptText = promptText.slice(0, 300).replace(/\s+/g, " ").trim();
-  if (promptText.length > 300) entry.lastPromptText += "…";
 
-  // 每次发消息前从目录重新加载技能，新增/修改的 SKILL.md 会生效
-  if (entry.resourceLoader && typeof entry.resourceLoader.reload === "function") {
-    try {
-      await entry.resourceLoader.reload();
-    } catch (e) {
-      log("prompt:reload_skills", e?.message || String(e));
+  if (entry._promptInProgress) {
+    log("prompt:serialize:wait", { botKey });
+    try { await entry._promptInProgress; } catch { /* previous prompt error is handled elsewhere */ }
+  }
+
+  const run = async () => {
+    const promptText = String(text || "");
+    entry.lastPromptText = promptText.slice(0, 300).replace(/\s+/g, " ").trim();
+    if (promptText.length > 300) entry.lastPromptText += "…";
+
+    if (entry.resourceLoader && typeof entry.resourceLoader.reload === "function") {
+      try {
+        await entry.resourceLoader.reload();
+      } catch (e) {
+        log("prompt:reload_skills", e?.message || String(e));
+      }
     }
-  }
 
-  const imageCount = Array.isArray(images) ? images.length : 0;
-  log("prompt", { botKey, chatId: rawKey || undefined, textLen: promptText.length, imageCount });
+    const imageCount = Array.isArray(images) ? images.length : 0;
+    log("prompt", { botKey, chatId: rawKey || undefined, textLen: promptText.length, imageCount });
 
-  log("prompt:start", { botKey, textLen: promptText.length });
-  const options = {
-    images: Array.isArray(images) ? images : [],
-    expandPromptTemplates: false,
+    log("prompt:start", { botKey, textLen: promptText.length });
+    const options = {
+      images: Array.isArray(images) ? images : [],
+      expandPromptTemplates: false,
+    };
+    if (streamingBehavior === "followUp" || streamingBehavior === "steer") {
+      options.streamingBehavior = streamingBehavior;
+    }
+    await entry.session.prompt(text || "", options);
+    log("prompt:end", { botKey });
   };
-  if (streamingBehavior === "followUp" || streamingBehavior === "steer") {
-    options.streamingBehavior = streamingBehavior;
+
+  entry._promptInProgress = run();
+  try {
+    await entry._promptInProgress;
+  } finally {
+    entry._promptInProgress = null;
   }
-  await entry.session.prompt(text || "", options);
-  log("prompt:end", { botKey });
 }
 
 export async function setModel(chatId, config) {

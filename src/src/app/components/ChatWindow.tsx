@@ -1,4 +1,4 @@
-import { Plus, ChevronDown, Folder, Laugh } from "lucide-react";
+import { Plus, ChevronDown, Folder, Laugh, X, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -46,6 +46,13 @@ type PendingAttachment = {
   id: string;
   file: File;
   previewUrl: string | null;
+};
+
+type QueuedMessage = {
+  id: string;
+  displayText: string;
+  content: string;
+  images: { type: "image"; data: string; mimeType: string }[];
 };
 
 type ChatMessageItemWithTools = ChatMessageItem & { toolCalls?: ToolCall[] };
@@ -334,6 +341,78 @@ function FileChipFromPath({ path, className = "" }: { path: string; className?: 
   );
 }
 
+function UserImageCard({ path }: { path: string }) {
+  const resolvedPath = isLocalImageMarker(path) ? decodeLocalImageMarker(path) : path;
+  const isUrl = isHttpUrl(resolvedPath) && !isLocalImageMarker(path);
+  const cached = imageDataUrlCache.get(resolvedPath) ?? null;
+  const [dataUrl, setDataUrl] = useState<string | null>(isUrl ? resolvedPath : cached);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+
+  useEffect(() => {
+    if (isUrl || dataUrl) return;
+    if (imageDataUrlCache.has(resolvedPath)) {
+      setDataUrl(imageDataUrlCache.get(resolvedPath)!);
+      return;
+    }
+    let cancelled = false;
+    readLocalImageDataUrl(resolvedPath).then((url) => {
+      if (cancelled || !url) return;
+      imageDataUrlCache.set(resolvedPath, url);
+      setDataUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [resolvedPath, isUrl, dataUrl]);
+
+  const name = fileNameFromPath(resolvedPath);
+
+  return (
+    <>
+      <span
+        className="inline-flex items-center gap-2.5 px-2.5 py-2 mr-1 mb-1 bg-[#F0F0F0] border border-gray-200 rounded-xl align-middle cursor-pointer hover:bg-[#E8E8E8] transition-colors"
+        onClick={() => dataUrl && setLightboxOpen(true)}
+      >
+        {dataUrl ? (
+          <img src={dataUrl} alt="" className="w-12 h-12 rounded-lg object-cover bg-white shrink-0" />
+        ) : (
+          <span className="w-12 h-12 rounded-lg bg-gray-200 animate-pulse shrink-0" />
+        )}
+        <span className="text-[12px] text-gray-800 truncate max-w-[160px]">{name}</span>
+      </span>
+      {lightboxOpen && dataUrl && <ImageLightbox src={dataUrl} onClose={() => setLightboxOpen(false)} />}
+    </>
+  );
+}
+
+function UserMessageContent({ content }: { content: string }) {
+  if (!content || typeof content !== "string") return null;
+  const attachmentRegex = /\[(Image|File):\s*##([^#]+)##\]/g;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+
+  while ((match = attachmentRegex.exec(content)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(<span key={key++} className="whitespace-pre-wrap">{content.slice(lastIndex, match.index)}</span>);
+    }
+    const [, type, filePath] = match;
+    if (type === "Image") {
+      parts.push(<UserImageCard key={key++} path={filePath} />);
+    } else {
+      parts.push(<FileChipFromPath key={key++} path={filePath} />);
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < content.length) {
+    parts.push(<span key={key++} className="whitespace-pre-wrap">{content.slice(lastIndex)}</span>);
+  }
+  if (parts.length === 0) {
+    return <span className="whitespace-pre-wrap">{content}</span>;
+  }
+  return <div className="break-words text-[14px] leading-relaxed">{parts}</div>;
+}
+
 /** Sanitize schema: allow common markdown HTML + video (for rehype-raw). */
 const markdownSanitizeSchema = {
   tagNames: [
@@ -533,12 +612,15 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [waitingDots, setWaitingDots] = useState("·");
+  const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
   const isStreamingRef = useRef(false);
   const selectedChatIdRef = useRef(selectedChatId);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const activeToolCallsRef = useRef<ToolCall[]>([]);
   /** Per-chat stream tracking — background bots persist to DB even when user switches away. */
   const chatStreamsRef = useRef<Map<string, ChatStreamState>>(new Map());
+  const messageQueueRef = useRef<QueuedMessage[]>([]);
+  const sendQueuedMessageRef = useRef<(item: QueuedMessage) => void>(() => {});
 
   const scrollMessagesToBottom = () => {
     const el = messagesScrollRef.current;
@@ -548,6 +630,14 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   useEffect(() => {
     scrollMessagesToBottom();
   }, [messages, waitingDots]);
+
+  const updateMessageQueue = useCallback((updater: (prev: QueuedMessage[]) => QueuedMessage[]) => {
+    setMessageQueue((prev) => {
+      const next = updater(prev);
+      messageQueueRef.current = next;
+      return next;
+    });
+  }, []);
 
   const reloadChats = async (preferredChatId?: string | null) => {
     setIsLoadingChats(true);
@@ -757,6 +847,11 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       activeStreamBotIdRef.current = null;
       if (errorInCurrentChat) {
         setIsStreaming(false);
+        const nextAfterError = messageQueueRef.current[0];
+        if (nextAfterError) {
+          updateMessageQueue((prev) => prev.slice(1));
+          setTimeout(() => sendQueuedMessageRef.current(nextAfterError), 300);
+        }
       }
     });
     return () => {
@@ -1155,6 +1250,18 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       case "agent_end": {
         const aeStreamKey = eventChatId || "";
         const aeStream = chatStreamsRef.current.get(aeStreamKey);
+
+        if (isForCurrentChat && aeStream && activeAssistantMessageIdRef.current &&
+            aeStream.assistantMessageId !== activeAssistantMessageIdRef.current) {
+          console.log("[creez:chat] agent_end IGNORED (stale, stream belongs to previous prompt)");
+          chatStreamsRef.current.delete(aeStreamKey);
+          return;
+        }
+        if (isForCurrentChat && !aeStream && activeAssistantMessageIdRef.current && isStreamingRef.current) {
+          console.log("[creez:chat] agent_end IGNORED (stale, no matching stream but new stream is active)");
+          return;
+        }
+
         let endContent = isForCurrentChat ? (streamedTextRef.current || "") : (aeStream?.streamedText || "");
         const endAssistantId = isForCurrentChat ? activeAssistantMessageIdRef.current : aeStream?.assistantMessageId;
         const aeTc = isForCurrentChat ? activeToolCallsRef.current : aeStream?.toolCalls;
@@ -1194,6 +1301,11 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
           activeStreamChatIdRef.current = null;
           activeStreamBotIdRef.current = null;
           setIsStreaming(false);
+          const nextInQueue = messageQueueRef.current[0];
+          if (nextInQueue) {
+            updateMessageQueue((prev) => prev.slice(1));
+            setTimeout(() => sendQueuedMessageRef.current(nextInQueue), 300);
+          }
         }
         return;
       }
@@ -1435,35 +1547,15 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     streamedTextRef.current = "";
     activeStreamChatIdRef.current = null;
     activeStreamBotIdRef.current = null;
+    const nextAfterStop = messageQueueRef.current[0];
+    if (nextAfterStop) {
+      updateMessageQueue((prev) => prev.slice(1));
+      setTimeout(() => sendQueuedMessageRef.current(nextAfterStop), 300);
+    }
   };
 
-  const handleSend = async () => {
-    const currentChatId = selectedChatIdRef.current;
-    const streamingThisChat = activeStreamChatIdRef.current != null && activeStreamChatIdRef.current === currentChatId;
-    if (streamingThisChat) {
-      stopStreaming();
-      return;
-    }
-    const composedContent = serializeComposer();
-    if (!composedContent && pendingAttachments.length === 0) return;
-    if (!activeChat) return;
-
-    let contentWithPaths = composedContent;
-    if (pendingAttachments.length > 0) {
-      const savedResults = await Promise.all(
-        pendingAttachments.map(async (att) => {
-          const buf = await att.file.arrayBuffer();
-          const res = await saveAttachment(buf, att.file.name);
-          const type = att.file.type.startsWith("image/") ? "Image" : "File";
-          return { type, path: res.ok ? res.path : null };
-        })
-      );
-      let idx = 0;
-      contentWithPaths = composedContent.replace(/\[(Image|File):[^\]]+\]/g, (match) => {
-        const r = savedResults[idx++];
-        return r?.path != null ? `[${r.type}: ##${r.path}##]` : match;
-      });
-    }
+  const doSendMessage = async (contentWithPaths: string, images: { type: "image"; data: string; mimeType: string }[]) => {
+    if (!activeChat?.contactId) return;
 
     const nowTs = Math.floor(Date.now() / 1000);
     const userMessageId = String(Date.now());
@@ -1493,22 +1585,13 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       createdAt: nowTs,
       updatedAt: nowTs,
     });
-    composerRef.current && (composerRef.current.innerHTML = "");
-    setPendingAttachments((prev) => {
-      for (const item of prev) revokeAttachment(item);
-      return [];
-    });
-    setComposerVersion((v) => v + 1);
-    setShowEmojiPanel(false);
-
-    if (!activeChat.contactId) return;
 
     const ready = await ensureAgentInitialized();
     if (!ready) {
       chatLog("agent:init:failed", "model config incomplete");
       setIsStreaming(false);
       const sysId = `${Date.now()}-system-init-error`;
-      const errorMessage: ChatMessageItem = {
+      const errMsg: ChatMessageItem = {
         id: sysId,
         sender: "system",
         name: "System",
@@ -1517,22 +1600,18 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         timestamp: formatNowTime(),
         type: "system",
       };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) => [...prev, errMsg]);
       void appendChatMessage({
         id: sysId,
         chatId: activeChat.id,
         sender: "system",
-        content: errorMessage.content,
+        content: errMsg.content,
         status: "error",
         createdAt: Math.floor(Date.now() / 1000),
         updatedAt: Math.floor(Date.now() / 1000),
         errorCode: "INIT_INVALID",
-        errorMessage: errorMessage.content,
+        errorMessage: errMsg.content,
       });
-      const preview = errorMessage.content.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
-      setChatList((prev) =>
-        prev.map((c) => (c.id === activeChat.id ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
-      );
       return;
     }
 
@@ -1580,6 +1659,44 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       });
     }
 
+    sendAgentPrompt({
+      chatId: selectedChatId ?? null,
+      text: contentWithPaths,
+      images,
+    });
+    chatLog("agent:prompt", {
+      textLen: contentWithPaths.length,
+      imageCount: images.length,
+      modelId: selectedModel?.id || "",
+    });
+  };
+
+  sendQueuedMessageRef.current = (item: QueuedMessage) => {
+    void doSendMessage(item.content, item.images);
+  };
+
+  const handleSend = async () => {
+    const composedContent = serializeComposer();
+    if (!composedContent && pendingAttachments.length === 0) return;
+    if (!activeChat) return;
+
+    let contentWithPaths = composedContent;
+    if (pendingAttachments.length > 0) {
+      const savedResults = await Promise.all(
+        pendingAttachments.map(async (att) => {
+          const buf = await att.file.arrayBuffer();
+          const res = await saveAttachment(buf, att.file.name);
+          const type = att.file.type.startsWith("image/") ? "Image" : "File";
+          return { type, path: res.ok ? res.path : null };
+        })
+      );
+      let idx = 0;
+      contentWithPaths = composedContent.replace(/\[(Image|File):[^\]]+\]/g, (match) => {
+        const r = savedResults[idx++];
+        return r?.path != null ? `[${r.type}: ##${r.path}##]` : match;
+      });
+    }
+
     const imageAttachments = pendingAttachments.filter((item) => item.file.type.startsWith("image/"));
     const images = await Promise.all(
       imageAttachments.map(async (attachment) => {
@@ -1597,21 +1714,26 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       })
     );
 
-    sendAgentPrompt({
-      chatId: selectedChatId ?? null,
-      text: contentWithPaths,
-      images,
+    composerRef.current && (composerRef.current.innerHTML = "");
+    setPendingAttachments((prev) => {
+      for (const item of prev) revokeAttachment(item);
+      return [];
     });
-    console.log("[creez:chat] send", {
-      chatId: selectedChatId ?? null,
-      textLen: contentWithPaths.length,
-      imageCount: images.length,
-    });
-    chatLog("agent:prompt", {
-      textLen: contentWithPaths.length,
-      imageCount: images.length,
-      modelId: selectedModel?.id || "",
-    });
+    setComposerVersion((v) => v + 1);
+    setShowEmojiPanel(false);
+
+    if (isStreamingRef.current) {
+      const displayText = composedContent.slice(0, 80) + (composedContent.length > 80 ? "..." : "");
+      updateMessageQueue((prev) => [...prev, {
+        id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        displayText,
+        content: contentWithPaths,
+        images,
+      }]);
+      return;
+    }
+
+    await doSendMessage(contentWithPaths, images);
   };
 
   const focusInputToEnd = () => {
@@ -1637,7 +1759,6 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   }, []);
 
   const canSend = (serializeComposer().trim().length > 0 || pendingAttachments.length > 0) && Boolean(activeChat);
-  const disablePrimaryButton = !isStreaming && !canSend;
   return (
     <div className="flex h-full w-full bg-[#F5F5F5]">
       <div className="w-[250px] flex flex-col border-r border-[#E7E7E7] bg-[#F7F7F7] flex-shrink-0">
@@ -1727,11 +1848,14 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
                     {showContentBubble && (
                       <div
                         className={cn(
-                          "p-3 rounded-[4px] shadow-[0_1px_2px_rgba(0,0,0,0.05)] max-w-xl text-[14px] leading-relaxed select-text",
+                          "p-3 rounded-[4px] shadow-[0_1px_2px_rgba(0,0,0,0.05)] max-w-2xl text-[14px] leading-relaxed select-text",
                           isMe ? "bg-[#95EC69] text-[#1a1a1a]" : "bg-white text-[#1a1a1a]"
                         )}
                       >
-                        <MessageContentMarkdown content={showContent} onNavigateToSettings={onNavigateToSettings} />
+                        {isMe
+                          ? <UserMessageContent content={showContent} />
+                          : <MessageContentMarkdown content={showContent} onNavigateToSettings={onNavigateToSettings} />
+                        }
                       </div>
                     )}
                     {!isMe && toolCalls && toolCalls.length > 0 && (
@@ -1743,6 +1867,26 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
             })
           ) : (
             <div className="flex-1 flex items-center justify-center text-gray-400 text-sm h-full">No messages yet</div>
+          )}
+          {messageQueue.length > 0 && (
+            <div className="mt-4 p-3 rounded-lg bg-amber-50/80 border border-amber-200/60">
+              <div className="text-xs text-amber-600 font-medium mb-2">待发送队列 ({messageQueue.length})</div>
+              <div className="space-y-1.5">
+                {messageQueue.map((item, idx) => (
+                  <div key={item.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-white rounded-md border border-amber-100">
+                    <span className="text-[11px] text-amber-500/70 w-4 text-center shrink-0">{idx + 1}</span>
+                    <span className="flex-1 text-[13px] text-gray-700 truncate">{item.displayText}</span>
+                    <button
+                      type="button"
+                      className="w-5 h-5 rounded text-gray-400 hover:text-red-500 hover:bg-red-50 flex items-center justify-center shrink-0"
+                      onClick={() => updateMessageQueue((prev) => prev.filter((q) => q.id !== item.id))}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 
@@ -1878,6 +2022,12 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
               onPaste={(e) => {
                 const clipboardData = e.clipboardData;
                 if (!clipboardData) return;
+                const files = Array.from(clipboardData.files || []);
+                if (files.length > 0) {
+                  e.preventDefault();
+                  appendFiles(files);
+                  return;
+                }
                 let textToInsert = "";
                 const html = clipboardData.getData("text/html");
                 if (html) {
@@ -1917,25 +2067,32 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
                   }, 0);
                 }
               }}
-              className="w-full flex-1 min-h-[96px] bg-transparent outline-none text-base leading-6 text-gray-800 font-sans whitespace-pre-wrap break-words"
+              className="w-full flex-1 min-h-[96px] bg-transparent outline-none text-base leading-6 text-gray-800 font-sans whitespace-pre-wrap break-words overflow-y-auto custom-scrollbar"
               data-version={composerVersion}
             />
           </div>
 
-          <div className="h-12 px-6 flex items-center justify-end pb-4">
+          <div className="h-12 px-6 flex items-center justify-end gap-2 pb-4">
+            {isStreaming && (
+              <button
+                onClick={() => stopStreaming()}
+                className="px-5 py-1.5 text-sm rounded-[4px] transition-colors font-medium bg-[#FDECEC] text-[#E53935] hover:bg-[#FAD4D4] flex items-center gap-1.5"
+              >
+                <Square size={10} fill="currentColor" />
+                停止
+              </button>
+            )}
             <button
               onClick={() => void handleSend()}
-              disabled={disablePrimaryButton}
+              disabled={!canSend}
               className={cn(
                 "px-7 py-1.5 text-sm rounded-[4px] transition-colors font-medium",
-                isStreaming
-                  ? "bg-[#FDECEC] text-[#E53935] hover:bg-[#FAD4D4]"
-                  : canSend
-                    ? "bg-[#E9E9E9] text-[#07C160] hover:text-[#06ad56] hover:bg-[#D2D2D2]"
-                    : "bg-[#F0F0F0] text-gray-400 cursor-not-allowed"
+                canSend
+                  ? "bg-[#E9E9E9] text-[#07C160] hover:text-[#06ad56] hover:bg-[#D2D2D2]"
+                  : "bg-[#F0F0F0] text-gray-400 cursor-not-allowed"
               )}
             >
-              {isStreaming ? "Stop" : "Send (S)"}
+              发送 (S)
             </button>
           </div>
         </div>
