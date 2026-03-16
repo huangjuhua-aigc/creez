@@ -292,7 +292,8 @@ export async function createAndSubscribe(sender, config) {
   });
 
   const sessionEntry = { session, unsubscribe: null, authStorage, listeners, workDir: cwd, configFingerprint: fingerprint, resourceLoader };
-  let errorNotifiedThisTurn = false;
+  let pendingErrorMsg = null;
+  let turnHadSuccessfulReply = false;
   const unsubscribe = session.subscribe((ev) => {
     try {
       const role = ev.message?.role || "";
@@ -314,12 +315,15 @@ export async function createAndSubscribe(sender, config) {
         console.log("[creez:agent] loaded skills (" + loadedSkills.length + "):\n" + (skillDefs.join("\n") || "  (none)"));
         console.log("[creez:agent] system prompt (sent to model):\n", session.systemPrompt || "(empty)");
         console.log("[creez:agent] === END DEBUG ===");
+        pendingErrorMsg = null;
+        turnHadSuccessfulReply = false;
       }
       if (ev.type !== "message_update") {
         log("event", { type: ev.type, role, toolName, textLen, botKey });
       }
       if (ev.type === "message_end" && ev.message?.role === "assistant" && contentStr) {
         console.log("[creez:agent] LLM reply:\n", contentStr);
+        turnHadSuccessfulReply = true;
       }
       if (ev.type === "agent_end") {
         log("reply_done", { botKey, chatId: chatId ?? undefined });
@@ -327,15 +331,17 @@ export async function createAndSubscribe(sender, config) {
       const errorMsg = ev.isError ?? ev.message?.errorMessage ?? null;
       if (errorMsg) {
         log("event:error", errorMsg);
-        const shouldNotify =
-          typeof errorMsg === "string" &&
-          ((ev.type === "message_end" && ev.message?.role === "assistant") || ev.type === "agent_end");
-        if (shouldNotify && !errorNotifiedThisTurn) {
-          broadcast("agent:eventError", errorMsg);
-          errorNotifiedThisTurn = true;
+        if (typeof errorMsg === "string") {
+          pendingErrorMsg = errorMsg;
         }
       }
-      if (ev.type === "agent_end") errorNotifiedThisTurn = false;
+      if (ev.type === "agent_end") {
+        if (pendingErrorMsg && !turnHadSuccessfulReply) {
+          broadcast("agent:eventError", pendingErrorMsg);
+        }
+        pendingErrorMsg = null;
+        turnHadSuccessfulReply = false;
+      }
       broadcast("agent:event", { ...serializeEvent(ev), chatId: chatId ?? undefined });
     } catch (error) {
       console.error("[creezv2 agent-runner] event forward error:", error?.message || String(error));
