@@ -156,6 +156,7 @@ async function executeTask(task, deps) {
 
     // Dedicated session key so this run has no prior conversation context (only task_prompt).
     const sessionKey = "headless:" + taskId;
+    let lastPersistedContent = "";
     const headlessSender = {
       send(channel, data) {
         if (channel !== "agent:event" && channel !== CHANNELS.AGENT_EVENT) return;
@@ -170,6 +171,7 @@ async function executeTask(task, deps) {
               : Array.isArray(ev.message?.content)
                 ? String(ev.message.content.find((c) => c?.type === "text")?.text || "")
                 : "";
+          lastPersistedContent = contentStr;
           try {
             chatRepository.updateMessage({
               id: assistantMessageId,
@@ -196,15 +198,17 @@ async function executeTask(task, deps) {
                 ? String(ev.message.content.find((c) => c?.type === "text")?.text || "")
                 : "";
           const errMsg = ev.isError ?? ev.message?.errorMessage ?? null;
+          const finalContent = contentStr || lastPersistedContent || (errMsg ? `[Error] ${errMsg}` : "");
+          const finalStatus = errMsg ? "error" : "done";
           try {
             chatRepository.updateMessage({
               id: assistantMessageId,
-              content: contentStr || (errMsg ? `[Error] ${errMsg}` : ""),
-              status: errMsg ? "error" : "done",
+              content: finalContent,
+              status: finalStatus,
               errorMessage: errMsg || undefined,
               updatedAt: Math.floor(Date.now() / 1000),
             });
-            console.log("[creez:task] headlessRunner agent_end persisted", { chatId, hasError: Boolean(errMsg) });
+            console.log("[creez:task] headlessRunner agent_end persisted", { chatId, hasError: Boolean(errMsg), contentLen: finalContent.length });
             if (sendToRenderer) {
               sendToRenderer({
                 type: "chat:message_appended",
@@ -212,8 +216,8 @@ async function executeTask(task, deps) {
                 message: {
                   id: assistantMessageId,
                   sender: "assistant",
-                  content: contentStr || (errMsg ? `[Error] ${errMsg}` : ""),
-                  status: errMsg ? "error" : "done",
+                  content: finalContent,
+                  status: finalStatus,
                 },
               });
             }
