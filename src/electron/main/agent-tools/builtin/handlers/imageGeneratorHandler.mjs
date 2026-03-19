@@ -1,11 +1,14 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { asTextEnvelope, buildErrorEnvelope, buildSuccessEnvelope } from "../errorProtocol.mjs";
 
 const DEFAULT_BACKEND_BASE_URL = "https://creez.lighton.video";
 const DEFAULT_TIMEOUT_MS = 120_000;
 const GENERATED_IMAGE_DIR = "GeneratedImage";
+const MAX_REFERENCE_IMAGE_BYTES = 12 * 1024 * 1024;
+const MAX_REFERENCE_IMAGES = 5;
 
 function isDataUrl(s) {
   return typeof s === "string" && s.trimStart().toLowerCase().startsWith("data:");
@@ -77,6 +80,112 @@ function resolveBackendUrl() {
   return (file.CREEZ_BACKEND_URL || "").trim() || DEFAULT_BACKEND_BASE_URL;
 }
 
+function mimeFromExt(filePath) {
+  const ext = path.extname(filePath || "").toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".gif") return "image/gif";
+  return "image/png";
+}
+
+function normalizeMime(mimeHeader) {
+  if (typeof mimeHeader !== "string") return "image/png";
+  const m = mimeHeader.split(";")[0].trim().toLowerCase();
+  if (m.startsWith("image/")) return m;
+  return "image/png";
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+function coerceReferencePathList(raw) {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw.map((x) => String(x ?? "").trim()).filter(Boolean);
+  if (typeof raw === "string" && raw.trim()) return [raw.trim()];
+  return [];
+}
+
+/**
+ * Resolve one reference to data:image/...;base64,... for backend referenceImageBase64s.
+ * @param {string} ref
+ * @param {string} workDir
+ */
+async function referencePathToDataUrl(ref, workDir) {
+  const s = String(ref || "").trim();
+  if (!s) throw new Error("empty path");
+
+  if (isDataUrl(s)) {
+    const lower = s.trimStart().toLowerCase();
+    if (!lower.startsWith("data:image/")) {
+      throw new Error("data URL must be an image (data:image/...)");
+    }
+    return s.trim();
+  }
+
+  if (/^https?:\/\//i.test(s)) {
+    const res = await fetch(s, { signal: AbortSignal.timeout(60_000) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length === 0) throw new Error("empty response body");
+    if (buf.length > MAX_REFERENCE_IMAGE_BYTES) {
+      throw new Error(`image larger than ${MAX_REFERENCE_IMAGE_BYTES} bytes`);
+    }
+    const mime = normalizeMime(res.headers.get("content-type") || "");
+    return `data:${mime};base64,${buf.toString("base64")}`;
+  }
+
+  let filePath = s;
+  if (s.startsWith("file://")) {
+    try {
+      filePath = fileURLToPath(s);
+    } catch {
+      throw new Error("invalid file:// URL");
+    }
+  } else if (!path.isAbsolute(filePath)) {
+    filePath = workDir ? path.join(workDir, filePath) : path.resolve(filePath);
+  }
+
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    throw new Error("file not found or not a file");
+  }
+  const stat = fs.statSync(filePath);
+  if (stat.size > MAX_REFERENCE_IMAGE_BYTES) {
+    throw new Error(`file larger than ${MAX_REFERENCE_IMAGE_BYTES} bytes`);
+  }
+  const buf = await fs.promises.readFile(filePath);
+  const mime = mimeFromExt(filePath);
+  return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
+/**
+ * @param {unknown} argsRefs
+ * @param {string} workDir
+ * @returns {Promise<{ ok: true, base64s: string[] } | { ok: false, envelope: object }>}
+ */
+async function loadReferenceImagesAsBase64(argsRefs, workDir) {
+  const list = coerceReferencePathList(argsRefs).slice(0, MAX_REFERENCE_IMAGES);
+  if (list.length === 0) return { ok: true, base64s: [] };
+  const base64s = [];
+  for (let i = 0; i < list.length; i++) {
+    try {
+      base64s.push(await referencePathToDataUrl(list[i], workDir));
+    } catch (e) {
+      const msg = e?.message || String(e);
+      const envelope = buildErrorEnvelope({
+        toolName: "image_generator",
+        code: "REFERENCE_IMAGE_ERROR",
+        message: `Failed to load referenceImagePaths[${i}] (${list[i]}): ${msg}`,
+        retryable: false,
+        nextAction: "Fix path or URL, use a smaller image, or omit referenceImagePaths.",
+      });
+      return { ok: false, envelope };
+    }
+  }
+  return { ok: true, base64s };
+}
+
 export function createImageGeneratorHandler(runtimeContext = {}) {
   const workDir = typeof runtimeContext?.workDir === "string" ? runtimeContext.workDir.trim() : "";
   return {
@@ -110,6 +219,16 @@ export function createImageGeneratorHandler(runtimeContext = {}) {
       const numImages = Math.min(10, Math.max(1, parseInt(args?.numImages, 10) || 1));
       const enableWebSearch = Boolean(args?.enableWebSearch);
 
+      const refLoad = await loadReferenceImagesAsBase64(args?.referenceImagePaths, workDir);
+      if (!refLoad.ok) {
+        return {
+          content: [{ type: "text", text: asTextEnvelope(refLoad.envelope, "image_generator") }],
+          details: refLoad.envelope,
+          isError: true,
+        };
+      }
+      const referenceImageBase64s = refLoad.base64s;
+
       const baseUrl = resolveBackendUrl().replace(/\/+$/, "");
       const endpoint = `${baseUrl}/media/generate-image`;
 
@@ -117,18 +236,23 @@ export function createImageGeneratorHandler(runtimeContext = {}) {
       const timeout = setTimeout(() => controller.abort(new Error("timeout")), DEFAULT_TIMEOUT_MS);
 
       try {
+        const body = {
+          prompt,
+          ratio,
+          numImages,
+          enableWebSearch,
+        };
+        if (referenceImageBase64s.length > 0) {
+          body.referenceImageBase64s = referenceImageBase64s;
+        }
+
         const response = await fetch(endpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
           },
-          body: JSON.stringify({
-            prompt,
-            ratio,
-            numImages,
-            enableWebSearch,
-          }),
+          body: JSON.stringify(body),
           signal: controller.signal,
         });
 
@@ -184,6 +308,7 @@ export function createImageGeneratorHandler(runtimeContext = {}) {
             prompt,
             ratio,
             numImages,
+            referenceImageCount: referenceImageBase64s.length,
             count: generation.length,
             generation: generation.map((g) => ({ ...g, localPath: g.localPath || undefined })),
           },

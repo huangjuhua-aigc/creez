@@ -27,6 +27,9 @@ declare global {
           payload: AppStatePayload
         ) => Promise<IpcResult<{ updated: boolean; state: AppStatePayload }>>;
       };
+      shell?: {
+        open: (payload: { target: string }) => Promise<IpcResult<{ kind: string }>>;
+      };
       chat: {
         list: (payload?: { limit?: number; offset?: number; keyword?: string }) => Promise<
           IpcResult<{

@@ -116,6 +116,7 @@ export async function buildSystemPrompt({
     "- Use tools when useful and report concrete outcomes.",
     "- Separate tool operation details from final user-facing answer.",
     "- Do not fabricate file contents or command outputs.",
+    "- When an image is generated (e.g. via image_generator or similar), include it in your user-visible reply using Markdown image syntax with a file URL so Creez can render it in chat. Use the real path from the tool result (localPath or file path), forward slashes, and a file:// prefix — for example: ![Generated image 1](file:///D:/project/out.png). Number multiple images as Generated image 2, etc.",
   ];
 
   const result = sections.join("\n").trim();

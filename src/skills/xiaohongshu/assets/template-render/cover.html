@@ -13,9 +13,10 @@
       height: 1000px;
       overflow: hidden;
       border-radius: 8px;
-      background: #fff;
+      background-color: #ffffff;
       background-size: cover;
       background-position: center;
+      background-repeat: no-repeat;
     }
     .inner {
       position: absolute;
@@ -59,13 +60,13 @@
       var title = q.get('title') || '缺少标题';
       var subtitle = q.get('subtitle') || '';
       var bg = q.get('backgroundImage');
-      var base = location.href.replace(/\?.*$/, '').replace(/\/[^/]+$/, '/');
-      var defaultBg = base + '../template/default-bg.png';
       document.getElementById('title').textContent = decodeURIComponent(title);
       var subEl = document.getElementById('subtitle');
       if (subtitle) { subEl.textContent = decodeURIComponent(subtitle); subEl.style.display = 'block'; } else { subEl.style.display = 'none'; }
       var target = document.getElementById('render-target');
-      target.style.backgroundImage = 'url(' + (bg ? decodeURIComponent(bg) : defaultBg) + ')';
+      if (bg && String(bg).trim()) {
+        target.style.backgroundImage = 'url("' + decodeURIComponent(bg).replace(/\\/g, '/').replace(/"/g, '\\"') + '")';
+      }
       window.RENDER_READY = true;
     })();
   </script>

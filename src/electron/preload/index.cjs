@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld("electron", {
     getState: () => ipcRenderer.invoke(CHANNELS.APP_GET_STATE),
     setState: (payload) => ipcRenderer.invoke(CHANNELS.APP_SET_STATE, payload),
   },
+  shell: {
+    open: (payload) => ipcRenderer.invoke(CHANNELS.SHELL_OPEN, payload),
+  },
   chat: {
     list: (payload) => ipcRenderer.invoke(CHANNELS.CHAT_LIST, payload),
     getMessages: (payload) => ipcRenderer.invoke(CHANNELS.CHAT_GET_MESSAGES, payload),

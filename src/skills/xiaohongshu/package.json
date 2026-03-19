@@ -1,0 +1,6 @@
+{
+  "name": "creez-skill-xiaohongshu",
+  "private": true,
+  "type": "commonjs",
+  "description": "Scope Node to CommonJS for scripts/render_template.js (parent creez/src is type: module)."
+}

@@ -1,12 +1,13 @@
 ---
 name: xiaohongshu
 description: 小红书笔记制作与发布。撰写笔记内容，生成 Markdown 并渲染为封面与多张卡片图，可选脚本发布到小红书。
-metadata: {"creez":{"emoji":"📕","requires":{"bins":["python","node"]}}}
-read_when:
+列出以下几个使用场景
   - 用户要发小红书笔记、做图文内容
   - 需要把资料或主题写成小红书风格并出图
   - 需要生成可直接发布的封面与多张正文卡片图
   - 用户指定了标题/副标题/正文文案，要求把文字套在固定版式的小红书图文模板上导出图片（此时用本技能内的图文模板渲染，不要用 image-generator）
+metadata: {"creez":{"emoji":"📕","requires":{"bins":["python","node"]}}}
+
 ---
 
 # 小红书笔记制作与发布
@@ -131,9 +132,9 @@ python scripts/publish_xhs.py -t "标题" -d "描述" -i cover.png card_1.png --
 ## 依赖与资源
 
 - **Markdown 渲染**：`pip install -r requirements.txt`，并执行 `playwright install chromium`。脚本会从技能目录读取 `assets/`（封面/卡片模板与 `assets/themes/` 主题 CSS）。
-- **图文模板渲染**：需 Node.js 与 `puppeteer`（`npm install puppeteer` 或由运行环境提供）。脚本与模板均在技能内：`scripts/render_template.js`，`assets/template-render/`（cover.html、content.html），`assets/template/default-bg.png`。无需配置 `XHS_TEMPLATE_PROJECT_PATH` 或任何外部路径。
+- **图文模板渲染**：需 Node.js 与 `puppeteer`（`npm install puppeteer` 或由运行环境提供）。脚本与模板均在技能内：`scripts/render_template.js`，`assets/template-render/`（cover.html、content.html）。**默认封面/正文背景**为模板内 CSS 浅灰模糊纹理（对齐 Xhstemplate 视觉，不依赖外部图）。可选：将自定义底图放在 `assets/template/default-bg.png`，`render_template.js` 会在未传 `--backgroundImage` 时自动用绝对 `file://` 注入。无需配置 `XHS_TEMPLATE_PROJECT_PATH`。
 - **发布**：依赖 `xhs`（见 requirements.txt）；**发布前需在 `~/.creez/.env` 或技能目录 `.env` 中配置有效的 `XHS_COOKIE`**。
-- **技能资源**：`scripts/render_template.js`、`scripts/publish_xhs.py`；`assets/`、`assets/themes/`、`assets/template-render/`、`assets/template/`。
+- **技能资源**：`scripts/render_template.js`、`scripts/publish_xhs.py`；`assets/`、`assets/themes/`、`assets/template-render/`；可选 `assets/template/default-bg.png`。
 
 ## 注意事项
 
