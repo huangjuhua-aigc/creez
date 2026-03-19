@@ -111,6 +111,131 @@ function isHttpUrl(s: string): boolean {
   return t.startsWith("http://") || t.startsWith("https://");
 }
 
+/** Open http(s)/mailto in browser, or absolute path / file:// in system default app (Electron main process). */
+async function openLinkOrPath(target: string) {
+  const t = String(target || "").trim();
+  if (!t) return;
+  const api = typeof window !== "undefined" ? window.electron?.shell?.open : undefined;
+  if (api) {
+    try {
+      const res = await api({ target: t });
+      if (!res?.ok) {
+        // eslint-disable-next-line no-console
+        console.warn("[ChatWindow] shell.open failed:", res?.error?.message || res);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("[ChatWindow] shell.open error:", e);
+    }
+    return;
+  }
+  if (/^https?:\/\//i.test(t) || /^mailto:/i.test(t)) {
+    window.open(t, "_blank", "noopener,noreferrer");
+  }
+}
+
+type LinkMatch = { start: number; end: number; href: string };
+
+/** Collect non-overlapping URL / file path spans for linkification (plain text segments only). */
+function collectLinkMatches(segment: string): LinkMatch[] {
+  const raw: LinkMatch[] = [];
+
+  const addRe = (re: RegExp, hrefFrom: (slice: string, m: RegExpExecArray) => string, sliceFrom: (m: RegExpExecArray) => { start: number; end: number; text: string }) => {
+    const r = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+    let m: RegExpExecArray | null;
+    while ((m = r.exec(segment)) !== null) {
+      const { start, end, text } = sliceFrom(m);
+      if (end > start && text) {
+        raw.push({ start, end, href: hrefFrom(text, m) });
+      }
+    }
+  };
+
+  addRe(
+    /(?<!\()https?:\/\/[^\s<>\[\]()]+/gi,
+    (slice) => slice,
+    (m) => ({ start: m.index, end: m.index + m[0].length, text: m[0] }),
+  );
+  addRe(
+    /(?<!\()file:\/\/[^\s<>\[\]"']+/gi,
+    (slice) => slice,
+    (m) => ({ start: m.index, end: m.index + m[0].length, text: m[0] }),
+  );
+  addRe(
+    /\b[A-Za-z]:\\[^\s<>\[\]"']+/g,
+    (slice) => `file:///${slice.replace(/\\/g, "/")}`,
+    (m) => ({ start: m.index, end: m.index + m[0].length, text: m[0] }),
+  );
+  addRe(
+    /\b[A-Za-z]:\/[^\s<>\[\]"']+/g,
+    (slice) => `file:///${slice}`,
+    (m) => ({ start: m.index, end: m.index + m[0].length, text: m[0] }),
+  );
+  addRe(
+    /(?:^|[\s(/'"])(\/Users\/[^\s<>\[\]"']+)/g,
+    (slice) => `file://${slice}`,
+    (m) => {
+      const text = m[1];
+      const start = m.index + m[0].length - text.length;
+      return { start, end: start + text.length, text };
+    },
+  );
+  addRe(
+    /(?:^|[\s(/'"])(\/home\/[^\s<>\[\]"']+)/g,
+    (slice) => `file://${slice}`,
+    (m) => {
+      const text = m[1];
+      const start = m.index + m[0].length - text.length;
+      return { start, end: start + text.length, text };
+    },
+  );
+
+  raw.sort((a, b) => a.start - b.start || b.end - a.end - (a.end - a.start));
+  const merged: LinkMatch[] = [];
+  let lastEnd = -1;
+  for (const x of raw) {
+    if (x.start < lastEnd) continue;
+    merged.push(x);
+    lastEnd = x.end;
+  }
+  return merged;
+}
+
+function linkifyPlainSegment(segment: string): string {
+  const matches = collectLinkMatches(segment);
+  if (matches.length === 0) return segment;
+  let out = "";
+  let cur = 0;
+  for (const m of matches) {
+    out += segment.slice(cur, m.start);
+    const label = segment.slice(m.start, m.end)
+      .replace(/\\/g, "\\\\")
+      .replace(/\]/g, "\\]");
+    out += `[${label}](${m.href})`;
+    cur = m.end;
+  }
+  out += segment.slice(cur);
+  return out;
+}
+
+function linkifyOutsideCodeFences(text: string): string {
+  const protectedRe = /```[\s\S]*?```|`[^`\n]+`|!?\[[^\]]*\]\([^)]*\)/g;
+  let result = "";
+  let lastIdx = 0;
+  let pm: RegExpExecArray | null;
+  while ((pm = protectedRe.exec(text)) !== null) {
+    if (pm.index > lastIdx) {
+      result += linkifyPlainSegment(text.slice(lastIdx, pm.index));
+    }
+    result += pm[0];
+    lastIdx = pm.index + pm[0].length;
+  }
+  if (lastIdx < text.length) {
+    result += linkifyPlainSegment(text.slice(lastIdx));
+  }
+  return result;
+}
+
 const LOCAL_IMG_MARKER = "https://__creez_local_img__/";
 
 function isLocalImageMarker(s: string): boolean {
@@ -328,8 +453,17 @@ function FileChipFromPath({ path, className = "" }: { path: string; className?: 
   const name = fileNameFromPath(path);
   return (
     <span
+      role="button"
+      tabIndex={0}
+      onClick={() => void openLinkOrPath(path)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          void openLinkOrPath(path);
+        }
+      }}
       className={cn(
-        "inline-flex items-center gap-2 px-3 py-2 mr-1 mb-1 bg-[#F0F0F0] border border-gray-200 rounded-xl align-middle",
+        "inline-flex items-center gap-2 px-3 py-2 mr-1 mb-1 bg-[#F0F0F0] border border-gray-200 rounded-xl align-middle cursor-pointer hover:bg-[#E6E6E6] transition-colors",
         className
       )}
     >
@@ -383,6 +517,38 @@ function UserImageCard({ path }: { path: string }) {
   );
 }
 
+function LinkifiedText({ text, linkClassName }: { text: string; linkClassName?: string }) {
+  const matches = collectLinkMatches(text);
+  if (matches.length === 0) {
+    return <span className="whitespace-pre-wrap">{text}</span>;
+  }
+  const parts: React.ReactNode[] = [];
+  let cur = 0;
+  let key = 0;
+  const linkCls = linkClassName ?? "text-[#0d5c2e] underline cursor-pointer whitespace-pre-wrap break-all text-left bg-transparent border-0 p-0 font-inherit inline";
+  for (const m of matches) {
+    if (m.start > cur) {
+      parts.push(<span key={key++} className="whitespace-pre-wrap">{text.slice(cur, m.start)}</span>);
+    }
+    const label = text.slice(m.start, m.end);
+    parts.push(
+      <button
+        key={key++}
+        type="button"
+        className={linkCls}
+        onClick={() => void openLinkOrPath(m.href)}
+      >
+        {label}
+      </button>
+    );
+    cur = m.end;
+  }
+  if (cur < text.length) {
+    parts.push(<span key={key++} className="whitespace-pre-wrap">{text.slice(cur)}</span>);
+  }
+  return <>{parts}</>;
+}
+
 function UserMessageContent({ content }: { content: string }) {
   if (!content || typeof content !== "string") return null;
   const attachmentRegex = /\[(Image|File):\s*##([^#]+)##\]/g;
@@ -393,7 +559,7 @@ function UserMessageContent({ content }: { content: string }) {
 
   while ((match = attachmentRegex.exec(content)) !== null) {
     if (match.index > lastIndex) {
-      parts.push(<span key={key++} className="whitespace-pre-wrap">{content.slice(lastIndex, match.index)}</span>);
+      parts.push(<LinkifiedText key={key++} text={content.slice(lastIndex, match.index)} />);
     }
     const [, type, filePath] = match;
     if (type === "Image") {
@@ -405,10 +571,14 @@ function UserMessageContent({ content }: { content: string }) {
   }
 
   if (lastIndex < content.length) {
-    parts.push(<span key={key++} className="whitespace-pre-wrap">{content.slice(lastIndex)}</span>);
+    parts.push(<LinkifiedText key={key++} text={content.slice(lastIndex)} />);
   }
   if (parts.length === 0) {
-    return <span className="whitespace-pre-wrap">{content}</span>;
+    return (
+      <div className="break-words text-[14px] leading-relaxed">
+        <LinkifiedText text={content} />
+      </div>
+    );
   }
   return <div className="break-words text-[14px] leading-relaxed">{parts}</div>;
 }
@@ -420,7 +590,8 @@ const markdownSanitizeSchema = {
     "pre", "s", "strong", "sub", "sup", "table", "tbody", "td", "th", "thead", "tr", "ul", "video",
   ],
   protocols: {
-    href: ["http", "https", "mailto"],
+    href: ["http", "https", "mailto", "file"],
+    src: ["http", "https", "file"],
   },
   attributes: {
     a: ["href", "title"],
@@ -477,7 +648,7 @@ function MessageContentMarkdown({
   const empty = !content || typeof content !== "string" || !content.trim();
   if (empty) return <span className={cn(className)} />;
 
-  const normalizedContent = normalizeMarkdownNewlines(content);
+  const normalizedContent = normalizeMarkdownNewlines(linkifyOutsideCodeFences(content));
 
   const mdComponents = React.useMemo(
     () => ({
@@ -504,8 +675,26 @@ function MessageContentMarkdown({
             </button>
           );
         }
+        const h = href?.trim() || "";
+        if (
+          h &&
+          (/^https?:\/\//i.test(h) || /^mailto:/i.test(h) || /^file:\/\//i.test(h))
+        ) {
+          return (
+            <a
+              href={h}
+              className="text-[#07C160] underline cursor-pointer break-all"
+              onClick={(e) => {
+                e.preventDefault();
+                void openLinkOrPath(h);
+              }}
+            >
+              {children}
+            </a>
+          );
+        }
         return (
-          <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#07C160] underline">
+          <a href={href} target="_blank" rel="noopener noreferrer" className="text-[#07C160] underline break-all">
             {children}
           </a>
         );
@@ -2042,6 +2231,10 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
+                  if (e.nativeEvent.isComposing) return;
+                  if (e.shiftKey) {
+                    return;
+                  }
                   e.preventDefault();
                   void handleSend();
                   return;
@@ -2082,18 +2275,21 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
                 停止
               </button>
             )}
-            <button
-              onClick={() => void handleSend()}
-              disabled={!canSend}
-              className={cn(
-                "px-7 py-1.5 text-sm rounded-[4px] transition-colors font-medium",
-                canSend
-                  ? "bg-[#E9E9E9] text-[#07C160] hover:text-[#06ad56] hover:bg-[#D2D2D2]"
-                  : "bg-[#F0F0F0] text-gray-400 cursor-not-allowed"
-              )}
-            >
-              发送 (S)
-            </button>
+            <div className="flex flex-col items-end gap-0.5">
+              <span className="text-[10px] text-gray-400 hidden sm:block">Enter 发送 · Shift+Enter 换行</span>
+              <button
+                onClick={() => void handleSend()}
+                disabled={!canSend}
+                className={cn(
+                  "px-7 py-1.5 text-sm rounded-[4px] transition-colors font-medium",
+                  canSend
+                    ? "bg-[#E9E9E9] text-[#07C160] hover:text-[#06ad56] hover:bg-[#D2D2D2]"
+                    : "bg-[#F0F0F0] text-gray-400 cursor-not-allowed"
+                )}
+              >
+                发送 (S)
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -49,7 +49,15 @@ async function main() {
   if (title) params.set('title', title);
   if (subtitle) params.set('subtitle', subtitle);
   if (content) params.set('content', content);
-  if (backgroundImage) params.set('backgroundImage', backgroundImage);
+  // 若显式传入则用调用方 URL；否则若存在 assets/template/default-bg.png 则注入绝对 file://，避免 cover.html 里拼相对路径在部分环境下失效
+  let bg = backgroundImage;
+  if (!bg) {
+    const defaultBgPath = path.join(SKILL_ROOT, 'assets', 'template', 'default-bg.png');
+    if (fs.existsSync(defaultBgPath)) {
+      bg = pathToFileURL(defaultBgPath).href;
+    }
+  }
+  if (bg) params.set('backgroundImage', bg);
   const fileUrl = pathToFileURL(htmlPath).href + '?' + params.toString();
 
   const browser = await puppeteer.launch({ headless: 'new' });
@@ -58,6 +66,8 @@ async function main() {
     await page.setViewport({ width: 750, height: 1000, deviceScaleFactor: 2 });
     await page.goto(fileUrl, { waitUntil: 'networkidle0', timeout: 10000 });
     await page.waitForFunction('window.RENDER_READY === true', { timeout: 5000 });
+    // 给 backdrop-filter / blur 一帧时间完成绘制，避免截图偏色或未糊化
+    await new Promise((r) => setTimeout(r, 200));
     const el = await page.$('#render-target');
     if (!el) throw new Error('#render-target not found');
     await fs.promises.mkdir(path.dirname(dest), { recursive: true });

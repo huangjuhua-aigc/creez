@@ -34,6 +34,7 @@ process.on("unhandledRejection", (reason, promise) => {
 });
 const { AppStateStore } = require("./appStateStore.cjs");
 const { registerAppStateIpc } = require("./appStateIpc.cjs");
+const { registerShellIpc } = require("./shellIpc.cjs");
 const { registerChatIpc } = require("./chatIpc.cjs");
 const { registerContactIpc } = require("./contactIpc.cjs");
 const { registerSettingsIpc } = require("./settingsIpc.cjs");
@@ -384,6 +385,7 @@ app.whenReady().then(async () => {
 
     const appStateStore = new AppStateStore({ repository: appStateRepository, homeDir: creezHome });
     registerAppStateIpc(ipcMain, appStateStore);
+    registerShellIpc(ipcMain);
     registerChatIpc(ipcMain, chatRepository);
     registerContactIpc(ipcMain, contactRepository);
     channelManager = new ChannelManager({

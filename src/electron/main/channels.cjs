@@ -1,6 +1,7 @@
 const CHANNELS = Object.freeze({
   APP_GET_STATE: "app:getState",
   APP_SET_STATE: "app:setState",
+  SHELL_OPEN: "shell:open",
   CHAT_LIST: "chat:list",
   CHAT_GET_MESSAGES: "chat:getMessages",
   CHAT_GET_OR_CREATE_BY_CONTACT: "chat:getOrCreateByContact",

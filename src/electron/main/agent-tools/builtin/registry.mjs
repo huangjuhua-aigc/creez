@@ -123,6 +123,13 @@ function createBuiltinSkillRegistry() {
       ratio: Type.Optional(Type.String({ description: 'Aspect ratio, e.g. "16:9", "1:1". Default "16:9".' })),
       numImages: Type.Optional(Type.Integer({ minimum: 1, maximum: 10, description: "Number of images to generate (1-10, default 1)." })),
       enableWebSearch: Type.Optional(Type.Boolean({ description: "Enable web search to enhance prompt. Default false." })),
+      referenceImagePaths: Type.Optional(
+        Type.Array(Type.String(), {
+          maxItems: 5,
+          description:
+            "Optional reference images (max 5). Each: workspace-relative or absolute file path, file:// URL, https URL, or data:image/...;base64,... . Loaded locally or fetched, then sent as base64 to the backend.",
+        }),
+      ),
     }),
     isEnabled: isDefaultBotToolEnabled,
     createHandler: createImageGeneratorHandler,
