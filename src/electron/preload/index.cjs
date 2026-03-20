@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld("electron", {
     createBotFromTemplate: (payload) => ipcRenderer.invoke(CHANNELS.CONTACT_CREATE_BOT_FROM_TEMPLATE, payload),
     getDefaultBotId: () => ipcRenderer.invoke(CHANNELS.CONTACT_GET_DEFAULT_BOT_ID),
     addRemoteAgent: (payload) => ipcRenderer.invoke(CHANNELS.CONTACT_ADD_REMOTE_AGENT, payload),
+    delete: (payload) => ipcRenderer.invoke(CHANNELS.CONTACT_DELETE, payload),
   },
   channel: {
     listConfigs: (payload) => ipcRenderer.invoke(CHANNELS.CHANNEL_LIST_CONFIGS, payload ?? {}),
@@ -100,6 +101,7 @@ contextBridge.exposeInMainWorld("electron", {
     publish: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_PUBLISH, payload),
     delete: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_DELETE, payload),
     search: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_SEARCH, payload),
+    recent: () => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_RECENT),
     getDeviceId: () => ipcRenderer.invoke(CHANNELS.APP_GET_DEVICE_ID),
   },
   storyboard: {

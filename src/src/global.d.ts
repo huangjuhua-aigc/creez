@@ -125,6 +125,7 @@ declare global {
           avatarUrl?: string | null;
           greetingMessage?: string;
         }) => Promise<IpcResult<{ contactId: string; chatId: string | null; alreadyExists: boolean }>>;
+        delete: (payload: { contactId: string }) => Promise<IpcResult<{ deleted: boolean; chatsRemoved: number }>>;
       };
       channel: {
         listConfigs: (payload?: { botId?: string } | undefined) => Promise<
@@ -334,6 +335,7 @@ declare global {
         publish: (payload: { id: string }) => Promise<IpcResult<{ id: string; status: string; updated_at: string }>>;
         delete: (payload: { id: string }) => Promise<IpcResult<Record<string, never>>>;
         search: (payload: { q: string }) => Promise<IpcResult<{ items: Array<{ id: string; name: string; avatar_url: string | null; description: string; updated_at: string }> }>>;
+        recent: () => Promise<IpcResult<{ items: Array<{ id: string; name: string; avatar_url: string | null; description: string; created_at: string }> }>>;
         getDeviceId: () => Promise<IpcResult<{ deviceId: string }>>;
       };
       storyboard: {

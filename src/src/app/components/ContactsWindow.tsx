@@ -1,9 +1,17 @@
-import { User, UserPlus, MessageSquare, Search, Bot } from 'lucide-react';
+import { User, UserPlus, MessageSquare, Search, Bot, Plus, Trash2 } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchContacts, getOrCreateChatByContactId, type ContactItem } from '../services/contact';
+import { toast } from 'sonner';
 
 type SearchResult = {
+  id: string;
+  name: string;
+  avatar_url: string | null;
+  description: string;
+};
+
+type SuggestedBot = {
   id: string;
   name: string;
   avatar_url: string | null;
@@ -25,6 +33,8 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [suggestedBots, setSuggestedBots] = useState<SuggestedBot[]>([]);
+  const [addingSuggestId, setAddingSuggestId] = useState<string | null>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
@@ -32,6 +42,13 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
     const items = await fetchContacts("bot");
     setContacts(items);
     return items;
+  }, []);
+
+  const loadSuggestedBots = useCallback(async () => {
+    const api = window.electron?.agentBuilder;
+    if (!api?.recent) return;
+    const result = await api.recent();
+    if (result.ok) setSuggestedBots(result.data.items);
   }, []);
 
   useEffect(() => {
@@ -44,6 +61,7 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
       }
     }
     hydrateContacts();
+    loadSuggestedBots();
     return () => {
       cancelled = true;
     };
@@ -80,7 +98,7 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
     }, 300);
   };
 
-  const handleAddAgent = async (agent: SearchResult) => {
+  const handleAddAgent = async (agent: SearchResult | SuggestedBot) => {
     const api = window.electron?.contact;
     if (!api) return;
     const result = await api.addRemoteAgent({
@@ -89,11 +107,38 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
       avatarUrl: agent.avatar_url,
     });
     if (result.ok) {
+      if (result.data.alreadyExists) {
+        toast.info("该 Agent 已在联系人列表中");
+      }
       setShowSearchDropdown(false);
       setSearchQuery('');
       setSearchResults([]);
       await loadContacts();
       setSelectedId(agent.id);
+    }
+  };
+
+  const handleDeleteContact = async () => {
+    if (!selectedContact || selectedContact.isDefault) return;
+    const api = window.electron?.contact;
+    if (!api?.delete) return;
+    const result = await api.delete({ contactId: selectedContact.id });
+    if (result.ok) {
+      const items = await loadContacts();
+      await loadSuggestedBots();
+      setSelectedId(items.length > 0 ? items[0].id : BOT_CONTACT_ID);
+    } else {
+      toast.error(result.error?.message || "删除失败");
+    }
+  };
+
+  const handleAddSuggestedBot = async (bot: SuggestedBot) => {
+    if (addingSuggestId) return;
+    setAddingSuggestId(bot.id);
+    try {
+      await handleAddAgent(bot);
+    } finally {
+      setAddingSuggestId(null);
     }
   };
 
@@ -201,6 +246,39 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
               <span className="text-[13px] text-black truncate">{contact.name}</span>
             </div>
           ))}
+
+          {suggestedBots.length > 0 && (() => {
+            const contactIds = new Set(contacts.map((c) => c.id));
+            const filtered = suggestedBots.filter((b) => !contactIds.has(b.id));
+            if (filtered.length === 0) return null;
+            return (
+              <>
+                <div className="px-3 py-1 text-[11px] text-gray-400 mt-4 mb-1">Suggested Bots</div>
+                {filtered.map((bot) => (
+                  <div
+                    key={bot.id}
+                    className="flex items-center gap-3 px-3 py-2 hover:bg-[#D9D9D9] group"
+                  >
+                    {bot.avatar_url ? (
+                      <img src={bot.avatar_url} alt="" className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-[#07C160] flex items-center justify-center text-white flex-shrink-0">
+                        <Bot size={14} />
+                      </div>
+                    )}
+                    <span className="flex-1 text-[13px] text-black truncate">{bot.name}</span>
+                    <button
+                      onClick={() => void handleAddSuggestedBot(bot)}
+                      disabled={addingSuggestId === bot.id}
+                      className="w-6 h-6 flex items-center justify-center rounded-full text-gray-400 hover:text-[#07C160] hover:bg-white transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                ))}
+              </>
+            );
+          })()}
         </div>
       </div>
 
@@ -226,10 +304,21 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
             </div>
 
             {selectedBotDeleted ? (
-              <div className="border-t border-gray-200 pt-8">
+              <div className="border-t border-gray-200 pt-8 space-y-4">
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   This bot has been deleted by the author.
                 </div>
+                {!selectedContact.isDefault && (
+                  <div className="flex justify-center">
+                    <button
+                      onClick={() => void handleDeleteContact()}
+                      className="flex flex-col items-center gap-2 text-gray-400 hover:text-red-500 group"
+                    >
+                      <Trash2 size={20} strokeWidth={1.5} />
+                      <span className="text-[13px]">删除联系人</span>
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex justify-center gap-12 border-t border-gray-200 pt-10">
@@ -241,6 +330,15 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
                   <MessageSquare size={24} strokeWidth={1.5} />
                   <span className="text-[13px]">发消息</span>
                 </button>
+                {!selectedContact.isDefault && (
+                  <button
+                    onClick={() => void handleDeleteContact()}
+                    className="flex flex-col items-center gap-2 text-gray-400 hover:text-red-500 group"
+                  >
+                    <Trash2 size={20} strokeWidth={1.5} />
+                    <span className="text-[13px]">删除联系人</span>
+                  </button>
+                )}
               </div>
             )}
           </div>

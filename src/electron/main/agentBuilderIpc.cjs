@@ -88,7 +88,7 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
       console.log("[agentBuilderIpc] AGENT_BUILDER_GET:out", { id: body?.data?.id });
       return ok(body.data);
     } catch (e) {
-      console.error("[agentBuilderIpc] AGENT_BUILDER_GET:error", e?.message || String(e));
+      console.warn("[agentBuilderIpc] AGENT_BUILDER_GET:warn", e?.message || String(e));
       return err("NETWORK_ERROR", e?.message || String(e));
     }
   });
@@ -180,6 +180,16 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
       return ok(body.data);
     } catch (e) {
       console.error("[agentBuilderIpc] AGENT_BUILDER_SEARCH:error", e?.message || String(e));
+      return err("NETWORK_ERROR", e?.message || String(e));
+    }
+  });
+
+  ipcMain.handle(CHANNELS.AGENT_BUILDER_RECENT, async () => {
+    try {
+      const { status, body } = await backendFetch("/agents/recent?limit=5");
+      if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || `HTTP ${status}`);
+      return ok(body.data);
+    } catch (e) {
       return err("NETWORK_ERROR", e?.message || String(e));
     }
   });
