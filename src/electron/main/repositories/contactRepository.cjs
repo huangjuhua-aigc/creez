@@ -178,6 +178,30 @@ class ContactRepository {
   }
 
   /**
+   * Delete a non-default contact and all its chats and messages.
+   * Returns { deleted: true } on success.
+   */
+  deleteContact(contactId) {
+    if (!contactId) throw new Error("contactId is required");
+    const contact = this.getById(contactId);
+    if (!contact) throw new Error("Contact not found");
+    if (contact.isDefault) throw new Error("Cannot delete the default bot");
+
+    const tx = this.db.transaction(() => {
+      const chatRows = this.db.prepare("SELECT id FROM chats WHERE contact_id = ?").all(contactId);
+      const chatIds = chatRows.map((r) => r.id);
+      for (const chatId of chatIds) {
+        this.db.prepare("DELETE FROM messages WHERE chat_id = ?").run(chatId);
+      }
+      this.db.prepare("DELETE FROM chats WHERE contact_id = ?").run(contactId);
+      this.db.prepare("DELETE FROM contacts WHERE id = ?").run(contactId);
+      return { deleted: true, chatsRemoved: chatIds.length };
+    });
+
+    return tx();
+  }
+
+  /**
    * Add a remote (published) agent as a local contact.
    * Uses the agent's backend UUID as the local contact id so botId / assistantConfigId stays consistent.
    */

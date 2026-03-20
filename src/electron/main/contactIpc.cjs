@@ -47,6 +47,21 @@ function registerContactIpc(ipcMain, contactRepository) {
     }
   });
 
+  ipcMain.handle(CHANNELS.CONTACT_DELETE, async (_event, payload) => {
+    const contactId = String(payload?.contactId || "").trim();
+    if (!contactId) return err("VALIDATION_ERROR", "contactId is required.");
+    try {
+      const result = contactRepository.deleteContact(contactId);
+      return ok(result);
+    } catch (error) {
+      const message = error?.message || String(error);
+      if (/not found|default bot/i.test(message)) {
+        return err("VALIDATION_ERROR", message);
+      }
+      return err("DB_ERROR", "Failed to delete contact", message);
+    }
+  });
+
   ipcMain.handle(CHANNELS.CONTACT_ADD_REMOTE_AGENT, async (_event, payload) => {
     const agentId = String(payload?.agentId || "").trim();
     const name = String(payload?.name || "").trim();

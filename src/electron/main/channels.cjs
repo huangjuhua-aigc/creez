@@ -58,6 +58,7 @@ const CHANNELS = Object.freeze({
   STORYBOARD_AGENT_CREATE: "storyboard:agentCreate",
   STORYBOARD_DELETE_PROJECT: "storyboard:deleteProject",
   CONTACT_ADD_REMOTE_AGENT: "contact:addRemoteAgent",
+  CONTACT_DELETE: "contact:delete",
   AGENT_BUILDER_LIST: "agentBuilder:list",
   AGENT_BUILDER_GET: "agentBuilder:get",
   AGENT_BUILDER_CREATE: "agentBuilder:create",
@@ -65,6 +66,7 @@ const CHANNELS = Object.freeze({
   AGENT_BUILDER_PUBLISH: "agentBuilder:publish",
   AGENT_BUILDER_DELETE: "agentBuilder:delete",
   AGENT_BUILDER_SEARCH: "agentBuilder:search",
+  AGENT_BUILDER_RECENT: "agentBuilder:recent",
   APP_GET_DEVICE_ID: "app:getDeviceId",
 });
 
