@@ -40,6 +40,7 @@ const { registerContactIpc } = require("./contactIpc.cjs");
 const { registerSettingsIpc } = require("./settingsIpc.cjs");
 const { registerWorkspaceIpc } = require("./workspaceIpc.cjs");
 const { registerAgentIpc } = require("./agentIpc.cjs");
+const { registerAgentBuilderIpc } = require("./agentBuilderIpc.cjs");
 const { registerAttachmentIpc } = require("./attachmentIpc.cjs");
 const { startSyncPullTask, stopSyncPullTask } = require("./syncPullTask.cjs");
 const { CreezDatabase } = require("./db/database.cjs");
@@ -370,7 +371,7 @@ app.whenReady().then(async () => {
     const defaultContactId = contactRepository.getDefaultAssistantConfigId();
     await ensureBundledSkillsInConfig(skillManager, assistantConfigRepository, defaultContactId);
 
-    // Sync default bot's model config (with API key) to all other bots so RoundCloser etc. have correct config in DB
+    // Sync default bot's model config (with API key) to all other bots
     const rawDefault = assistantConfigRepository.getRawConfigById(defaultContactId);
     if (rawDefault?.models?.length && typeof contactRepository.getNonDefaultBotAssistantConfigIds === "function") {
       const otherIds = contactRepository.getNonDefaultBotAssistantConfigIds();
@@ -386,7 +387,7 @@ app.whenReady().then(async () => {
     const appStateStore = new AppStateStore({ repository: appStateRepository, homeDir: creezHome });
     registerAppStateIpc(ipcMain, appStateStore);
     registerShellIpc(ipcMain);
-    registerChatIpc(ipcMain, chatRepository);
+    registerChatIpc(ipcMain, chatRepository, { contactRepository });
     registerContactIpc(ipcMain, contactRepository);
     channelManager = new ChannelManager({
       channelConfigRepository,
@@ -401,6 +402,7 @@ app.whenReady().then(async () => {
     registerWorkspaceIpc(ipcMain, appStateStore);
     registerStoryboardIpc(ipcMain, { appStateStore, skillManager });
     registerAttachmentIpc(ipcMain);
+    registerAgentBuilderIpc(ipcMain, { appStateStore });
     registerAgentIpc(ipcMain, {
       assistantConfigRepository,
       appStateStore,

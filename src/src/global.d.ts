@@ -119,6 +119,12 @@ declare global {
           }>
         >;
         getDefaultBotId: () => Promise<IpcResult<{ botId: string }>>;
+        addRemoteAgent: (payload: {
+          agentId: string;
+          name: string;
+          avatarUrl?: string | null;
+          greetingMessage?: string;
+        }) => Promise<IpcResult<{ contactId: string; chatId: string | null; alreadyExists: boolean }>>;
       };
       channel: {
         listConfigs: (payload?: { botId?: string } | undefined) => Promise<
@@ -286,6 +292,49 @@ declare global {
           }) => void
         ) => () => void;
         onError: (listener: (message: string) => void) => () => void;
+      };
+      agentBuilder: {
+        list: () => Promise<IpcResult<{ items: Array<{ id: string; name: string; avatar_url: string | null; status: string; updated_at: string }> }>>;
+        get: (payload: { id: string }) => Promise<IpcResult<{
+          id: string;
+          creator_device_id: string;
+          name: string;
+          avatar_url: string | null;
+          system_prompt: string;
+          greeting_message: string;
+          knowledge: string;
+          skills_json: Record<string, boolean>;
+          notify_channels: Array<{
+            id: string;
+            channel_type: string;
+            enabled: boolean;
+            config: Record<string, string>;
+          }>;
+          status: string;
+          created_at: string;
+          updated_at: string;
+        }>>;
+        create: (payload: {
+          name: string;
+          system_prompt?: string;
+          greeting_message?: string;
+          knowledge?: string;
+          avatar_url?: string | null;
+          notify_channels?: Array<{ id: string; channel_type: string; enabled: boolean; config: Record<string, string> }>;
+        }) => Promise<IpcResult<{ id: string; created_at: string }>>;
+        update: (payload: {
+          id: string;
+          name?: string;
+          system_prompt?: string;
+          greeting_message?: string;
+          knowledge?: string;
+          avatar_url?: string | null;
+          notify_channels?: Array<{ id: string; channel_type: string; enabled: boolean; config: Record<string, string> }>;
+        }) => Promise<IpcResult<{ id: string; updated_at: string }>>;
+        publish: (payload: { id: string }) => Promise<IpcResult<{ id: string; status: string; updated_at: string }>>;
+        delete: (payload: { id: string }) => Promise<IpcResult<Record<string, never>>>;
+        search: (payload: { q: string }) => Promise<IpcResult<{ items: Array<{ id: string; name: string; avatar_url: string | null; description: string; updated_at: string }> }>>;
+        getDeviceId: () => Promise<IpcResult<{ deviceId: string }>>;
       };
       storyboard: {
         list: () => Promise<

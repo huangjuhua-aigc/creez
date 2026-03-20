@@ -49,7 +49,18 @@ export async function fetchChatList(): Promise<ChatListItem[]> {
 
   const mapped = await Promise.all(result.data.items.map(async (item) => {
     const name = item.title || "Untitled";
-    const avatarFromContact = item.contactAvatarPath ? await readLocalImageDataUrl(item.contactAvatarPath) : null;
+    let avatarFromContact: string | null = null;
+    if (item.contactAvatarPath) {
+      if (
+        item.contactAvatarPath.startsWith("data:") ||
+        item.contactAvatarPath.startsWith("http://") ||
+        item.contactAvatarPath.startsWith("https://")
+      ) {
+        avatarFromContact = item.contactAvatarPath;
+      } else {
+        avatarFromContact = await readLocalImageDataUrl(item.contactAvatarPath);
+      }
+    }
     return {
       id: item.id,
       name,

@@ -46,6 +46,24 @@ function registerContactIpc(ipcMain, contactRepository) {
       return err("DB_ERROR", "Failed to get default bot id", error?.message || String(error));
     }
   });
+
+  ipcMain.handle(CHANNELS.CONTACT_ADD_REMOTE_AGENT, async (_event, payload) => {
+    const agentId = String(payload?.agentId || "").trim();
+    const name = String(payload?.name || "").trim();
+    if (!agentId) return err("VALIDATION_ERROR", "agentId is required.");
+    if (!name) return err("VALIDATION_ERROR", "name is required.");
+    try {
+      const result = contactRepository.addRemoteAgent({
+        agentId,
+        name,
+        avatarUrl: payload?.avatarUrl || null,
+        greetingMessage: payload?.greetingMessage || "",
+      });
+      return ok(result);
+    } catch (error) {
+      return err("DB_ERROR", "Failed to add remote agent", error?.message || String(error));
+    }
+  });
 }
 
 module.exports = {

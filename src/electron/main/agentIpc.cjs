@@ -4,6 +4,19 @@ const path = require("node:path");
 const { CHANNELS } = require("./channels.cjs");
 const { getEngineForContact, getPiEngine } = require("./conversation/engineRegistry.cjs");
 
+let _remoteAgentHelpers = null;
+async function getRemoteHelpers() {
+  if (!_remoteAgentHelpers) {
+    const { pathToFileURL } = require("node:url");
+    const mod = await import(pathToFileURL(path.join(__dirname, "remoteAgentConfig.mjs")).href);
+    _remoteAgentHelpers = {
+      fetchRemoteAgentConfig: mod.fetchRemoteAgentConfig,
+      checkRemoteAgentById: mod.checkRemoteAgentById,
+    };
+  }
+  return _remoteAgentHelpers;
+}
+
 /** Expand ~ to homedir; leave other paths unchanged. */
 function resolveWorkDir(raw) {
   if (raw == null || String(raw).trim() === "") return null;
@@ -70,6 +83,14 @@ function registerAgentIpc(ipcMain, deps = {}) {
   const agentDir = creezHome ? path.join(creezHome, ".creez") : path.join(os.homedir(), ".creez");
 
   ipcMain.on(CHANNELS.AGENT_INIT, async (event, payload) => {
+    console.log("[agentIpc] AGENT_INIT:in", {
+      contactId: payload?.contactId ?? null,
+      chatId: payload?.chatId ?? null,
+      modelConfigId: payload?.modelConfigId || null,
+      provider: payload?.provider || null,
+      modelId: payload?.modelId || null,
+      hasApiKey: Boolean(payload?.apiKey),
+    });
     log("agent:init:recv", {
       contactId: payload?.contactId ?? null,
       modelConfigId: payload?.modelConfigId || null,
@@ -79,11 +100,68 @@ function registerAgentIpc(ipcMain, deps = {}) {
       hasApiKey: Boolean(payload?.apiKey),
     });
     try {
-      const { engine, rawConfig, assistantConfigId, defaultContactId } = getEngineForContact(payload?.contactId, {
+      let { engine, rawConfig, assistantConfigId, defaultContactId } = getEngineForContact(payload?.contactId, {
         contactRepository,
         assistantConfigRepository,
       });
       currentEngine = engine;
+      console.log("[agentIpc] AGENT_INIT:engine", {
+        assistantConfigId,
+        defaultContactId,
+        rawConfigId: rawConfig?.id ?? null,
+        modelsCount: rawConfig?.models?.length ?? 0,
+        hasSystemPrompt: Boolean(rawConfig?.systemPrompt),
+      });
+
+      const contact = contactRepository ? contactRepository.getById(payload?.contactId) : null;
+      const remoteAgentId = contact?.remoteAgentId || null;
+      console.log("[agentIpc] AGENT_INIT:contact", {
+        contactId: payload?.contactId ?? null,
+        contactFound: Boolean(contact),
+        remoteAgentId,
+      });
+      if (remoteAgentId) {
+        try {
+          const { checkRemoteAgentById, fetchRemoteAgentConfig } = await getRemoteHelpers();
+          const checked = await checkRemoteAgentById(remoteAgentId);
+          if (!checked.exists && checked.reason === "not_found") {
+            const message = "This bot has been deleted by the author.";
+            console.warn("[agentIpc] AGENT_INIT:remoteConfig:deleted", { remoteAgentId });
+            event.sender.send(CHANNELS.AGENT_EVENT_ERROR, message);
+            return;
+          }
+          const remoteConfig = checked.config || await fetchRemoteAgentConfig(remoteAgentId);
+          console.log("[agentIpc] AGENT_INIT:remoteConfig", {
+            remoteAgentId,
+            fetched: Boolean(remoteConfig),
+            name: remoteConfig?.name ?? null,
+          });
+          if (!remoteConfig) {
+            const message = `Remote agent config not found or backend unavailable (agentId=${remoteAgentId}).`;
+            console.warn("[agentIpc] AGENT_INIT:remoteConfig:notFound", message);
+            log("agent:init:remoteConfig:error", message);
+            event.sender.send(CHANNELS.AGENT_EVENT_ERROR, message);
+            return;
+          }
+          // Remote bots must use backend config; do NOT fall back to local assistant_config.
+          rawConfig = {
+            id: remoteConfig.id,
+            name: remoteConfig.name,
+            systemPrompt: remoteConfig.systemPrompt,
+            skills: remoteConfig.skills,
+            engineType: remoteConfig.engineType || "pi",
+            // model selection still follows existing local model storage behavior
+            models: rawConfig?.models || [],
+          };
+          log("agent:init:remoteConfig", { remoteAgentId, name: remoteConfig.name });
+        } catch (e) {
+          const message = `Failed to load remote agent config (agentId=${remoteAgentId}): ${e?.message || String(e)}`;
+          console.error("[agentIpc] AGENT_INIT:remoteConfig:exception", message);
+          log("agent:init:remoteConfig:error", message);
+          event.sender.send(CHANNELS.AGENT_EVENT_ERROR, message);
+          return;
+        }
+      }
 
       const appState = appStateStore ? await appStateStore.getState() : {};
       const activeModel = pickActiveModel(rawConfig?.models, payload?.modelConfigId);
@@ -156,7 +234,21 @@ function registerAgentIpc(ipcMain, deps = {}) {
         activeModelId: activeModel?.id || null,
       });
 
+      console.log("[agentIpc] AGENT_INIT:resolved", {
+        provider: provider || "(empty)",
+        modelId: modelId || "(empty)",
+        hasApiKey: Boolean(apiKey),
+        apiKeySource,
+        activeModelId: activeModel?.id ?? null,
+        activeModelProvider: activeModel?.provider ?? null,
+      });
       if (!provider || !modelId || !apiKey) {
+        console.warn("[agentIpc] AGENT_INIT:missingCredentials", {
+          hasProvider: Boolean(provider),
+          hasModelId: Boolean(modelId),
+          hasApiKey: Boolean(apiKey),
+          apiKeySource,
+        });
         log("agent:init:invalid", {
           hasProvider: Boolean(provider),
           hasModelId: Boolean(modelId),
@@ -198,7 +290,9 @@ function registerAgentIpc(ipcMain, deps = {}) {
           }
         },
       };
+      console.log("[agentIpc] AGENT_INIT:callingEngine", { provider, modelId, chatId: context.chatId ?? null, contactId: context.contactId ?? null });
       await currentEngine.init(context);
+      console.log("[agentIpc] AGENT_INIT:ok", { provider, modelId, chatId: context.chatId ?? null });
       log("agent:init:ok", { provider, modelId, chatId: context.chatId ?? null });
     } catch (error) {
       const message = error?.message || String(error);
@@ -214,12 +308,14 @@ function registerAgentIpc(ipcMain, deps = {}) {
     const textLen = userText.length;
     const imageCount = Array.isArray(payload?.images) ? payload.images.length : 0;
     const textPreview = userText.slice(0, 400).replace(/\s+/g, " ").trim();
+    console.log("[agentIpc] AGENT_PROMPT:in", { chatId: chatId || null, textLen, imageCount });
     log("agent:prompt:recv", { chatId: chatId || null, textLen, imageCount });
     try {
       const engine = currentEngine || getPiEngine();
       const hasSession = await engine.hasSession(chatId);
       log("agent:prompt:session", { hasSession, chatId: chatId || null });
       if (!hasSession) {
+        console.warn("[agentIpc] AGENT_PROMPT:noSession", { chatId: chatId || null });
         log("agent:prompt:no-session", { chatId: chatId || null });
         event.sender.send(CHANNELS.AGENT_EVENT_ERROR, "Agent not initialized.");
         return;

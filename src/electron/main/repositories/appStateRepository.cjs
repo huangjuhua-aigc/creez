@@ -4,6 +4,7 @@ const DEFAULT_APP_STATE = Object.freeze({
   workspaceRoot: null,
   isLoggedIn: false,
   creezApiKey: null,
+  deviceId: null,
 });
 
 function toDto(row) {
@@ -14,6 +15,7 @@ function toDto(row) {
     workspaceRoot: row.workspace_root || null,
     isLoggedIn: Boolean(row.is_logged_in),
     creezApiKey: row.creez_api_key != null ? String(row.creez_api_key) : null,
+    deviceId: row.device_id != null ? String(row.device_id) : null,
   };
 }
 
@@ -33,6 +35,7 @@ function sanitize(raw) {
   safe.workspaceRoot = safe.workspaceRoot == null ? null : String(safe.workspaceRoot);
   safe.isLoggedIn = Boolean(safe.isLoggedIn);
   safe.creezApiKey = safe.creezApiKey != null && String(safe.creezApiKey).trim() !== "" ? String(safe.creezApiKey).trim() : null;
+  safe.deviceId = safe.deviceId != null && String(safe.deviceId).trim() !== "" ? String(safe.deviceId).trim() : null;
   return safe;
 }
 
@@ -47,6 +50,7 @@ class AppStateRepository {
           workspace_root = @workspace_root,
           is_logged_in = @is_logged_in,
           creez_api_key = @creez_api_key,
+          device_id = @device_id,
           updated_at = @updated_at
       WHERE id = 1
     `);
@@ -68,6 +72,7 @@ class AppStateRepository {
       workspace_root: merged.workspaceRoot,
       is_logged_in: merged.isLoggedIn ? 1 : 0,
       creez_api_key: merged.creezApiKey,
+      device_id: merged.deviceId,
       updated_at: Math.floor(Date.now() / 1000),
     });
 

@@ -791,6 +791,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   const initRejectRef = useRef<((error: Error) => void) | null>(null);
   /** Chat we're currently initializing for; agent_ready is accepted for this chat even if user switched away. */
   const pendingInitChatIdRef = useRef<string | null>(null);
+  const initTimeoutRef = useRef(false);
   const activeAssistantMessageIdRef = useRef<string | null>(null);
   const activeToolMessageIdRef = useRef<string | null>(null);
   const streamedTextRef = useRef<string>("");
@@ -833,9 +834,16 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     const [assistantConfig, items] = await Promise.all([fetchAssistantConfig(), fetchChatList()]);
 
     const assistantName = assistantConfig.name || "Assistant";
-    const assistantAvatar = assistantConfig.avatar
-      ? (await readLocalImageDataUrl(assistantConfig.avatar)) || avatarFallback(assistantName)
-      : avatarFallback(assistantName);
+    let assistantAvatar: string;
+    if (assistantConfig.avatar) {
+      if (assistantConfig.avatar.startsWith("data:") || assistantConfig.avatar.startsWith("http://") || assistantConfig.avatar.startsWith("https://")) {
+        assistantAvatar = assistantConfig.avatar;
+      } else {
+        assistantAvatar = (await readLocalImageDataUrl(assistantConfig.avatar)) || avatarFallback(assistantName);
+      }
+    } else {
+      assistantAvatar = avatarFallback(assistantName);
+    }
 
     const configuredModels = (assistantConfig.models || []).map((item) => ({
       id: item.id,
@@ -1662,6 +1670,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     initializedScopeRef.current = scopeSignature;
     initializedModelRef.current = modelSignature;
 
+    const initStartMs = Date.now();
     const waitReady = new Promise<boolean>((resolve, reject) => {
       initResolveRef.current = resolve;
       initRejectRef.current = reject;
@@ -1670,23 +1679,34 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
           console.log("[creez:flow] ensureAgentInitialized fail: timeout (no agent_ready)", {
             contactId,
             chatId: selectedChatId,
+            elapsedMs: Date.now() - initStartMs,
           });
-          reject(new Error("Agent init timeout. No agent_ready received."));
+          reject(new Error("INIT_TIMEOUT"));
         }
-      }, 10000);
+      }, 30000);
     });
     initInFlightRef.current = waitReady;
     try {
       const ok = await waitReady;
-      if (ok) console.log("[creez:flow] ensureAgentInitialized ok", { contactId, chatId: selectedChatId });
+      if (ok)
+        console.log("[creez:flow] ensureAgentInitialized ok", {
+          contactId,
+          chatId: selectedChatId,
+          elapsedMs: Date.now() - initStartMs,
+        });
       return ok;
     } catch (error) {
-      console.log("[creez:flow] ensureAgentInitialized fail: timeout or error", {
+      const errMsg = (error as Error)?.message || String(error);
+      console.log("[creez:flow] ensureAgentInitialized fail", {
         contactId,
         chatId: selectedChatId,
-        message: (error as Error)?.message || String(error),
+        message: errMsg,
+        elapsedMs: Date.now() - initStartMs,
       });
-      chatLog("agent:init:timeout-or-error", (error as Error)?.message || String(error));
+      chatLog("agent:init:timeout-or-error", errMsg);
+      if (errMsg === "INIT_TIMEOUT") {
+        initTimeoutRef.current = true;
+      }
       return false;
     } finally {
       initInFlightRef.current = null;
@@ -1775,17 +1795,22 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       updatedAt: nowTs,
     });
 
+    initTimeoutRef.current = false;
     const ready = await ensureAgentInitialized();
     if (!ready) {
-      chatLog("agent:init:failed", "model config incomplete");
+      const isTimeout = initTimeoutRef.current;
+      chatLog("agent:init:failed", isTimeout ? "init timeout" : "model config incomplete");
       setIsStreaming(false);
       const sysId = `${Date.now()}-system-init-error`;
+      const content = isTimeout
+        ? "Agent 初始化超时，请稍后重试。如果持续出现此问题，请检查网络连接。"
+        : "当前未配置可用模型或 API Key。请打开 设置 → Model Config，添加模型并填写 API Key 后保存。";
       const errMsg: ChatMessageItem = {
         id: sysId,
         sender: "system",
         name: "System",
         avatar: "",
-        content: "当前未配置可用模型或 API Key。请打开 设置 → Model Config，添加模型并填写 API Key 后保存。",
+        content,
         timestamp: formatNowTime(),
         type: "system",
       };
@@ -1794,12 +1819,12 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         id: sysId,
         chatId: activeChat.id,
         sender: "system",
-        content: errMsg.content,
+        content,
         status: "error",
         createdAt: Math.floor(Date.now() / 1000),
         updatedAt: Math.floor(Date.now() / 1000),
-        errorCode: "INIT_INVALID",
-        errorMessage: errMsg.content,
+        errorCode: isTimeout ? "INIT_TIMEOUT" : "INIT_INVALID",
+        errorMessage: content,
       });
       return;
     }

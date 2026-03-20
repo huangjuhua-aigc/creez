@@ -1,4 +1,4 @@
-import { MessageSquare, User, Package, Aperture, Settings } from "lucide-react";
+import { MessageSquare, User, Package, Aperture, Settings, Bot } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { cn } from "../../utils/cn";
 
@@ -76,6 +76,32 @@ export function SidebarNav({ activeTab, setActiveTab, onNavigateToWorkshop }: Si
       </div>
 
       <div className="flex flex-col gap-6 w-full items-center mb-4">
+        <button
+          onClick={() => {
+            if (location.pathname.startsWith("/workshop")) {
+              navigate("/");
+            }
+            setActiveTab("agent-builder");
+          }}
+          className="group relative p-2 rounded transition-colors"
+          title="Agent Builder"
+        >
+          <div
+            className={cn(
+              "p-1.5 rounded-md transition-all duration-200",
+              "group-hover:bg-[#d6d6d6]"
+            )}
+          >
+            <Bot
+              size={24}
+              className={cn(
+                "transition-all duration-200",
+                activeTab === "agent-builder" ? "text-[#07C160]" : "text-gray-600"
+              )}
+              strokeWidth={1.5}
+            />
+          </div>
+        </button>
         <button
           onClick={() => {
             if (location.pathname.startsWith("/workshop")) {

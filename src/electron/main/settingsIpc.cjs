@@ -69,10 +69,15 @@ function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, sk
       const assistantConfigId = resolveAssistantConfigId(payload, contactRepository);
       const defaultConfigId = contactRepository?.getDefaultAssistantConfigId?.() ?? DEFAULT_BOT_ID;
       let config = assistantConfigRepository.getConfigById(assistantConfigId);
+      if (!config && assistantConfigId !== defaultConfigId) {
+        const defaultConfig = assistantConfigRepository.getConfigById(defaultConfigId);
+        if (defaultConfig) {
+          config = { ...defaultConfig, id: assistantConfigId };
+        }
+      }
       if (!config) {
         return err("NOT_FOUND", "Assistant config not found.");
       }
-      // Non-default bots (e.g. RoundCloser) with empty models use default bot's config models so chat can start
       if (assistantConfigId !== defaultConfigId && (!config.models || config.models.length === 0)) {
         const defaultConfig = assistantConfigRepository.getConfigById(defaultConfigId);
         if (defaultConfig?.models?.length) {

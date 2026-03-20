@@ -21,16 +21,7 @@ const { BUILTIN_SKILL_IDS } = require("./builtinSkillIds.cjs");
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT_DIR = path.join(RUNNER_DIR, "..", "..");
 
-/** RoundCloser uses only assistant_config.system_prompt (from seed), not buildSystemPrompt. */
-const ROUND_CLOSER_CONTACT_ID = "a3e6d3f0-9d91-4dc0-8f84-7f3ca8a0619c";
 
-/** Skills allowed per bot type (controls which SKILL.md entries appear in system prompt). */
-const ROUNDCLOSER_SKILLS = new Set(["knowledge_search", "vc_lead_capture"]);
-const DEFAULT_BOT_SKILLS = new Set([
-  "scheduled_task", "xiaohongshu",
-  "web_fetch", "image_generator", "video_generator",
-  "channel_send",
-]);
 
 /** Sessions keyed by contactId (bot id). One session per bot, shared across channels. */
 const sessionsByBot = new Map();
@@ -177,6 +168,7 @@ export async function createAndSubscribe(sender, config) {
   // cwd already set above
   const resolvedAgentDir = agentDir || path.join(process.cwd(), ".creez");
   log("create:start", { provider, modelId, cwd, agentDir: resolvedAgentDir, botKey, chatId: chatId || null });
+  const t0 = Date.now();
 
   const authPath = path.join(resolvedAgentDir, "auth.json");
   const authStorage = new AuthStorage(authPath);
@@ -215,10 +207,9 @@ export async function createAndSubscribe(sender, config) {
   const isDefaultBot = assistantConfigId != null && defaultContactId != null
     && String(assistantConfigId) === String(defaultContactId);
   const skillsConfig = assistantConfig?.skills && typeof assistantConfig.skills === "object" ? assistantConfig.skills : {};
-  const allowedBuiltinIds = isDefaultBot
+  const enabledSkillIds = isDefaultBot
     ? undefined
-    : new Set([...ROUNDCLOSER_SKILLS].filter((id) => skillsConfig[id] !== false));
-  const allowedSkillsForRoundCloser = isDefaultBot ? null : allowedBuiltinIds;
+    : new Set(Object.keys(skillsConfig).filter((id) => skillsConfig[id] !== false));
 
   const additionalSkillPath = path.join(cwd, ".creez", "skills");
   const builtinSkillPath = path.join(APP_ROOT_DIR, "skills", "builtin", "skills");
@@ -233,7 +224,7 @@ export async function createAndSubscribe(sender, config) {
       chatId: chatId || null,
       workDir: cwd,
       channelSend: config.channelSend,
-      ...(isDefaultBot ? {} : { allowedBuiltinIds }),
+      ...(isDefaultBot ? {} : { allowedBuiltinIds: enabledSkillIds }),
     },
     onEvent: (builtinEv) => {
       broadcast("agent:event", { ...builtinEv, chatId: chatId ?? undefined });
@@ -246,10 +237,7 @@ export async function createAndSubscribe(sender, config) {
   // agent.setSystemPrompt() every turn, so the only way to inject our prompt
   // is via DefaultResourceLoader's `systemPrompt` option (used as customPrompt).
   let systemPrompt;
-  if (assistantConfigId === ROUND_CLOSER_CONTACT_ID) {
-    systemPrompt = (assistantConfig?.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
-    log("system_prompt:roundcloser", { length: systemPrompt.length });
-  } else {
+  if (isDefaultBot) {
     systemPrompt = await buildSystemPrompt({
       agentDir: resolvedAgentDir,
       assistantConfig,
@@ -260,6 +248,9 @@ export async function createAndSubscribe(sender, config) {
       chatId,
       builtinSkills: builtinExecutor.listEnabledSkillIds(),
     });
+  } else {
+    systemPrompt = (assistantConfig?.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
+    log("system_prompt:custom_agent", { length: systemPrompt.length });
   }
 
   const resourceLoader = new DefaultResourceLoader({
@@ -273,11 +264,14 @@ export async function createAndSubscribe(sender, config) {
       ? (base) => base
       : (base) => ({
           ...base,
-          skills: base.skills.filter((s) => allowedSkillsForRoundCloser.has(s.name)),
+          skills: base.skills.filter((s) => enabledSkillIds.has(s.name)),
         }),
   });
+  console.log(`[agent-runner] createAndSubscribe: resourceLoader.reload start (${Date.now() - t0}ms)`);
   await resourceLoader.reload();
+  console.log(`[agent-runner] createAndSubscribe: resourceLoader.reload done (${Date.now() - t0}ms)`);
 
+  console.log(`[agent-runner] createAndSubscribe: createAgentSession start (${Date.now() - t0}ms)`);
   const { session } = await createAgentSession({
     cwd,
     agentDir: resolvedAgentDir,
@@ -290,6 +284,7 @@ export async function createAndSubscribe(sender, config) {
     resourceLoader,
     customTools,
   });
+  console.log(`[agent-runner] createAndSubscribe: createAgentSession done (${Date.now() - t0}ms)`);
 
   const sessionEntry = { session, unsubscribe: null, authStorage, listeners, workDir: cwd, configFingerprint: fingerprint, resourceLoader };
   let pendingErrorMsg = null;
@@ -353,6 +348,7 @@ export async function createAndSubscribe(sender, config) {
 
   const builtinIds = builtinExecutor.listEnabledSkillIds();
   log("session_created", { botKey, listenerId, chatId, builtinSkills: builtinIds.length });
+  console.log(`[agent-runner] createAndSubscribe: sending agent_ready (total ${Date.now() - t0}ms)`, { botKey, chatId });
   sender.send("agent:event", { type: "agent_ready", chatId: chatId ?? undefined });
 }
 

@@ -19,7 +19,14 @@ export async function fetchContacts(type?: "bot" | "human" | "group"): Promise<C
   if (!result.ok) return [];
 
   const mapped = await Promise.all(result.data.items.map(async (item) => {
-    const avatar = item.avatarPath ? await readLocalImageDataUrl(item.avatarPath) : null;
+    let avatar: string | null = null;
+    if (item.avatarPath) {
+      if (item.avatarPath.startsWith("data:") || item.avatarPath.startsWith("http://") || item.avatarPath.startsWith("https://")) {
+        avatar = item.avatarPath;
+      } else {
+        avatar = await readLocalImageDataUrl(item.avatarPath);
+      }
+    }
     return {
       id: item.id,
       type: item.type,
