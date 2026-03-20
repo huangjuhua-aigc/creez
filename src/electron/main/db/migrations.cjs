@@ -496,6 +496,14 @@ const MIGRATIONS = [
       ALTER TABLE app_state ADD COLUMN creez_api_key TEXT;
     `,
   },
+  {
+    version: 15,
+    name: "add_contacts_remote_agent_id_and_device_id",
+    sql: `
+      ALTER TABLE contacts ADD COLUMN remote_agent_id TEXT;
+      ALTER TABLE app_state ADD COLUMN device_id TEXT;
+    `,
+  },
 ];
 
 module.exports = {

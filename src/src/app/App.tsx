@@ -5,6 +5,7 @@ import { ResourcePanel } from './components/ResourcePanel';
 import { ChatWindow } from './components/ChatWindow';
 import { ContactsWindow } from './components/ContactsWindow';
 import { AdvancedSettings } from './components/AdvancedSettings';
+import { AgentBuilder } from './components/AgentBuilder';
 import { Aperture } from 'lucide-react';
 import { loadAppState, persistAppState } from './services/appState';
 import { readWorkspaceFile, writeWorkspaceFile } from './services/workspace';
@@ -113,12 +114,12 @@ export default function App() {
           </Routes>
         ) : (
           <>
-        {activeTab === 'chat' && (
+        <div className={activeTab === 'chat' ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
           <ChatWindow activeChatId={currentChatId} onSelectChat={handleSelectChat} onNavigateToSettings={() => setActiveTab('settings')} />
-        )}
-        {activeTab === 'contacts' && (
+        </div>
+        <div className={activeTab === 'contacts' ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
           <ContactsWindow onStartChat={handleStartChat} />
-        )}
+        </div>
         {activeTab === 'files' && (
             <div className="flex-1 flex bg-white h-full">
                 <div className="h-full border-r border-gray-200">
@@ -175,6 +176,7 @@ export default function App() {
               </div>
             </div>
         )}
+        {activeTab === 'agent-builder' && <AgentBuilder />}
         {activeTab === 'settings' && <AdvancedSettings />}
         </>
         )}

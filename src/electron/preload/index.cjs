@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld("electron", {
     list: (payload) => ipcRenderer.invoke(CHANNELS.CONTACT_LIST, payload),
     createBotFromTemplate: (payload) => ipcRenderer.invoke(CHANNELS.CONTACT_CREATE_BOT_FROM_TEMPLATE, payload),
     getDefaultBotId: () => ipcRenderer.invoke(CHANNELS.CONTACT_GET_DEFAULT_BOT_ID),
+    addRemoteAgent: (payload) => ipcRenderer.invoke(CHANNELS.CONTACT_ADD_REMOTE_AGENT, payload),
   },
   channel: {
     listConfigs: (payload) => ipcRenderer.invoke(CHANNELS.CHANNEL_LIST_CONFIGS, payload ?? {}),
@@ -90,6 +91,16 @@ contextBridge.exposeInMainWorld("electron", {
       ipcRenderer.on(CHANNELS.AGENT_EVENT_ERROR, wrapped);
       return () => ipcRenderer.removeListener(CHANNELS.AGENT_EVENT_ERROR, wrapped);
     },
+  },
+  agentBuilder: {
+    list: () => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_LIST),
+    get: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_GET, payload),
+    create: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_CREATE, payload),
+    update: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_UPDATE, payload),
+    publish: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_PUBLISH, payload),
+    delete: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_DELETE, payload),
+    search: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_SEARCH, payload),
+    getDeviceId: () => ipcRenderer.invoke(CHANNELS.APP_GET_DEVICE_ID),
   },
   storyboard: {
     list: () => ipcRenderer.invoke(CHANNELS.STORYBOARD_LIST),

@@ -17,7 +17,7 @@ class ContactRepository {
   constructor(db) {
     this.db = db;
     this.getByIdStmt = db.prepare(
-      "SELECT id, type, name, avatar_path, is_default, updated_at FROM contacts WHERE id = ?"
+      "SELECT id, type, name, avatar_path, is_default, updated_at, remote_agent_id FROM contacts WHERE id = ?"
     );
   }
 
@@ -34,6 +34,7 @@ class ContactRepository {
       assistantConfigId: row.id,
       isDefault: Boolean(row.is_default),
       updatedAt: row.updated_at,
+      remoteAgentId: row.remote_agent_id || null,
     };
   }
 
@@ -74,7 +75,7 @@ class ContactRepository {
 
   /**
    * Returns contact ids of all bot contacts that are not the default bot (config id = contact id).
-   * Used to sync model config from default bot to other bots (e.g. RoundCloser).
+   * Used to sync model config from default bot to other bots.
    */
   getNonDefaultBotAssistantConfigIds() {
     const defaultContactId = this.getDefaultAssistantConfigId();
@@ -171,6 +172,65 @@ class ContactRepository {
         updatedAt: ts,
       });
       return { contactId, chatId, assistantConfigId: contactId, messageId, name: assistantName };
+    });
+
+    return tx();
+  }
+
+  /**
+   * Add a remote (published) agent as a local contact.
+   * Uses the agent's backend UUID as the local contact id so botId / assistantConfigId stays consistent.
+   */
+  addRemoteAgent({ agentId, name, avatarUrl, greetingMessage }) {
+    if (!agentId) throw new Error("agentId is required");
+    const existing = this.getById(agentId);
+    if (existing) {
+      return { contactId: existing.id, chatId: null, alreadyExists: true };
+    }
+
+    const ts = nowTs();
+    const chatId = randomUUID();
+    const messageId = randomUUID();
+
+    const tx = this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at, remote_agent_id)
+        VALUES (@id, 'bot', @name, @avatarPath, 0, @createdAt, @updatedAt, @remoteAgentId)
+      `).run({
+        id: agentId,
+        name: name || "Agent",
+        avatarPath: avatarUrl || null,
+        createdAt: ts,
+        updatedAt: ts,
+        remoteAgentId: agentId,
+      });
+
+      this.db.prepare(`
+        INSERT INTO chats (id, contact_id, channel_type, created_at, updated_at, last_message_at)
+        VALUES (@id, @contactId, 'creez_app', @createdAt, @updatedAt, @lastMessageAt)
+      `).run({
+        id: chatId,
+        contactId: agentId,
+        createdAt: ts,
+        updatedAt: ts,
+        lastMessageAt: ts,
+      });
+
+      if (greetingMessage) {
+        this.db.prepare(`
+          INSERT INTO messages (id, chat_id, sender, bot_id, content, status, created_at, updated_at)
+          VALUES (@id, @chatId, 'assistant', @botId, @content, 'done', @createdAt, @updatedAt)
+        `).run({
+          id: messageId,
+          chatId,
+          botId: agentId,
+          content: greetingMessage,
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      }
+
+      return { contactId: agentId, chatId, alreadyExists: false };
     });
 
     return tx();

@@ -8,6 +8,7 @@ const DEFAULT_APP_STATE = Object.freeze({
   workspaceRoot: null,
   isLoggedIn: false,
   creezApiKey: null,
+  deviceId: null,
 });
 
 function sanitizeState(raw) {
@@ -41,6 +42,14 @@ function sanitizeState(raw) {
   }
 
   safe.isLoggedIn = Boolean(safe.isLoggedIn);
+
+  if (safe.deviceId !== null && safe.deviceId !== undefined) {
+    const trimmed = String(safe.deviceId).trim();
+    safe.deviceId = trimmed !== "" ? trimmed : null;
+  } else {
+    safe.deviceId = null;
+  }
+
   return safe;
 }
 
