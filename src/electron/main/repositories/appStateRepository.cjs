@@ -5,6 +5,7 @@ const DEFAULT_APP_STATE = Object.freeze({
   isLoggedIn: false,
   creezApiKey: null,
   deviceId: null,
+  lastSelectedModelId: null,
 });
 
 function toDto(row) {
@@ -16,6 +17,7 @@ function toDto(row) {
     isLoggedIn: Boolean(row.is_logged_in),
     creezApiKey: row.creez_api_key != null ? String(row.creez_api_key) : null,
     deviceId: row.device_id != null ? String(row.device_id) : null,
+    lastSelectedModelId: row.last_selected_model_id != null ? String(row.last_selected_model_id) : null,
   };
 }
 
@@ -36,6 +38,10 @@ function sanitize(raw) {
   safe.isLoggedIn = Boolean(safe.isLoggedIn);
   safe.creezApiKey = safe.creezApiKey != null && String(safe.creezApiKey).trim() !== "" ? String(safe.creezApiKey).trim() : null;
   safe.deviceId = safe.deviceId != null && String(safe.deviceId).trim() !== "" ? String(safe.deviceId).trim() : null;
+  safe.lastSelectedModelId =
+    safe.lastSelectedModelId != null && String(safe.lastSelectedModelId).trim() !== ""
+      ? String(safe.lastSelectedModelId).trim()
+      : null;
   return safe;
 }
 
@@ -51,6 +57,7 @@ class AppStateRepository {
           is_logged_in = @is_logged_in,
           creez_api_key = @creez_api_key,
           device_id = @device_id,
+          last_selected_model_id = @last_selected_model_id,
           updated_at = @updated_at
       WHERE id = 1
     `);
@@ -73,6 +80,7 @@ class AppStateRepository {
       is_logged_in: merged.isLoggedIn ? 1 : 0,
       creez_api_key: merged.creezApiKey,
       device_id: merged.deviceId,
+      last_selected_model_id: merged.lastSelectedModelId,
       updated_at: Math.floor(Date.now() / 1000),
     });
 

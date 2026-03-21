@@ -25,6 +25,7 @@ import {
   type ChatMessageItem,
 } from "../services/chat";
 import { fetchAssistantConfig, fetchModelApiKey, readLocalImageDataUrl } from "../services/settings";
+import { loadAppState, persistAppState } from "../services/appState";
 
 interface ChatWindowProps {
   activeChatId?: number | string;
@@ -831,7 +832,11 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
 
   const reloadChats = async (preferredChatId?: string | null) => {
     setIsLoadingChats(true);
-    const [assistantConfig, items] = await Promise.all([fetchAssistantConfig(), fetchChatList()]);
+    const [assistantConfig, items, appState] = await Promise.all([
+      fetchAssistantConfig(),
+      fetchChatList(),
+      loadAppState(),
+    ]);
 
     const assistantName = assistantConfig.name || "Assistant";
     let assistantAvatar: string;
@@ -850,11 +855,19 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       label: `${String(item.provider || "Provider")} / ${String(item.model || "Model")}`,
     }));
     setModelOptions(configuredModels);
+    const modelIds = new Set(configuredModels.map((m) => m.id));
     const activeModel = assistantConfig.models?.find((m) => m.active) || assistantConfig.models?.[0];
-    if (activeModel?.id) {
-      setSelectedModelId(activeModel.id);
+    const lastId = appState.lastSelectedModelId;
+    let nextModelId = "";
+    if (lastId && modelIds.has(lastId)) {
+      nextModelId = lastId;
+    } else if (activeModel?.id && modelIds.has(activeModel.id)) {
+      nextModelId = activeModel.id;
     } else if (configuredModels[0]) {
-      setSelectedModelId(configuredModels[0].id);
+      nextModelId = configuredModels[0].id;
+    }
+    if (nextModelId) {
+      setSelectedModelId(nextModelId);
     }
 
     setBotName(assistantName);
@@ -2166,6 +2179,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
                         onClick={() => {
                           setSelectedModelId(model.id);
                           setShowModelDropdown(false);
+                          void persistAppState({ lastSelectedModelId: model.id });
                         }}
                       >
                         {model.label}
