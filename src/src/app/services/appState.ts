@@ -3,6 +3,8 @@ export type AppState = {
   lastChatId: string | null;
   workspaceRoot: string | null;
   isLoggedIn: boolean;
+  /** Last model picked in chat dropdown (assistant config model id); persisted across sessions. */
+  lastSelectedModelId: string | null;
 };
 
 type IpcOk<T> = { ok: true; data: T };
@@ -14,6 +16,7 @@ const FALLBACK_STATE: AppState = {
   lastChatId: null,
   workspaceRoot: null,
   isLoggedIn: false,
+  lastSelectedModelId: null,
 };
 
 function getElectronApi() {

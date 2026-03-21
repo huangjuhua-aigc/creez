@@ -9,6 +9,7 @@ const DEFAULT_APP_STATE = Object.freeze({
   isLoggedIn: false,
   creezApiKey: null,
   deviceId: null,
+  lastSelectedModelId: null,
 });
 
 function sanitizeState(raw) {
@@ -48,6 +49,13 @@ function sanitizeState(raw) {
     safe.deviceId = trimmed !== "" ? trimmed : null;
   } else {
     safe.deviceId = null;
+  }
+
+  if (safe.lastSelectedModelId !== null && safe.lastSelectedModelId !== undefined) {
+    const trimmed = String(safe.lastSelectedModelId).trim();
+    safe.lastSelectedModelId = trimmed !== "" ? trimmed : null;
+  } else {
+    safe.lastSelectedModelId = null;
   }
 
   return safe;

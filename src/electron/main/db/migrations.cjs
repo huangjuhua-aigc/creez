@@ -504,6 +504,13 @@ const MIGRATIONS = [
       ALTER TABLE app_state ADD COLUMN device_id TEXT;
     `,
   },
+  {
+    version: 16,
+    name: "add_app_state_last_selected_model_id",
+    sql: `
+      ALTER TABLE app_state ADD COLUMN last_selected_model_id TEXT;
+    `,
+  },
 ];
 
 module.exports = {
