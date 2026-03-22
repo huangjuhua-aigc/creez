@@ -3,6 +3,7 @@ import { Bot, Plus, X, Sparkles, Camera, Database, ChevronDown, ChevronUp, Radio
 import { Button } from "./ui/button";
 import { cn } from "../../utils/cn";
 import { toast } from "sonner";
+import { ChannelPlatformIconBox } from "./ChannelPlatformIcon";
 
 type AgentListItem = {
   id: string;
@@ -40,6 +41,11 @@ interface ChannelFieldDef {
 }
 
 const CHANNEL_DEFS: Record<string, { label: string; color: string; fields: ChannelFieldDef[] }> = {
+  weixin_personal: {
+    label: "WeChat",
+    color: "bg-green-50 text-green-600",
+    fields: [],
+  },
   feishu: {
     label: "Feishu / Lark",
     color: "bg-blue-50 text-blue-600",
@@ -88,7 +94,7 @@ const CHANNEL_DEFS: Record<string, { label: string; color: string; fields: Chann
 const CHANNEL_OPTIONS = Object.entries(CHANNEL_DEFS).map(([id, def]) => ({
   id,
   label: def.label,
-  available: id === "feishu" || id === "wecom",
+  available: id === "feishu" || id === "wecom" || id === "weixin_personal",
 }));
 
 const EMPTY_AGENT: AgentDetail = {
@@ -541,9 +547,7 @@ export function AgentBuilder() {
                       onClick={() => toggleChannelOpen(ch.id)}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded flex items-center justify-center bg-gray-100 text-gray-400">
-                          <Radio size={16} className="text-blue-600" />
-                        </div>
+                        <ChannelPlatformIconBox channelType={ch.channel_type} />
                         <div className="flex flex-col">
                           <span className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">Channel</span>
                           <span className="text-sm font-semibold text-gray-700 mt-1">{def.label}</span>

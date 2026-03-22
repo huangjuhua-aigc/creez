@@ -6,6 +6,7 @@ import rehypeSanitize from "rehype-sanitize";
 import { cn } from "../../utils/cn";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { SearchBar } from "./ui/SearchBar";
+import { ChannelMessageSourceBadge } from "./ChannelPlatformIcon";
 import { ToolCallGroup, type ToolCall } from "./ToolCallPanel";
 import {
   abortAgentPrompt,
@@ -2059,16 +2060,15 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
                     <img src={msg.avatar} alt={msg.sender} className="w-9 h-9 rounded-[4px] object-cover" />
                   </div>
                   <div className={cn("flex flex-col", isMe ? "items-end" : "items-start")}>
-                    {!isMe && (
+                    {isMe ? (
+                      <div className="flex items-baseline gap-2 mb-1 flex-wrap justify-end">
+                        <ChannelMessageSourceBadge channelType={(msg as ChatMessageItem).channelType} />
+                        <span className="text-xs text-gray-400">{msg.timestamp}</span>
+                      </div>
+                    ) : (
                       <div className="flex items-baseline gap-2 mb-1 flex-wrap">
                         <span className="text-xs text-gray-500">{msg.name}</span>
-                        {(msg as { channelType?: string | null }).channelType === "feishu" ? (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600">来自飞书</span>
-                        ) : (msg as { channelType?: string | null }).channelType === "wecom" ? (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-600">来自企微</span>
-                        ) : (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600">Creez</span>
-                        )}
+                        <ChannelMessageSourceBadge channelType={(msg as ChatMessageItem).channelType} />
                         <span className="text-xs text-gray-400">{msg.timestamp}</span>
                       </div>
                     )}

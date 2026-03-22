@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld("electron", {
       return () => ipcRenderer.removeListener("channel:newMessage", wrapped);
     },
   },
+  weixin: {
+    qrStart: () => ipcRenderer.invoke(CHANNELS.WEIXIN_QR_START),
+    qrWait: (payload) => ipcRenderer.invoke(CHANNELS.WEIXIN_QR_WAIT, payload),
+    status: () => ipcRenderer.invoke(CHANNELS.WEIXIN_STATUS),
+  },
   workspace: {
     getTree: (payload) => ipcRenderer.invoke(CHANNELS.WORKSPACE_GET_TREE, payload),
     create: (payload) => ipcRenderer.invoke(CHANNELS.WORKSPACE_CREATE, payload),

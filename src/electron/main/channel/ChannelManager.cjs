@@ -8,10 +8,12 @@ const path = require("node:path");
 const os = require("node:os");
 const { FeishuChannelAdapter } = require("./feishuAdapter.cjs");
 const { WeComChannelAdapter } = require("./wecomAdapter.cjs");
+const { WeixinPersonalAdapter } = require("./weixinPersonalAdapter.cjs");
 
 const ADAPTERS = {
   feishu: FeishuChannelAdapter,
   wecom: WeComChannelAdapter,
+  weixin_personal: WeixinPersonalAdapter,
 };
 
 function channelLog(message) {
@@ -43,20 +45,22 @@ class ChannelManager {
         const hasCreds = full?.credentials && typeof full.credentials === "object";
         const feishuReady = item.channelType === "feishu" && hasCreds && full.credentials.appId && full.credentials.appSecret;
         const wecomReady = item.channelType === "wecom" && hasCreds && full.credentials.botId && full.credentials.secret;
-        const otherReady = item.channelType !== "feishu" && item.channelType !== "wecom" && hasCreds;
-        if (!full || !hasCreds) {
+        const otherReady = item.channelType !== "feishu" && item.channelType !== "wecom" && item.channelType !== "weixin_personal" && hasCreds;
+        if (item.channelType === "weixin_personal") {
+          // weixin_personal loads saved token from disk; always attempt start
+          channelLog("starting weixin_personal (token loaded from disk if available)...");
+        } else if (!full || !hasCreds) {
           channelLog("skip " + item.channelType + ": no config or credentials");
           continue;
-        }
-        if (item.channelType === "feishu" && !feishuReady) {
+        } else if (item.channelType === "feishu" && !feishuReady) {
           channelLog("skip feishu: missing appId or appSecret (check Advanced Settings → Channel)");
           continue;
-        }
-        if (item.channelType === "wecom" && !wecomReady) {
+        } else if (item.channelType === "wecom" && !wecomReady) {
           channelLog("skip wecom: missing botId or secret (check Advanced Settings → Channel)");
           continue;
+        } else if (!feishuReady && !wecomReady && !otherReady) {
+          continue;
         }
-        if (item.channelType !== "feishu" && item.channelType !== "wecom" && !otherReady) continue;
         channelLog("starting " + item.channelType + " ...");
         await this.startOne({
           botId: defaultBotId,
