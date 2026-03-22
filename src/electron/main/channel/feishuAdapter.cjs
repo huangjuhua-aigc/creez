@@ -40,6 +40,70 @@ const FEISHU_WS_ENDPOINT = "https://open.feishu.cn/callback/ws/endpoint";
 const FEISHU_WS_DEBUG = process.env.FEISHU_WS_DEBUG === "1" || process.env.FEISHU_WS_DEBUG === "true";
 
 /**
+ * Lark SDK bug: pullConnectConfig() only returns early for ErrorCode.system_busy === 1, but Feishu HTTP
+ * returns e.g. 1000040345 ("system busy"). Code then falls through and reads ClientConfig.PingInterval
+ * while ClientConfig is undefined → noisy error. Fix: any non-zero code or missing URL/ClientConfig → false.
+ * @param {typeof import("@larksuiteoapi/node-sdk")} lark
+ */
+function patchLarkWsClientPullConnectConfig(lark) {
+  const WSClient = lark.WSClient;
+  if (!WSClient || WSClient.__creezPullConnectPatched) return;
+  const querystring = require("node:querystring");
+  WSClient.prototype.pullConnectConfig = function patchedPullConnectConfig() {
+    return (async () => {
+      const { appId, appSecret } = this.wsConfig.getClient();
+      try {
+        const body = await this.httpInstance.request({
+          method: "post",
+          url: this.wsConfig.wsConfigUrl,
+          data: {
+            AppID: appId,
+            AppSecret: appSecret,
+          },
+          headers: {
+            locale: "zh",
+          },
+          timeout: 15000,
+        });
+        const code = body && body.code;
+        const data = body && body.data;
+        const msg = body && body.msg;
+        if (code !== 0) {
+          this.logger.error("[ws]", `code: ${code}, ${msg || "system busy"}`);
+          return false;
+        }
+        if (!data || !data.URL || !data.ClientConfig) {
+          this.logger.error(
+            "[ws]",
+            "ws endpoint returned code 0 but missing URL or ClientConfig (cannot open long connection)"
+          );
+          return false;
+        }
+        const { URL, ClientConfig } = data;
+        const urlStr = String(URL);
+        const queryPart = urlStr.includes("?") ? urlStr.slice(urlStr.indexOf("?") + 1) : urlStr;
+        const { device_id, service_id } = querystring.parse(queryPart);
+        this.wsConfig.updateWs({
+          connectUrl: URL,
+          deviceId: device_id,
+          serviceId: service_id,
+          pingInterval: ClientConfig.PingInterval * 1000,
+          reconnectCount: ClientConfig.ReconnectCount,
+          reconnectInterval: ClientConfig.ReconnectInterval * 1000,
+          reconnectNonce: ClientConfig.ReconnectNonce * 1000,
+        });
+        this.logger.debug("[ws]", `get connect config success, ws url: ${URL}`);
+        return true;
+      } catch (e) {
+        this.logger.error("[ws]", (e && e.message) || "system busy");
+        return false;
+      }
+    })();
+  };
+  WSClient.__creezPullConnectPatched = true;
+}
+
+/**
  * Wraps the default HTTP instance so we log Feishu's request_id from each response (for 飞书 log 排查).
  * SDK expects request() to return the response body (same as default).
  */
@@ -108,6 +172,7 @@ class FeishuChannelAdapter {
 
   async _startLongConnection() {
     const lark = require("@larksuiteoapi/node-sdk");
+    patchLarkWsClientPullConnectConfig(lark);
     const { appId, appSecret, verificationToken = "", encryptKey = "" } = this._config;
 
     const logLevel = FEISHU_WS_DEBUG ? lark.LoggerLevel.DEBUG : lark.LoggerLevel.WARN;

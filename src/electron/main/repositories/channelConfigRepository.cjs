@@ -31,6 +31,7 @@ const WECOM_KEYS = {
   WECOM_BOT_ID: "botId",
   WECOM_SECRET: "secret",
 };
+const WEIXIN_PERSONAL_KEYS = {};
 
 const VALUE_TO_CREDENTIALS = {
   feishu: FEISHU_KEYS,
@@ -38,6 +39,7 @@ const VALUE_TO_CREDENTIALS = {
   telegram: TELEGRAM_KEYS,
   dingtalk: DINGTALK_KEYS,
   wecom: WECOM_KEYS,
+  weixin_personal: WEIXIN_PERSONAL_KEYS,
 };
 
 function valuesToCredentials(channelType, values) {

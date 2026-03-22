@@ -13,6 +13,23 @@ function err(code, message) {
   return { ok: false, error: { code, message } };
 }
 
+let _weixinAdapter = null;
+
+function getOrCreateWeixinAdapter(channelManager) {
+  if (_weixinAdapter) return _weixinAdapter;
+  if (channelManager) {
+    for (const [, adapter] of channelManager._adapters) {
+      if (adapter.channelType === "weixin_personal") {
+        _weixinAdapter = adapter;
+        return _weixinAdapter;
+      }
+    }
+  }
+  const { WeixinPersonalAdapter } = require("./channel/weixinPersonalAdapter.cjs");
+  _weixinAdapter = new WeixinPersonalAdapter();
+  return _weixinAdapter;
+}
+
 function registerChannelIpc(ipcMain, deps) {
   const { channelConfigRepository, contactRepository, channelManager } = deps;
 
@@ -64,6 +81,46 @@ function registerChannelIpc(ipcMain, deps) {
     } catch (e) {
       console.error("[channelIpc] deleteConfig error:", e?.message || e);
       return err("DB_ERROR", e?.message ?? "Failed to delete channel config");
+    }
+  });
+
+  // -- WeChat Personal QR login flow ----------------------------------------
+
+  ipcMain.handle(CHANNELS.WEIXIN_QR_START, async () => {
+    try {
+      const adapter = getOrCreateWeixinAdapter(channelManager);
+      const result = await adapter.startQrLogin();
+      return ok(result);
+    } catch (e) {
+      console.error("[channelIpc] weixin qrStart error:", e?.message || e);
+      return err("WEIXIN_ERROR", e?.message ?? "Failed to start QR login");
+    }
+  });
+
+  ipcMain.handle(CHANNELS.WEIXIN_QR_WAIT, async (_event, payload) => {
+    try {
+      const adapter = getOrCreateWeixinAdapter(channelManager);
+      const result = await adapter.waitForQrLogin({ timeoutMs: payload?.timeoutMs });
+      if (result.ok && result.connected && channelManager) {
+        const botId = getDefaultBotId();
+        channelConfigRepository.upsert({ botId, channelType: "weixin_personal", enabled: true, values: {} });
+        channelManager.restartChannel(botId, "weixin_personal").catch((e) =>
+          console.warn("[channelIpc] weixin restartChannel after login:", e?.message || e)
+        );
+      }
+      return ok(result);
+    } catch (e) {
+      console.error("[channelIpc] weixin qrWait error:", e?.message || e);
+      return err("WEIXIN_ERROR", e?.message ?? "Failed to wait for QR login");
+    }
+  });
+
+  ipcMain.handle(CHANNELS.WEIXIN_STATUS, async () => {
+    try {
+      const adapter = getOrCreateWeixinAdapter(channelManager);
+      return ok(adapter.getStatus());
+    } catch (e) {
+      return err("WEIXIN_ERROR", e?.message ?? "Failed to get status");
     }
   });
 }

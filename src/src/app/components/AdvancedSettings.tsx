@@ -1,10 +1,12 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import QRCode from 'qrcode';
 import { cn } from '../../utils/cn';
 import { Bot, Brain, Database, Cpu, ChevronDown, ChevronUp, Plus, Trash2, Save, Upload, User, Camera, CheckCircle2, RotateCcw, Folder, Radio, Clock, Search, Pencil, X } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { toast } from 'sonner';
 import { fetchAssistantConfig, fetchModelApiKey, persistAssistantConfig, readMemory, writeMemory, uploadAssistantAvatar, selectWorkplaceDirectory, readLocalImageDataUrl, listAvailableSkills, getSkillEnv, saveSkillEnv } from '../services/settings';
 import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
+import { ChannelPlatformIconBox } from './ChannelPlatformIcon';
 
 export function AdvancedSettings() {
   const [activeSection, setActiveSection] = useState('identity');
@@ -947,6 +949,11 @@ interface ChannelField {
 }
 
 const CHANNEL_DEFS: Record<string, { label: string; color: string; fields: ChannelField[] }> = {
+  weixin_personal: {
+    label: 'WeChat',
+    color: 'bg-green-50 text-green-600',
+    fields: [],
+  },
   feishu: {
     label: 'Feishu / Lark',
     color: 'bg-blue-50 text-blue-600',
@@ -995,7 +1002,7 @@ const CHANNEL_DEFS: Record<string, { label: string; color: string; fields: Chann
 const CHANNEL_OPTIONS = Object.entries(CHANNEL_DEFS).map(([id, def]) => ({
   id,
   label: def.label,
-  available: id === 'feishu' || id === 'wecom',
+  available: id === 'feishu' || id === 'wecom' || id === 'weixin_personal',
 }));
 
 interface ChannelConfigItem {
@@ -1034,9 +1041,7 @@ function ChannelCard({
         onClick={onToggleOpen}
       >
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded flex items-center justify-center bg-gray-100 text-gray-400">
-            <Radio size={16} className="text-blue-600" />
-          </div>
+          <ChannelPlatformIconBox channelType={config.channelType} />
           <div className="flex flex-col">
             <span className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">Channel</span>
             <span className="text-sm font-semibold text-gray-700 mt-1">{def.label}</span>
@@ -1117,6 +1122,231 @@ function ChannelCard({
                 {field.hint && <p className="text-[10px] text-gray-400 px-0.5">{field.hint}</p>}
               </div>
             ))}
+          </div>
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); onSave(); }}
+              disabled={isSaving}
+              className={cn(
+                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all',
+                isSaving ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#07C160] text-white hover:bg-[#06ad56]'
+              )}
+            >
+              {isSaving ? <span className="w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" /> : <Save size={14} />}
+              {isSaving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WeixinPersonalCard({
+  config,
+  onToggleOpen,
+  onToggleEnabled,
+  onSave,
+  onDelete,
+  isSaving,
+}: {
+  config: ChannelConfigItem;
+  onToggleOpen: () => void;
+  onToggleEnabled: () => void;
+  onSave: () => void;
+  onDelete: () => void;
+  isSaving: boolean;
+}) {
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [qrLoading, setQrLoading] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [statusText, setStatusText] = useState('');
+  const pollingRef = useRef(false);
+
+  const generateQrImage = useCallback(async (content: string) => {
+    try {
+      const dataUrl = await QRCode.toDataURL(content, { width: 280, margin: 2 });
+      setQrDataUrl(dataUrl);
+    } catch {
+      setQrDataUrl(null);
+      setStatusText('Failed to generate QR code image');
+    }
+  }, []);
+
+  useEffect(() => {
+    const api = (window.electron as any)?.weixin?.status;
+    if (!api) return;
+    api().then((res: any) => {
+      if (res?.ok && res.data?.hasCredentials) {
+        setConnected(true);
+        setStatusText(res.data.running ? 'Connected' : 'Authenticated (not polling)');
+      }
+    });
+  }, []);
+
+  const startLogin = async () => {
+    const api = (window.electron as any)?.weixin;
+    if (!api?.qrStart) return;
+    setQrLoading(true);
+    setStatusText('');
+    setConnected(false);
+    setQrDataUrl(null);
+    const res = await api.qrStart();
+    setQrLoading(false);
+    if (res?.ok && res.data?.ok && res.data.qrcodeUrl) {
+      await generateQrImage(res.data.qrcodeUrl);
+      setStatusText('Scan the QR code with WeChat');
+      pollForLogin();
+    } else {
+      setStatusText(res?.data?.error || res?.error?.message || 'Failed to get QR code');
+    }
+  };
+
+  const pollForLogin = async () => {
+    if (pollingRef.current) return;
+    pollingRef.current = true;
+    const api = (window.electron as any)?.weixin;
+    if (!api?.qrWait) { pollingRef.current = false; return; }
+
+    const maxAttempts = 60;
+    for (let i = 0; i < maxAttempts; i++) {
+      const res = await api.qrWait({ timeoutMs: 5000 });
+      const data = res?.data;
+      if (!data) break;
+
+      if (data.ok && data.connected) {
+        setConnected(true);
+        setQrDataUrl(null);
+        setStatusText('Connected!');
+        pollingRef.current = false;
+        return;
+      }
+      if (data.scanned) {
+        setStatusText('Scanned! Confirm on your phone...');
+        continue;
+      }
+      if (data.expired && data.qrcodeUrl) {
+        await generateQrImage(data.qrcodeUrl);
+        setStatusText('QR code refreshed, scan again');
+        continue;
+      }
+      if (data.error) {
+        setStatusText(data.error);
+        break;
+      }
+    }
+    pollingRef.current = false;
+  };
+
+  useEffect(() => {
+    return () => { pollingRef.current = false; };
+  }, []);
+
+  const def = CHANNEL_DEFS.weixin_personal;
+
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm bg-white transition-all hover:shadow-md group">
+      <div
+        className="flex items-center justify-between p-4 bg-white cursor-pointer select-none group-hover:bg-gray-50/50 transition-colors"
+        onClick={onToggleOpen}
+      >
+        <div className="flex items-center gap-3">
+          <ChannelPlatformIconBox channelType="weixin_personal" />
+          <div className="flex flex-col">
+            <span className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">Channel</span>
+            <span className="text-sm font-semibold text-gray-700 mt-1">{def.label}</span>
+          </div>
+          <span className={cn(
+            'ml-1 text-[10px] font-bold px-2 py-0.5 rounded-full border',
+            config.enabled ? 'bg-green-50 text-green-600 border-green-100' : 'bg-gray-100 text-gray-400 border-gray-200'
+          )}>
+            {config.enabled ? 'Active' : 'Inactive'}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={e => { e.stopPropagation(); onDelete(); }}
+            className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
+          >
+            <Trash2 size={16} />
+          </button>
+          <button className="flex items-center justify-center w-8 h-8 text-gray-400 hover:text-gray-600 transition-all">
+            {config.isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+          </button>
+        </div>
+      </div>
+
+      {config.isOpen && (
+        <div className="p-6 pt-2 space-y-6 animate-in slide-in-from-top-2 duration-200 bg-white border-t border-gray-50">
+          <div className="grid grid-cols-2 gap-6 items-end">
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Platform</label>
+              <div className="py-2.5 px-4 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700">
+                WeChat (Personal)
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</label>
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); onToggleEnabled(); }}
+                className={cn(
+                  'flex items-center gap-2 w-full py-2.5 px-4 rounded-lg border text-sm font-medium transition-all',
+                  config.enabled ? 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100'
+                )}
+              >
+                <span className={cn('w-2 h-2 rounded-full', config.enabled ? 'bg-green-500' : 'bg-gray-400')} />
+                {config.enabled ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">WeChat Login</span>
+              <div className="flex-1 h-px bg-gray-100" />
+            </div>
+
+            {connected ? (
+              <div className="flex items-center gap-3 p-4 bg-green-50 rounded-lg border border-green-100">
+                <CheckCircle2 size={20} className="text-green-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-green-800">WeChat account linked</p>
+                  <p className="text-xs text-green-600 mt-0.5">{statusText || 'Ready to receive and send messages'}</p>
+                </div>
+                <button
+                  onClick={startLogin}
+                  className="ml-auto text-xs text-green-600 hover:text-green-800 font-medium px-3 py-1.5 rounded-md hover:bg-green-100 transition-colors"
+                >
+                  Re-link
+                </button>
+              </div>
+            ) : qrDataUrl ? (
+              <div className="flex flex-col items-center gap-4 py-4">
+                <div className="p-3 bg-white rounded-xl shadow-md border border-gray-100">
+                  <img src={qrDataUrl} alt="WeChat QR Code" className="w-48 h-48 object-contain" />
+                </div>
+                <p className="text-sm text-gray-600 font-medium">{statusText}</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-3 py-4">
+                <p className="text-sm text-gray-500">Scan QR code with WeChat to link your account</p>
+                <button
+                  onClick={startLogin}
+                  disabled={qrLoading}
+                  className={cn(
+                    'inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all',
+                    qrLoading ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-[#07C160] text-white hover:bg-[#06ad56] active:scale-[0.98]'
+                  )}
+                >
+                  {qrLoading ? <span className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" /> : null}
+                  {qrLoading ? 'Loading...' : 'Get QR Code'}
+                </button>
+                {statusText && <p className="text-xs text-red-500">{statusText}</p>}
+              </div>
+            )}
           </div>
 
           <div className="flex justify-end">
@@ -1220,19 +1450,31 @@ function ChannelSettings() {
 
   return (
     <div className="space-y-6 pb-20">
-      {channels.map(config => (
-        <ChannelCard
-          key={config.id}
-          config={config}
-          onToggleOpen={() => update(config.id, { isOpen: !config.isOpen })}
-          onToggleEnabled={() => update(config.id, { enabled: !config.enabled })}
-          onChangeType={t => update(config.id, { channelType: t, values: {} })}
-          onChangeValue={(key, val) => update(config.id, { values: { ...config.values, [key]: val } })}
-          onSave={() => saveChannel(config)}
-          onDelete={() => deleteChannel(config)}
-          isSaving={savingId === config.id}
-        />
-      ))}
+      {channels.map(config =>
+        config.channelType === 'weixin_personal' ? (
+          <WeixinPersonalCard
+            key={config.id}
+            config={config}
+            onToggleOpen={() => update(config.id, { isOpen: !config.isOpen })}
+            onToggleEnabled={() => update(config.id, { enabled: !config.enabled })}
+            onSave={() => saveChannel(config)}
+            onDelete={() => deleteChannel(config)}
+            isSaving={savingId === config.id}
+          />
+        ) : (
+          <ChannelCard
+            key={config.id}
+            config={config}
+            onToggleOpen={() => update(config.id, { isOpen: !config.isOpen })}
+            onToggleEnabled={() => update(config.id, { enabled: !config.enabled })}
+            onChangeType={t => update(config.id, { channelType: t, values: {} })}
+            onChangeValue={(key, val) => update(config.id, { values: { ...config.values, [key]: val } })}
+            onSave={() => saveChannel(config)}
+            onDelete={() => deleteChannel(config)}
+            isSaving={savingId === config.id}
+          />
+        )
+      )}
       <button
         onClick={addChannel}
         className="w-full py-6 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 font-bold hover:border-[#07C160] hover:text-[#07C160] hover:bg-[#07C160]/5 transition-all flex items-center justify-center gap-2 group active:scale-[0.99]"

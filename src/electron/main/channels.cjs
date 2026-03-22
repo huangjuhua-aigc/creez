@@ -68,6 +68,9 @@ const CHANNELS = Object.freeze({
   AGENT_BUILDER_SEARCH: "agentBuilder:search",
   AGENT_BUILDER_RECENT: "agentBuilder:recent",
   APP_GET_DEVICE_ID: "app:getDeviceId",
+  WEIXIN_QR_START: "weixin:qrStart",
+  WEIXIN_QR_WAIT: "weixin:qrWait",
+  WEIXIN_STATUS: "weixin:status",
 });
 
 module.exports = {
