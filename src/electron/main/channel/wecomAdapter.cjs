@@ -8,11 +8,40 @@
  * Reference: https://github.com/WecomTeam/wecom-openclaw-plugin
  */
 
-const { randomUUID } = require("node:crypto");
+const { randomUUID, randomBytes } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const fsp = require("node:fs/promises");
+
+const MIME_FROM_EXT = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+function wecomUploadsDir() {
+  const { app } = require("electron");
+  return path.join(app.getPath("userData"), "uploads");
+}
+
+async function saveWecomInboundFile(buf, suggestedName) {
+  const dir = wecomUploadsDir();
+  await fsp.mkdir(dir, { recursive: true });
+  const ext = path.extname(suggestedName) || "";
+  const stem = path.basename(suggestedName, ext) || "file";
+  const unique = `${Date.now()}-${randomBytes(4).toString("hex")}-${stem}${ext}`;
+  const fullPath = path.join(dir, unique);
+  await fsp.writeFile(fullPath, buf);
+  return fullPath;
+}
+
+function mimeFromFilename(name) {
+  const ext = path.extname(name || "").toLowerCase();
+  return MIME_FROM_EXT[ext] || "application/octet-stream";
+}
 
 function resolveWorkDir(raw) {
   if (raw == null || String(raw).trim() === "") return null;
@@ -149,32 +178,91 @@ class WeComChannelAdapter {
     const msgId = body.msgid;
     if (!chatId || !msgId) return;
 
-    let text = "";
     const msgType = String(body.msgtype || "").toLowerCase();
+    const textParts = [];
+    const images = [];
+    const attachmentPaths = [];
+
+    const stripGroupMentions = (s) =>
+      body.chattype === "group" ? String(s || "").replace(/@\S+/g, "").trim() : String(s || "").trim();
+
     if (msgType === "text") {
-      text = String(body.text?.content || "").trim();
+      textParts.push(stripGroupMentions(body.text?.content || ""));
+    } else if (msgType === "voice" && body.voice?.content) {
+      textParts.push(stripGroupMentions(body.voice.content));
+    } else if (msgType === "image" && body.image?.url && this._wsClient?.downloadFile) {
+      try {
+        const { buffer, filename } = await this._wsClient.downloadFile(body.image.url, body.image.aeskey);
+        const name = filename && String(filename).trim() ? filename : "image.jpg";
+        const savedPath = await saveWecomInboundFile(buffer, name);
+        attachmentPaths.push(`[Image: ##${savedPath}##]`);
+        images.push({
+          type: "image",
+          data: buffer.toString("base64"),
+          mimeType: mimeFromFilename(name),
+        });
+      } catch (err) {
+        wecomLog("image download failed: " + (err?.message || String(err)));
+        textParts.push("[用户发送了一张图片]");
+      }
+    } else if (msgType === "file" && body.file?.url && this._wsClient?.downloadFile) {
+      try {
+        const { buffer, filename } = await this._wsClient.downloadFile(body.file.url, body.file.aeskey);
+        const name = filename && String(filename).trim() ? filename : "file.bin";
+        const savedPath = await saveWecomInboundFile(buffer, name);
+        attachmentPaths.push(`[File: ##${savedPath}##]`);
+      } catch (err) {
+        wecomLog("file download failed: " + (err?.message || String(err)));
+        textParts.push("[用户发送了一个文件]");
+      }
+    } else if (msgType === "mixed" && Array.isArray(body.mixed?.msg_item)) {
+      for (const item of body.mixed.msg_item) {
+        const mt = String(item?.msgtype || "").toLowerCase();
+        if (mt === "text" && item.text?.content) {
+          textParts.push(stripGroupMentions(item.text.content));
+        } else if (mt === "image" && item.image?.url && this._wsClient?.downloadFile) {
+          try {
+            const { buffer, filename } = await this._wsClient.downloadFile(item.image.url, item.image.aeskey);
+            const name = filename && String(filename).trim() ? filename : "image.jpg";
+            const savedPath = await saveWecomInboundFile(buffer, name);
+            attachmentPaths.push(`[Image: ##${savedPath}##]`);
+            images.push({
+              type: "image",
+              data: buffer.toString("base64"),
+              mimeType: mimeFromFilename(name),
+            });
+          } catch (err) {
+            wecomLog("mixed image download failed: " + (err?.message || String(err)));
+            textParts.push("[图片]");
+          }
+        }
+      }
     } else if (body.content) {
+      let text = "";
       try {
         const parsed = typeof body.content === "string" ? JSON.parse(body.content) : body.content;
         text = String(parsed.text || parsed.content || "").trim();
       } catch {
         text = String(body.content).trim();
       }
+      if (text) textParts.push(stripGroupMentions(text));
     }
 
-    if (body.chattype === "group") {
-      text = text.replace(/@\S+/g, "").trim();
-    }
+    const text = textParts.filter(Boolean).join(" ");
+    const contentLines = [];
+    if (text) contentLines.push(text);
+    contentLines.push(...attachmentPaths);
+    const content = contentLines.join("\n");
 
-    if (!text) return;
+    if (!content.trim() && images.length === 0) return;
 
     this._lastChatId = chatId;
     this._lastFrame = frame;
 
-    await this._onWecomMessage(chatId, msgId, text, frame);
+    await this._onWecomMessage(chatId, msgId, content, images, frame);
   }
 
-  async _onWecomMessage(wecomChatId, wecomMsgId, text, frame) {
+  async _onWecomMessage(wecomChatId, wecomMsgId, content, images, frame) {
     const { chatRepository } = this._deps;
     const defaultBotId = this._botId;
 
@@ -193,7 +281,7 @@ class WeComChannelAdapter {
       id: userMsgId,
       chatId,
       sender: "user",
-      content: text,
+      content,
       status: "done",
       createdAt: nowTs,
       updatedAt: nowTs,
@@ -203,7 +291,7 @@ class WeComChannelAdapter {
 
     this._notifyRenderer("channel:newMessage", { chatId, channelType: "wecom" });
 
-    const reply = await this._getAgentReply(chatId, text);
+    const reply = await this._getAgentReply(chatId, content, images || []);
     const replyText = reply && typeof reply === "object" ? reply.content : reply;
     if (replyText != null && replyText !== "") {
       const replyMsgId = randomUUID();
@@ -325,7 +413,7 @@ class WeComChannelAdapter {
     return engine;
   }
 
-  async _getAgentReply(chatId, text) {
+  async _getAgentReply(chatId, text, images = []) {
     const engine = await this._ensureBotSession(chatId);
     if (!engine) return null;
 
@@ -371,7 +459,7 @@ class WeComChannelAdapter {
 
     runner.addListener(this._botId, listenerId, collector);
     try {
-      await engine.prompt({ chatId: this._botId, text, images: [] });
+      await engine.prompt({ chatId: this._botId, text, images: images || [] });
     } finally {
       runner.removeListener(this._botId, listenerId);
     }

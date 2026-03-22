@@ -220,6 +220,76 @@ async function ilinkSendMessage({ baseUrl, token, to, text, contextToken }) {
 }
 
 // ---------------------------------------------------------------------------
+// Media helpers (iLink protocol: MessageItemType IMAGE=2, FILE=4, VIDEO=5)
+// ---------------------------------------------------------------------------
+
+const MEDIA_DOWNLOAD_TIMEOUT_MS = 30_000;
+const MIME_EXT = { "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp" };
+const CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c";
+
+function uploadsDir() {
+  const { app } = require("electron");
+  return path.join(app.getPath("userData"), "uploads");
+}
+
+function buildCdnDownloadUrl(encryptQueryParam) {
+  return `${CDN_BASE_URL}/download?encrypted_query_param=${encodeURIComponent(encryptQueryParam)}`;
+}
+
+function parseAesKey(aesKeyBase64) {
+  const decoded = Buffer.from(aesKeyBase64, "base64");
+  if (decoded.length === 16) return decoded;
+  if (decoded.length === 32 && /^[0-9a-fA-F]{32}$/.test(decoded.toString("ascii"))) {
+    return Buffer.from(decoded.toString("ascii"), "hex");
+  }
+  throw new Error(`aes_key must decode to 16 raw bytes or 32-char hex, got ${decoded.length} bytes`);
+}
+
+function decryptAesEcb(ciphertext, key) {
+  const { createDecipheriv } = require("node:crypto");
+  const decipher = createDecipheriv("aes-128-ecb", key, null);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+}
+
+async function downloadCdnBuffer(encryptQueryParam, label) {
+  const netFetch = getNetFetch();
+  const url = buildCdnDownloadUrl(encryptQueryParam);
+  wxLog(`${label}: CDN fetch ${url.substring(0, 100)}...`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), MEDIA_DOWNLOAD_TIMEOUT_MS);
+  try {
+    const res = await netFetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`CDN ${res.status} ${res.statusText}`);
+    const ab = await res.arrayBuffer();
+    wxLog(`${label}: CDN downloaded ${ab.byteLength} bytes`);
+    return Buffer.from(ab);
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
+  }
+}
+
+async function downloadAndDecrypt(encryptQueryParam, aesKeyBase64, label) {
+  const key = parseAesKey(aesKeyBase64);
+  const encrypted = await downloadCdnBuffer(encryptQueryParam, label);
+  const decrypted = decryptAesEcb(encrypted, key);
+  wxLog(`${label}: decrypted ${decrypted.length} bytes`);
+  return decrypted;
+}
+
+async function saveInboundAttachment(buf, suggestedName) {
+  const dir = uploadsDir();
+  await fsp.mkdir(dir, { recursive: true });
+  const ext = path.extname(suggestedName) || "";
+  const stem = path.basename(suggestedName, ext) || "file";
+  const unique = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}-${stem}${ext}`;
+  const fullPath = path.join(dir, unique);
+  await fsp.writeFile(fullPath, buf);
+  return fullPath;
+}
+
+// ---------------------------------------------------------------------------
 // Adapter class
 // ---------------------------------------------------------------------------
 
@@ -426,28 +496,97 @@ class WeixinPersonalAdapter {
     if (!fromUserId) return;
 
     const items = msg.item_list || [];
-    let text = "";
+    const textParts = [];
+    const images = [];
+    const attachmentPaths = [];
+
     for (const item of items) {
       if (item.type === 1 && item.text_item?.text) {
-        text = String(item.text_item.text).trim();
-        break;
-      }
-      if (item.type === 3 && item.voice_item?.text) {
-        text = String(item.voice_item.text).trim();
-        break;
+        textParts.push(String(item.text_item.text).trim());
+      } else if (item.type === 3 && item.voice_item?.text) {
+        textParts.push(String(item.voice_item.text).trim());
+      } else if (item.type === 2 && item.image_item) {
+        try {
+          const buf = await this._downloadCdnMedia(item.image_item, "image");
+          if (buf) {
+            const savedPath = await saveInboundAttachment(buf, "image.jpg");
+            attachmentPaths.push(`[Image: ##${savedPath}##]`);
+            const base64 = buf.toString("base64");
+            images.push({ type: "image", data: base64, mimeType: "image/jpeg" });
+          } else {
+            textParts.push("[用户发送了一张图片]");
+          }
+        } catch (err) {
+          wxLog("image download/decrypt failed: " + (err?.message || String(err)));
+          textParts.push("[用户发送了一张图片]");
+        }
+      } else if (item.type === 4 && item.file_item) {
+        const fileName = item.file_item.file_name || "file";
+        try {
+          const buf = await this._downloadCdnMedia(item.file_item, "file");
+          if (buf) {
+            const savedPath = await saveInboundAttachment(buf, fileName);
+            attachmentPaths.push(`[File: ##${savedPath}##]`);
+          } else {
+            textParts.push(`[用户发送了文件: ${fileName}]`);
+          }
+        } catch (err) {
+          wxLog("file download/decrypt failed: " + (err?.message || String(err)));
+          textParts.push(`[用户发送了文件: ${fileName}]`);
+        }
+      } else if (item.type === 5 && item.video_item) {
+        try {
+          const buf = await this._downloadCdnMedia(item.video_item, "video");
+          if (buf) {
+            const savedPath = await saveInboundAttachment(buf, "video.mp4");
+            attachmentPaths.push(`[File: ##${savedPath}##]`);
+          } else {
+            textParts.push("[用户发送了一段视频]");
+          }
+        } catch (err) {
+          wxLog("video download/decrypt failed: " + (err?.message || String(err)));
+          textParts.push("[用户发送了一段视频]");
+        }
       }
     }
-    if (!text) return;
+
+    const text = textParts.filter(Boolean).join(" ");
+    if (!text && images.length === 0 && attachmentPaths.length === 0) return;
 
     if (msg.context_token) {
       this._contextTokens.set(fromUserId, msg.context_token);
     }
 
+    const contentParts = [];
+    if (text) contentParts.push(text);
+    contentParts.push(...attachmentPaths);
+    const content = contentParts.join("\n");
+
     const msgId = msg.message_id != null ? String(msg.message_id) : `wx-${Date.now()}`;
-    await this._onWeixinMessage(fromUserId, msgId, text);
+    await this._onWeixinMessage(fromUserId, msgId, content, images);
   }
 
-  async _onWeixinMessage(fromUserId, weixinMsgId, text) {
+  async _downloadCdnMedia(mediaItem, label) {
+    const eqp = mediaItem.media?.encrypt_query_param;
+    if (!eqp) {
+      wxLog(`${label}: no encrypt_query_param found, keys=${Object.keys(mediaItem).join(",")}`);
+      return null;
+    }
+
+    let aesKeyBase64;
+    if (mediaItem.aeskey) {
+      aesKeyBase64 = Buffer.from(mediaItem.aeskey, "hex").toString("base64");
+    } else if (mediaItem.media?.aes_key) {
+      aesKeyBase64 = mediaItem.media.aes_key;
+    }
+
+    if (aesKeyBase64) {
+      return downloadAndDecrypt(eqp, aesKeyBase64, label);
+    }
+    return downloadCdnBuffer(eqp, label);
+  }
+
+  async _onWeixinMessage(fromUserId, weixinMsgId, content, images) {
     const { chatRepository } = this._deps;
     const defaultBotId = this._botId;
 
@@ -464,7 +603,7 @@ class WeixinPersonalAdapter {
       id: userMsgId,
       chatId,
       sender: "user",
-      content: text,
+      content,
       status: "done",
       createdAt: nowTs,
       updatedAt: nowTs,
@@ -474,7 +613,7 @@ class WeixinPersonalAdapter {
 
     this._notifyRenderer("channel:newMessage", { chatId, channelType: "weixin_personal" });
 
-    const reply = await this._getAgentReply(chatId, text);
+    const reply = await this._getAgentReply(chatId, content, images || []);
     const replyText = reply && typeof reply === "object" ? reply.content : reply;
     if (replyText != null && replyText !== "") {
       const replyMsgId = randomUUID();
@@ -585,7 +724,7 @@ class WeixinPersonalAdapter {
     return engine;
   }
 
-  async _getAgentReply(chatId, text) {
+  async _getAgentReply(chatId, text, images) {
     const engine = await this._ensureBotSession(chatId);
     if (!engine) return null;
 
@@ -631,7 +770,7 @@ class WeixinPersonalAdapter {
 
     runner.addListener(this._botId, listenerId, collector);
     try {
-      await engine.prompt({ chatId: this._botId, text, images: [] });
+      await engine.prompt({ chatId: this._botId, text, images: images || [] });
     } finally {
       runner.removeListener(this._botId, listenerId);
     }

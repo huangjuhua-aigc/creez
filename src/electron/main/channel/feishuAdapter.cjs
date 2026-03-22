@@ -5,11 +5,81 @@
  * - Route to default bot agent, then send reply back to Feishu
  */
 
-const { randomUUID } = require("node:crypto");
+const { randomUUID, randomBytes } = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const fsp = require("node:fs/promises");
+
+const FEISHU_RESOURCE_BASE = "https://open.feishu.cn/open-apis/im/v1/messages";
+const RESOURCE_DOWNLOAD_MS = 120_000;
+
+const MIME_FROM_EXT = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+function feishuUploadsDir() {
+  const { app } = require("electron");
+  return path.join(app.getPath("userData"), "uploads");
+}
+
+async function saveFeishuInboundFile(buf, suggestedName) {
+  const dir = feishuUploadsDir();
+  await fsp.mkdir(dir, { recursive: true });
+  const ext = path.extname(suggestedName) || "";
+  const stem = path.basename(suggestedName, ext) || "file";
+  const unique = `${Date.now()}-${randomBytes(4).toString("hex")}-${stem}${ext}`;
+  const fullPath = path.join(dir, unique);
+  await fsp.writeFile(fullPath, buf);
+  return fullPath;
+}
+
+function mimeFromFilename(name) {
+  const ext = path.extname(name || "").toLowerCase();
+  return MIME_FROM_EXT[ext] || "application/octet-stream";
+}
+
+/**
+ * Walk post (富文本) content JSON; collect plain text and resource keys.
+ */
+function collectFromPostContent(post) {
+  const textParts = [];
+  const imageKeys = [];
+  const fileEntries = [];
+
+  if (post.title) textParts.push(String(post.title));
+
+  const rows = Array.isArray(post.content) ? post.content : [];
+  for (const row of rows) {
+    if (!Array.isArray(row)) continue;
+    for (const el of row) {
+      if (!el || typeof el !== "object") continue;
+      const tag = el.tag;
+      if (tag === "text" && el.text) textParts.push(String(el.text));
+      if (tag === "a") {
+        const t = el.text ? String(el.text) : "";
+        const href = el.href ? String(el.href) : "";
+        textParts.push(href ? `[${t}](${href})` : t);
+      }
+      if (tag === "at") textParts.push(el.user_name ? String(el.user_name) : "");
+      if (tag === "img" && el.image_key) imageKeys.push(String(el.image_key));
+      if (tag === "media" && el.file_key) {
+        fileEntries.push({ fileKey: String(el.file_key), fileName: "video.mp4" });
+        if (el.image_key) imageKeys.push(String(el.image_key));
+      }
+    }
+  }
+
+  return {
+    text: textParts.filter(Boolean).join("\n").trim(),
+    imageKeys,
+    fileEntries,
+  };
+}
 
 function resolveWorkDir(raw) {
   if (raw == null || String(raw).trim() === "") return null;
@@ -257,27 +327,138 @@ class FeishuChannelAdapter {
     }
   }
 
+  async _downloadFeishuMessageResource(messageId, fileKey, resourceType) {
+    const token = await this._getToken();
+    if (!token) throw new Error("no tenant_access_token");
+    const enc = encodeURIComponent(fileKey);
+    const url = `${FEISHU_RESOURCE_BASE}/${encodeURIComponent(messageId)}/resources/${enc}?type=${resourceType}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(RESOURCE_DOWNLOAD_MS),
+    });
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      throw new Error(`Feishu resource HTTP ${res.status} ${errBody.slice(0, 200)}`);
+    }
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   async _onFeishuMessageEvent(data) {
     const senderType = String(data?.sender?.sender_type || "").toLowerCase();
     if (senderType && senderType !== "user") return;
     const message = data?.message || {};
-    const msgType = String(message.message_type || "").toLowerCase();
-    if (msgType !== "text") return;
+    const msgType = String(message.message_type || message.msg_type || "").toLowerCase();
     const feishuMsgId = message.message_id;
     const feishuChatId = message.chat_id;
     if (!feishuMsgId || !feishuChatId) return;
+
     let rawContent = {};
     try {
       rawContent = message.content ? JSON.parse(message.content) : {};
     } catch {
       rawContent = {};
     }
-    const text = String(rawContent.text || "").trim();
-    if (!text) return;
-    await this._onFeishuMessage(feishuChatId, feishuMsgId, text);
+
+    const textParts = [];
+    const images = [];
+    const attachmentPaths = [];
+
+    if (msgType === "text") {
+      const t = String(rawContent.text || "").trim();
+      if (t) textParts.push(t);
+    } else if (msgType === "image" && rawContent.image_key) {
+      try {
+        const buf = await this._downloadFeishuMessageResource(feishuMsgId, rawContent.image_key, "image");
+        const savedPath = await saveFeishuInboundFile(buf, "image.png");
+        attachmentPaths.push(`[Image: ##${savedPath}##]`);
+        images.push({
+          type: "image",
+          data: buf.toString("base64"),
+          mimeType: mimeFromFilename(savedPath),
+        });
+      } catch (err) {
+        feishuLog("image resource download failed: " + (err?.message || String(err)));
+        textParts.push("[用户发送了一张图片]");
+      }
+    } else if (msgType === "file") {
+      const fk = rawContent.file_key;
+      const fn = rawContent.file_name ? String(rawContent.file_name) : "file.bin";
+      if (fk) {
+        try {
+          const buf = await this._downloadFeishuMessageResource(feishuMsgId, fk, "file");
+          const savedPath = await saveFeishuInboundFile(buf, fn);
+          attachmentPaths.push(`[File: ##${savedPath}##]`);
+        } catch (err) {
+          feishuLog("file resource download failed: " + (err?.message || String(err)));
+          textParts.push(`[用户发送了文件: ${fn}]`);
+        }
+      }
+    } else if (msgType === "audio" && rawContent.file_key) {
+      const fn = `audio_${Date.now()}.mp3`;
+      try {
+        const buf = await this._downloadFeishuMessageResource(feishuMsgId, rawContent.file_key, "file");
+        const savedPath = await saveFeishuInboundFile(buf, fn);
+        attachmentPaths.push(`[File: ##${savedPath}##]`);
+      } catch (err) {
+        feishuLog("audio resource download failed: " + (err?.message || String(err)));
+        textParts.push("[用户发送了一条语音]");
+      }
+    } else if (msgType === "media" && rawContent.file_key) {
+      const fn = rawContent.file_name ? String(rawContent.file_name) : "video.mp4";
+      try {
+        const buf = await this._downloadFeishuMessageResource(feishuMsgId, rawContent.file_key, "file");
+        const savedPath = await saveFeishuInboundFile(buf, fn);
+        attachmentPaths.push(`[File: ##${savedPath}##]`);
+      } catch (err) {
+        feishuLog("video resource download failed: " + (err?.message || String(err)));
+        textParts.push(`[用户发送了视频: ${fn}]`);
+      }
+    } else if (msgType === "post") {
+      const collected = collectFromPostContent(rawContent);
+      if (collected.text) textParts.push(collected.text);
+      for (const ik of collected.imageKeys) {
+        try {
+          const buf = await this._downloadFeishuMessageResource(feishuMsgId, ik, "image");
+          const savedPath = await saveFeishuInboundFile(buf, "image.png");
+          attachmentPaths.push(`[Image: ##${savedPath}##]`);
+          images.push({
+            type: "image",
+            data: buf.toString("base64"),
+            mimeType: mimeFromFilename(savedPath),
+          });
+        } catch (err) {
+          feishuLog("post image download failed: " + (err?.message || String(err)));
+          textParts.push("[图片]");
+        }
+      }
+      for (const fe of collected.fileEntries) {
+        try {
+          const buf = await this._downloadFeishuMessageResource(feishuMsgId, fe.fileKey, "file");
+          const savedPath = await saveFeishuInboundFile(buf, fe.fileName);
+          attachmentPaths.push(`[File: ##${savedPath}##]`);
+        } catch (err) {
+          feishuLog("post media download failed: " + (err?.message || String(err)));
+          textParts.push("[附件]");
+        }
+      }
+    } else if (msgType === "sticker") {
+      textParts.push("[用户发送了表情]");
+    } else {
+      return;
+    }
+
+    const text = textParts.filter(Boolean).join("\n");
+    const contentLines = [];
+    if (text) contentLines.push(text);
+    contentLines.push(...attachmentPaths);
+    const content = contentLines.join("\n");
+    if (!content.trim() && images.length === 0) return;
+
+    await this._onFeishuMessage(feishuChatId, feishuMsgId, content, images);
   }
 
-  async _onFeishuMessage(feishuChatId, feishuMsgId, text) {
+  async _onFeishuMessage(feishuChatId, feishuMsgId, content, images) {
     const { chatRepository } = this._deps;
     const defaultBotId = this._botId;
 
@@ -296,7 +477,7 @@ class FeishuChannelAdapter {
       id: userMsgId,
       chatId,
       sender: "user",
-      content: text,
+      content,
       status: "done",
       createdAt: nowTs,
       updatedAt: nowTs,
@@ -306,7 +487,7 @@ class FeishuChannelAdapter {
 
     this._notifyRenderer("channel:newMessage", { chatId, channelType: "feishu" });
 
-    const reply = await this._getAgentReply(chatId, text);
+    const reply = await this._getAgentReply(chatId, content, images || []);
     const replyText = reply && typeof reply === "object" ? reply.content : reply;
     if (replyText != null && replyText !== "") {
       const replyMsgId = randomUUID();
@@ -388,7 +569,7 @@ class FeishuChannelAdapter {
     return engine;
   }
 
-  async _getAgentReply(chatId, text) {
+  async _getAgentReply(chatId, text, images = []) {
     const engine = await this._ensureBotSession(chatId);
     if (!engine) return null;
 
@@ -434,7 +615,7 @@ class FeishuChannelAdapter {
 
     runner.addListener(this._botId, listenerId, collector);
     try {
-      await engine.prompt({ chatId: this._botId, text, images: [] });
+      await engine.prompt({ chatId: this._botId, text, images: images || [] });
     } finally {
       runner.removeListener(this._botId, listenerId);
     }
