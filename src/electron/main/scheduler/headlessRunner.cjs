@@ -181,6 +181,11 @@ async function executeTask(task, deps) {
             });
             console.log("[creez:task] headlessRunner message_end persisted", { chatId, contentLen: contentStr.length });
             if (sendToRenderer) {
+              console.log("[creez:stream-debug][main] scheduled task → renderer (message_end)", {
+                chatId,
+                messageId: assistantMessageId,
+                contentLen: contentStr.length,
+              });
               sendToRenderer({
                 type: "chat:message_appended",
                 chatId,
@@ -210,6 +215,12 @@ async function executeTask(task, deps) {
             });
             console.log("[creez:task] headlessRunner agent_end persisted", { chatId, hasError: Boolean(errMsg), contentLen: finalContent.length });
             if (sendToRenderer) {
+              console.log("[creez:stream-debug][main] scheduled task → renderer (agent_end)", {
+                chatId,
+                messageId: assistantMessageId,
+                finalStatus,
+                contentLen: finalContent.length,
+              });
               sendToRenderer({
                 type: "chat:message_appended",
                 chatId,

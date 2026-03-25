@@ -922,11 +922,15 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     onSelectChat?.(fallbackId);
   }, [chatList, selectedChatId, onSelectChat]);
 
+  /** Must NOT depend on full chatList: every send updates lastMessage/time and would re-run loadMessages, replacing React state with a DB snapshot and racing streaming (reply disappears / stuck dots). Only reload when switching chats or when the selected id first appears in the list. */
+  const selectedChatExistsInList = Boolean(selectedChatId && chatList.some((c) => c.id === selectedChatId));
+
   useEffect(() => {
     if (!selectedChatId) {
       setMessages([]);
       return;
     }
+    if (!selectedChatExistsInList) return;
     const currentChat = chatList.find((c) => c.id === selectedChatId);
     if (!currentChat) return;
     const chatId = currentChat.id;
@@ -939,6 +943,12 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       const items = await fetchChatMessages(chatId, chatName, chatAvatar);
       if (cancelled) return;
       const stream = chatStreamsRef.current.get(chatId);
+      console.log("[creez:stream-debug] loadMessages (selectedChatId/chatList effect)", {
+        chatId,
+        itemCount: items.length,
+        mergeWithStream: Boolean(stream?.assistantMessageId),
+        streamAssistantId: stream?.assistantMessageId ?? null,
+      });
       if (stream?.assistantMessageId) {
         setMessages(items.map((msg) =>
           msg.id === stream.assistantMessageId
@@ -954,16 +964,48 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     return () => {
       cancelled = true;
     };
-  }, [selectedChatId, chatList]);
+  }, [selectedChatId, selectedChatExistsInList]);
 
   useEffect(() => {
     const unsub = onChatMessageAppended((payload) => {
       const chatId = payload?.chatId;
+      const stream = chatStreamsRef.current.get(String(selectedChatId || ""));
+      console.log("[creez:stream-debug] onChatMessageAppended", {
+        payloadType: payload?.type ?? null,
+        chatId: chatId ?? null,
+        selectedChatId: selectedChatId ?? null,
+        matchesCurrent: Boolean(chatId && String(chatId) === String(selectedChatId)),
+        hasActiveStream: Boolean(stream?.assistantMessageId),
+        streamAssistantId: stream?.assistantMessageId ?? null,
+        activeAssistantRef: activeAssistantMessageIdRef.current,
+        isStreamingRef: isStreamingRef.current,
+      });
       if (chatId && String(chatId) === String(selectedChatId)) {
         const currentChat = chatList.find((c) => c.id === selectedChatId);
         if (currentChat) {
           fetchChatMessages(selectedChatId, currentChat.name, currentChat.avatar).then((items) => {
-            setMessages(items);
+            const streamAfter = chatStreamsRef.current.get(selectedChatId);
+            if (streamAfter?.assistantMessageId) {
+              console.log("[creez:stream-debug] onChatMessageAppended: setMessages merged with stream", {
+                streamAssistantId: streamAfter.assistantMessageId,
+                streamedLen: (streamAfter.streamedText || "").length,
+                dbItemCount: items.length,
+              });
+              setMessages(
+                items.map((msg) =>
+                  msg.id === streamAfter.assistantMessageId
+                    ? {
+                        ...msg,
+                        content: streamAfter.streamedText || msg.content,
+                        ...(streamAfter.toolCalls?.length ? { toolCalls: streamAfter.toolCalls } : {}),
+                      }
+                    : msg
+                )
+              );
+            } else {
+              console.log("[creez:stream-debug] onChatMessageAppended: setMessages from DB only (no merge)");
+              setMessages(items);
+            }
           });
         }
       }
@@ -987,6 +1029,14 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   useEffect(() => {
     const offEvent = onAgentEvent((payload) => handleIncomingAgentEvent(payload));
     const offError = onAgentError((message) => {
+      console.log("[creez:stream-debug] onAgentError (ipc)", {
+        raw: String(message || "").slice(0, 400),
+        selectedChatId: selectedChatIdRef.current,
+        activeAssistantMessageIdRef: activeAssistantMessageIdRef.current,
+        activeStreamChatIdRef: activeStreamChatIdRef.current,
+        isStreamingRef: isStreamingRef.current,
+        mapKeys: Array.from(chatStreamsRef.current.keys()),
+      });
       const rawMessage = message || "Request failed.";
       let text = rawMessage;
       // Shown when the model API (e.g. OpenRouter) returns 401 / auth error during reply
@@ -1091,6 +1141,10 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     selectedChatIdRef.current = selectedChatId;
     const stream = chatStreamsRef.current.get(selectedChatId);
     if (stream) {
+      console.log("[creez:stream-debug] selectedChatId effect: restore stream → isStreaming true", {
+        selectedChatId,
+        assistantMessageId: stream.assistantMessageId,
+      });
       activeAssistantMessageIdRef.current = stream.assistantMessageId;
       streamedTextRef.current = stream.streamedText;
       activeStreamChatIdRef.current = selectedChatId;
@@ -1099,6 +1153,10 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       activeToolMessageIdRef.current = stream.toolMessageId;
       setIsStreaming(true);
     } else {
+      console.log("[creez:stream-debug] selectedChatId effect: no stream in map → setIsStreaming(false)", {
+        selectedChatId,
+        mapKeys: Array.from(chatStreamsRef.current.keys()),
+      });
       setIsStreaming(false);
     }
   }, [selectedChatId]);
@@ -1337,6 +1395,13 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   const handleIncomingAgentEvent = (event: AgentEventPayload) => {
     const eventChatId = event.chatId ?? null;
     const currentSelectedChatId = selectedChatIdRef.current;
+    /** Main-process events always carry chatId when the session was created with one; if missing, fall back to the selected chat so chatStreamsRef (keyed by real chat UUID) still resolves. Otherwise agent_end is mis-handled and isStreaming never clears (stuck “···”). */
+    const streamLookupKey =
+      eventChatId != null && String(eventChatId).trim() !== ""
+        ? String(eventChatId).trim()
+        : currentSelectedChatId != null && String(currentSelectedChatId).trim() !== ""
+          ? String(currentSelectedChatId).trim()
+          : "";
     const pendingInitChatId = pendingInitChatIdRef.current ?? null;
     const isForPendingInit =
       event.type === "agent_ready" &&
@@ -1354,6 +1419,20 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         role: event.message?.role || "",
         toolName: event.toolName || event.message?.toolName || "",
         forCurrentChat: isForCurrentChat,
+      });
+    }
+    if (event.type === "agent_end" || event.type === "message_end") {
+      console.log("[creez:stream-debug] incoming event (pre-handler)", {
+        type: event.type,
+        eventChatId: eventChatId ?? null,
+        streamLookupKey,
+        currentSelectedChatId: currentSelectedChatId ?? null,
+        isForCurrentChat,
+        mapKeys: Array.from(chatStreamsRef.current.keys()),
+        streamEntry: streamLookupKey ? chatStreamsRef.current.get(streamLookupKey) : undefined,
+        activeAssistantMessageIdRef: activeAssistantMessageIdRef.current,
+        isStreamingRef: isStreamingRef.current,
+        activeStreamChatIdRef: activeStreamChatIdRef.current,
       });
     }
     switch (event.type) {
@@ -1381,8 +1460,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         if (event.message?.role !== "assistant") return;
         const nextRaw = parseAssistantText(event.message?.content);
         if (!nextRaw) return;
-        const streamKey = eventChatId || "";
-        const stream = chatStreamsRef.current.get(streamKey);
+        const stream = chatStreamsRef.current.get(streamLookupKey);
         if (stream) {
           const prev = stream.streamedText || "";
           let next: string;
@@ -1406,7 +1484,13 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         const fullText = stream?.streamedText || nextRaw;
         streamedTextRef.current = fullText;
         const assistantId = activeAssistantMessageIdRef.current;
-        if (!assistantId) return;
+        if (!assistantId) {
+          console.warn("[creez:stream-debug] message_update skipped: no activeAssistantMessageIdRef", {
+            streamLookupKey,
+            hasStream: Boolean(stream),
+          });
+          return;
+        }
         setMessages((prevMessages) =>
           prevMessages.map((msg) => (msg.id === assistantId ? { ...msg, content: fullText } : msg))
         );
@@ -1414,8 +1498,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       }
       case "message_end": {
         if (event.message?.role !== "assistant") return;
-        const meStreamKey = eventChatId || "";
-        const meStream = chatStreamsRef.current.get(meStreamKey);
+        const meStream = chatStreamsRef.current.get(streamLookupKey);
         const fromEvent = parseAssistantText(event.message?.content);
         const accumulated = meStream?.streamedText ?? streamedTextRef.current ?? "";
         // Prefer accumulated text when longer (avoids overwriting with only the post–tool-call segment)
@@ -1441,11 +1524,16 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
             updatedAt: Math.floor(Date.now() / 1000),
           });
         }
-        if (eventChatId) {
-          const preview = finalText.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
-          setChatList((prev) =>
-            prev.map((c) => (c.id === eventChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
-          );
+        {
+          const previewChatId = eventChatId ?? (isForCurrentChat ? currentSelectedChatId : null);
+          if (previewChatId) {
+            const preview = finalText.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
+            setChatList((prev) =>
+              prev.map((c) =>
+                String(c.id) === String(previewChatId) ? { ...c, lastMessage: preview, time: formatNowTime() } : c
+              )
+            );
+          }
         }
         if (isForCurrentChat) {
           streamedTextRef.current = finalText;
@@ -1459,16 +1547,27 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         return;
       }
       case "agent_end": {
-        const aeStreamKey = eventChatId || "";
-        const aeStream = chatStreamsRef.current.get(aeStreamKey);
+        const aeStream = chatStreamsRef.current.get(streamLookupKey);
 
         if (isForCurrentChat && aeStream && activeAssistantMessageIdRef.current &&
             aeStream.assistantMessageId !== activeAssistantMessageIdRef.current) {
+          console.warn("[creez:stream-debug] agent_end IGNORED (stale stream id mismatch)", {
+            streamLookupKey,
+            aeStreamAssistantId: aeStream.assistantMessageId,
+            activeAssistantMessageIdRef: activeAssistantMessageIdRef.current,
+          });
           console.log("[creez:chat] agent_end IGNORED (stale, stream belongs to previous prompt)");
-          chatStreamsRef.current.delete(aeStreamKey);
+          chatStreamsRef.current.delete(streamLookupKey);
           return;
         }
         if (isForCurrentChat && !aeStream && activeAssistantMessageIdRef.current && isStreamingRef.current) {
+          console.warn("[creez:stream-debug] agent_end IGNORED (no stream entry — isStreaming stuck risk)", {
+            streamLookupKey,
+            eventChatId: eventChatId ?? null,
+            currentSelectedChatId: currentSelectedChatId ?? null,
+            activeAssistantMessageIdRef: activeAssistantMessageIdRef.current,
+            mapKeys: Array.from(chatStreamsRef.current.keys()),
+          });
           console.log("[creez:chat] agent_end IGNORED (stale, no matching stream but new stream is active)");
           return;
         }
@@ -1482,6 +1581,11 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
           toolCallsCount: aeTc?.length ?? 0,
           forCurrentChat: isForCurrentChat,
         });
+        console.log("[creez:stream-debug] agent_end APPLIED → clearing streaming state", {
+          streamLookupKey,
+          endAssistantId: endAssistantId ?? null,
+          willSetIsStreamingFalse: isForCurrentChat,
+        });
         if (endAssistantId) {
           void updateChatMessage({
             id: endAssistantId,
@@ -1491,13 +1595,18 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
             updatedAt: Math.floor(Date.now() / 1000),
           });
         }
-        if (eventChatId) {
-          const preview = endContent.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
-          setChatList((prev) =>
-            prev.map((c) => (c.id === eventChatId ? { ...c, lastMessage: preview, time: formatNowTime() } : c))
-          );
+        {
+          const previewChatId = eventChatId ?? (isForCurrentChat ? currentSelectedChatId : null);
+          if (previewChatId) {
+            const preview = endContent.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
+            setChatList((prev) =>
+              prev.map((c) =>
+                String(c.id) === String(previewChatId) ? { ...c, lastMessage: preview, time: formatNowTime() } : c
+              )
+            );
+          }
         }
-        chatStreamsRef.current.delete(aeStreamKey);
+        chatStreamsRef.current.delete(streamLookupKey);
         if (isForCurrentChat) {
           const assistantId = activeAssistantMessageIdRef.current;
           if (assistantId) {
@@ -1544,8 +1653,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
               : event.message?.errorMessage || "";
           if (tcStatus === "failure") tcResult = event.message?.errorMessage || tcResult;
         }
-        const dfStreamKey = eventChatId || "";
-        const dfStream = chatStreamsRef.current.get(dfStreamKey);
+        const dfStream = chatStreamsRef.current.get(streamLookupKey);
         if (dfStream) {
           const existingIdx = dfStream.toolCalls.findIndex((tc) => tc.id === id);
           const base = existingIdx >= 0 ? dfStream.toolCalls[existingIdx] : null;
@@ -1861,6 +1969,12 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       toolCalls: [],
       toolMessageId: null,
     });
+    console.log("[creez:stream-debug] doSendMessage: stream map set + prompt", {
+      chatId: activeChat.id,
+      assistantId,
+      mapKeysAfter: Array.from(chatStreamsRef.current.keys()),
+      sendAgentPromptChatId: selectedChatId ?? null,
+    });
     setIsStreaming(true);
     setMessages((prev) => [
       ...prev,
@@ -1952,6 +2066,11 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
 
     if (isStreamingRef.current) {
       const displayText = composedContent.slice(0, 80) + (composedContent.length > 80 ? "..." : "");
+      console.log("[creez:stream-debug] handleSend: queued (isStreamingRef true)", {
+        selectedChatId: selectedChatId ?? null,
+        activeAssistantMessageIdRef: activeAssistantMessageIdRef.current,
+        queueLenBefore: messageQueueRef.current.length,
+      });
       updateMessageQueue((prev) => [...prev, {
         id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         displayText,
