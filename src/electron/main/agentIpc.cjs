@@ -313,6 +313,11 @@ function registerAgentIpc(ipcMain, deps = {}) {
     try {
       const engine = currentEngine || getPiEngine();
       const hasSession = await engine.hasSession(chatId);
+      console.log("[creez:stream-debug][main] AGENT_PROMPT", {
+        chatId: chatId || null,
+        hasSession,
+        textPreview: textPreview.slice(0, 120),
+      });
       log("agent:prompt:session", { hasSession, chatId: chatId || null });
       if (!hasSession) {
         console.warn("[agentIpc] AGENT_PROMPT:noSession", { chatId: chatId || null });

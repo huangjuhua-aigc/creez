@@ -34,7 +34,8 @@ const BOT_CONTACT_ID = "11111111-1111-1111-1111-111111111111";
 const BOT_CHAT_ID = "1f2e3d4c-5b6a-47d8-9c01-23456789abcd";
 const BOT_WELCOME_MESSAGE_ID = "2a3b4c5d-6e7f-48a9-b012-3456789abcde";
 
-const ROUNDCLOSER_AGENT_ID = "a7234742-761a-49ba-9deb-2eef7b5ae55b";
+/** Creez Round Closer: canonical backend agent UUID (`contacts.id` === `remote_agent_id`, same as server). */
+const ROUNDCLOSER_BACKEND_AGENT_ID = "a7234742-761a-49ba-9deb-2eef7b5ae55b";
 const ROUNDCLOSER_CHAT_ID = "rc000001-0001-4000-8000-000000000001";
 const ROUNDCLOSER_MSG_ID = "rc000001-0001-4000-8000-000000000002";
 const ROUNDCLOSER_NAME = "Creez Round Closer";
@@ -169,18 +170,18 @@ function seedIfEmpty(db, options = {}) {
     });
 
     const rcContactInserted = insertContact.run({
-      id: ROUNDCLOSER_AGENT_ID,
+      id: ROUNDCLOSER_BACKEND_AGENT_ID,
       type: "bot",
       name: ROUNDCLOSER_NAME,
       avatarPath: null,
       isDefault: 0,
       createdAt: createdAt + 1,
       updatedAt: base,
-      remoteAgentId: ROUNDCLOSER_AGENT_ID,
+      remoteAgentId: ROUNDCLOSER_BACKEND_AGENT_ID,
     }).changes;
     const rcChatInserted = insertChat.run({
       id: ROUNDCLOSER_CHAT_ID,
-      contactId: ROUNDCLOSER_AGENT_ID,
+      contactId: ROUNDCLOSER_BACKEND_AGENT_ID,
       createdAt: createdAt + 1,
       updatedAt: base,
       lastMessageAt: createdAt + 1,
@@ -193,7 +194,7 @@ function seedIfEmpty(db, options = {}) {
          AND (channel_chat_id IS NULL OR TRIM(channel_chat_id) = '')
          ORDER BY updated_at DESC LIMIT 1`,
       )
-      .get(ROUNDCLOSER_AGENT_ID);
+      .get(ROUNDCLOSER_BACKEND_AGENT_ID);
     const effectiveRcChatId = rcChatRow?.id || null;
     const rcMessageInserted =
       effectiveRcChatId != null
@@ -204,7 +205,7 @@ function seedIfEmpty(db, options = {}) {
             content: ROUNDCLOSER_GREETING,
             status: "done",
             modelUsed: activeModelId,
-            botId: ROUNDCLOSER_AGENT_ID,
+            botId: ROUNDCLOSER_BACKEND_AGENT_ID,
             createdAt: createdAt + 1,
             updatedAt: createdAt + 1,
           }).changes

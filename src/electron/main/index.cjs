@@ -58,6 +58,7 @@ const { registerChannelIpc } = require("./channelIpc.cjs");
 const { registerTaskIpc } = require("./taskIpc.cjs");
 const { registerStoryboardIpc } = require("./storyboardIpc.cjs");
 const { ChannelManager } = require("./channel/ChannelManager.cjs");
+const { SessionTracker } = require("./channel/SessionTracker.cjs");
 const { MemoryStore } = require("./memoryStore.cjs");
 const { SkillManager } = require("./skillManager.cjs");
 
@@ -65,6 +66,7 @@ const isMac = process.platform === "darwin";
 const isDev = !app.isPackaged || Boolean(process.env.VITE_DEV_SERVER_URL);
 let creezDb = null;
 let channelManager = null;
+let sessionTrackerInstance = null;
 
 function getStartupLogPath() {
   const homeDir = app.getPath("home");
@@ -389,12 +391,21 @@ app.whenReady().then(async () => {
     registerShellIpc(ipcMain);
     registerChatIpc(ipcMain, chatRepository, { contactRepository });
     registerContactIpc(ipcMain, contactRepository);
+    const sessionTracker = new SessionTracker({
+      chatRepository,
+      contactRepository,
+      assistantConfigRepository,
+      appStateStore,
+    });
+    sessionTrackerInstance = sessionTracker;
+
     channelManager = new ChannelManager({
       channelConfigRepository,
       contactRepository,
       chatRepository,
       assistantConfigRepository,
       appStateStore,
+      sessionTracker,
     });
     registerChannelIpc(ipcMain, { channelConfigRepository, contactRepository, channelManager });
     registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, skillManager, contactRepository, { creezHome });
@@ -402,7 +413,7 @@ app.whenReady().then(async () => {
     registerWorkspaceIpc(ipcMain, appStateStore);
     registerStoryboardIpc(ipcMain, { appStateStore, skillManager });
     registerAttachmentIpc(ipcMain);
-    registerAgentBuilderIpc(ipcMain, { appStateStore });
+    registerAgentBuilderIpc(ipcMain, { appStateStore, contactRepository });
     registerAgentIpc(ipcMain, {
       assistantConfigRepository,
       appStateStore,
@@ -447,6 +458,9 @@ app.whenReady().then(async () => {
     }
     startupLog("after loadMainAppInto");
     startSyncPullTask(contactRepository);
+    sessionTracker.start();
+    startupLog("SessionTracker started");
+
     startupLog("before channelManager.startAll");
     channelManager.startAll()
       .then(() => startupLog("channelManager.startAll done"))
@@ -474,6 +488,10 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", async () => {
   stopSyncPullTask();
+  if (sessionTrackerInstance) {
+    sessionTrackerInstance.stop();
+    sessionTrackerInstance = null;
+  }
   if (channelManager) {
     await channelManager.stopAll().catch(() => {});
     channelManager = null;

@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld("electron", {
     getDefaultBotId: () => ipcRenderer.invoke(CHANNELS.CONTACT_GET_DEFAULT_BOT_ID),
     addRemoteAgent: (payload) => ipcRenderer.invoke(CHANNELS.CONTACT_ADD_REMOTE_AGENT, payload),
     delete: (payload) => ipcRenderer.invoke(CHANNELS.CONTACT_DELETE, payload),
+    onListChanged: (listener) => {
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on(CHANNELS.CONTACT_LIST_CHANGED, wrapped);
+      return () => ipcRenderer.removeListener(CHANNELS.CONTACT_LIST_CHANGED, wrapped);
+    },
   },
   channel: {
     listConfigs: (payload) => ipcRenderer.invoke(CHANNELS.CHANNEL_LIST_CONFIGS, payload ?? {}),

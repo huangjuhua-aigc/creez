@@ -68,6 +68,15 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
   }, []);
 
   useEffect(() => {
+    const api = window.electron?.contact;
+    if (!api?.onListChanged) return;
+    return api.onListChanged(() => {
+      void loadContacts();
+      void loadSuggestedBots();
+    });
+  }, [loadContacts, loadSuggestedBots]);
+
+  useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
         setShowSearchDropdown(false);

@@ -133,9 +133,13 @@ export async function createAndSubscribe(sender, config) {
     memoryContent,
     memoryPath,
     chatId: configChatId,
+    sessionKey: configSessionKey,
   } = config;
   const chatId = configChatId != null && String(configChatId).trim() !== "" ? String(configChatId).trim() : null;
-  const botKey = contactId || chatId || "";
+  /** Optional: channel external sessions — isolate runner key while keeping contactId for tools (see PiConversationEngine). */
+  const explicitSessionKey =
+    configSessionKey != null && String(configSessionKey).trim() !== "" ? String(configSessionKey).trim() : null;
+  const botKey = explicitSessionKey || contactId || chatId || "";
   const listenerId = chatId ? `ui:${chatId}` : "ui";
 
   if (chatId && chatId !== botKey) {
@@ -146,7 +150,11 @@ export async function createAndSubscribe(sender, config) {
   const existing = sessionsByBot.get(botKey);
   const fingerprint = configFingerprint(assistantConfig, assistantConfigId, defaultContactId);
   // Reuse only if workDir and assistant config (skills, systemPrompt) match
-  if (existing?.session && existing.workDir === cwd && existing.configFingerprint === fingerprint) {
+  if (
+    existing?.session &&
+    existing.workDir === cwd &&
+    existing.configFingerprint === fingerprint
+  ) {
     existing.listeners.set(listenerId, sender);
     if (existing.authStorage && apiKey) {
       existing.authStorage.setRuntimeApiKey(provider, apiKey);
@@ -215,6 +223,8 @@ export async function createAndSubscribe(sender, config) {
   const builtinSkillPath = path.join(APP_ROOT_DIR, "skills", "builtin", "skills");
   const replyInstructions = loadBuiltinReplyInstructions(builtinSkillPath, BUILTIN_SKILL_IDS);
   const builtinRegistry = createBuiltinSkillRegistry();
+  /** Set after sessionEntry is created; used so tool/builtin events use the chatId of the active prompt turn (not only init-time chatId). */
+  let sessionEntryForEvents = null;
   const builtinExecutor = createBuiltinSkillExecutor({
     registry: builtinRegistry,
     runtimeContext: {
@@ -227,7 +237,11 @@ export async function createAndSubscribe(sender, config) {
       ...(isDefaultBot ? {} : { allowedBuiltinIds: enabledSkillIds }),
     },
     onEvent: (builtinEv) => {
-      broadcast("agent:event", { ...builtinEv, chatId: chatId ?? undefined });
+      const resolved =
+        sessionEntryForEvents?.lastPromptChatId != null && String(sessionEntryForEvents.lastPromptChatId).trim() !== ""
+          ? String(sessionEntryForEvents.lastPromptChatId).trim()
+          : (chatId ?? undefined);
+      broadcast("agent:event", { ...builtinEv, chatId: resolved });
     },
     replyInstructions,
   });
@@ -276,7 +290,6 @@ export async function createAndSubscribe(sender, config) {
     cwd,
     agentDir: resolvedAgentDir,
     model,
-    thinkingLevel: "off",
     authStorage,
     modelRegistry,
     sessionManager,
@@ -286,7 +299,18 @@ export async function createAndSubscribe(sender, config) {
   });
   console.log(`[agent-runner] createAndSubscribe: createAgentSession done (${Date.now() - t0}ms)`);
 
-  const sessionEntry = { session, unsubscribe: null, authStorage, listeners, workDir: cwd, configFingerprint: fingerprint, resourceLoader };
+  const sessionEntry = {
+    session,
+    unsubscribe: null,
+    authStorage,
+    listeners,
+    workDir: cwd,
+    configFingerprint: fingerprint,
+    resourceLoader,
+    /** Creez chatId for the in-flight prompt(); events must use this when session is reused across chats. */
+    lastPromptChatId: null,
+  };
+  sessionEntryForEvents = sessionEntry;
   let pendingErrorMsg = null;
   let turnHadSuccessfulReply = false;
   const unsubscribe = session.subscribe((ev) => {
@@ -337,7 +361,20 @@ export async function createAndSubscribe(sender, config) {
         pendingErrorMsg = null;
         turnHadSuccessfulReply = false;
       }
-      broadcast("agent:event", { ...serializeEvent(ev), chatId: chatId ?? undefined });
+      const resolvedEventChatId =
+        sessionEntry.lastPromptChatId != null && String(sessionEntry.lastPromptChatId).trim() !== ""
+          ? String(sessionEntry.lastPromptChatId).trim()
+          : (chatId ?? undefined);
+      if (ev.type === "agent_end" || ev.type === "message_end") {
+        console.log("[creez:stream-debug][main] broadcast to renderer", {
+          type: ev.type,
+          botKey,
+          initChatId: chatId ?? null,
+          lastPromptChatId: sessionEntry.lastPromptChatId ?? null,
+          resolvedEventChatId: resolvedEventChatId ?? null,
+        });
+      }
+      broadcast("agent:event", { ...serializeEvent(ev), chatId: resolvedEventChatId });
     } catch (error) {
       console.error("[creezv2 agent-runner] event forward error:", error?.message || String(error));
     }
@@ -366,6 +403,12 @@ export async function prompt(payload) {
   }
 
   const run = async () => {
+    entry.lastPromptChatId = rawKey || null;
+    console.log("[creez:stream-debug][main] prompt() run", {
+      botKey,
+      rawChatId: rawKey || null,
+      lastPromptChatId: entry.lastPromptChatId,
+    });
     const promptText = String(text || "");
     entry.lastPromptText = promptText.slice(0, 300).replace(/\s+/g, " ").trim();
     if (promptText.length > 300) entry.lastPromptText += "…";

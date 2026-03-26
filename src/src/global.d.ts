@@ -126,6 +126,7 @@ declare global {
           greetingMessage?: string;
         }) => Promise<IpcResult<{ contactId: string; chatId: string | null; alreadyExists: boolean }>>;
         delete: (payload: { contactId: string }) => Promise<IpcResult<{ deleted: boolean; chatsRemoved: number }>>;
+        onListChanged: (listener: (payload: unknown) => void) => () => void;
       };
       channel: {
         listConfigs: (payload?: { botId?: string } | undefined) => Promise<

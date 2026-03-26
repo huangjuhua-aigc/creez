@@ -58,6 +58,7 @@ const CHANNELS = Object.freeze({
   STORYBOARD_AGENT_CREATE: "storyboard:agentCreate",
   STORYBOARD_DELETE_PROJECT: "storyboard:deleteProject",
   CONTACT_ADD_REMOTE_AGENT: "contact:addRemoteAgent",
+  CONTACT_LIST_CHANGED: "contact:listChanged",
   CONTACT_DELETE: "contact:delete",
   AGENT_BUILDER_LIST: "agentBuilder:list",
   AGENT_BUILDER_GET: "agentBuilder:get",

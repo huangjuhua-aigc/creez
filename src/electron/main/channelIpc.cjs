@@ -59,9 +59,12 @@ function registerChannelIpc(ipcMain, deps) {
 
       const result = channelConfigRepository.upsert({ botId, channelType, enabled, values });
       if (channelManager) {
-        channelManager.restartChannel(botId, channelType).catch((e) =>
-          console.warn("[channelIpc] restartChannel after save:", e?.message || e)
-        );
+        try {
+          await channelManager.restartChannel(botId, channelType);
+          console.log("[channelIpc] restartChannel after save: ok", { botId, channelType });
+        } catch (e) {
+          console.warn("[channelIpc] restartChannel after save:", e?.message || e);
+        }
       }
       return ok(result);
     } catch (e) {
@@ -77,6 +80,14 @@ function registerChannelIpc(ipcMain, deps) {
       if (!channelType) return err("VALIDATION_ERROR", "channelType is required");
 
       channelConfigRepository.delete(botId, channelType);
+      if (channelManager) {
+        try {
+          await channelManager.stopOne(botId, channelType);
+          console.log("[channelIpc] stopOne after delete: ok", { botId, channelType });
+        } catch (e) {
+          console.warn("[channelIpc] stopOne after delete:", e?.message || e);
+        }
+      }
       return ok({ deleted: true });
     } catch (e) {
       console.error("[channelIpc] deleteConfig error:", e?.message || e);

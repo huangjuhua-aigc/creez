@@ -1,6 +1,6 @@
 /**
- * Starts and stops channel adapters for the default bot. Only Feishu is implemented.
- * Reads channel_configs (enabled=1, default bot_id) and starts the corresponding adapter.
+ * Starts and stops channel adapters for all bots (default + non-default).
+ * Reads channel_configs (enabled=1) and starts the corresponding adapter per bot_id.
  */
 
 const fs = require("node:fs");
@@ -35,38 +35,36 @@ class ChannelManager {
   async startAll() {
     channelLog("startAll() called");
     try {
-      const { channelConfigRepository, contactRepository } = this._deps;
-      const defaultBotId = contactRepository?.getDefaultAssistantConfigId?.() ?? "11111111-1111-1111-1111-111111111111";
-      const list = channelConfigRepository.listByBotId(defaultBotId);
-      const enabled = list.filter((c) => c.enabled);
-      channelLog("defaultBotId=" + defaultBotId + " | configs=" + list.length + " | enabled=" + enabled.length);
-      for (const item of enabled) {
-        const full = channelConfigRepository.getByBotAndType(defaultBotId, item.channelType);
-        const hasCreds = full?.credentials && typeof full.credentials === "object";
-        const feishuReady = item.channelType === "feishu" && hasCreds && full.credentials.appId && full.credentials.appSecret;
-        const wecomReady = item.channelType === "wecom" && hasCreds && full.credentials.botId && full.credentials.secret;
-        const otherReady = item.channelType !== "feishu" && item.channelType !== "wecom" && item.channelType !== "weixin_personal" && hasCreds;
-        if (item.channelType === "weixin_personal") {
-          // weixin_personal loads saved token from disk; always attempt start
-          channelLog("starting weixin_personal (token loaded from disk if available)...");
-        } else if (!full || !hasCreds) {
-          channelLog("skip " + item.channelType + ": no config or credentials");
+      const { channelConfigRepository } = this._deps;
+      const allEnabled = channelConfigRepository.listAllEnabled();
+      channelLog("total enabled configs across all bots: " + allEnabled.length);
+      for (const item of allEnabled) {
+        const creds = item.credentials;
+        const hasCreds = creds && typeof creds === "object";
+        const ct = item.channelType;
+        const feishuReady = ct === "feishu" && hasCreds && creds.appId && creds.appSecret;
+        const wecomReady = ct === "wecom" && hasCreds && creds.botId && creds.secret;
+        const otherReady = ct !== "feishu" && ct !== "wecom" && ct !== "weixin_personal" && hasCreds;
+        if (ct === "weixin_personal") {
+          channelLog("starting weixin_personal for bot " + item.botId + " (token loaded from disk if available)...");
+        } else if (!hasCreds) {
+          channelLog("skip " + ct + " for bot " + item.botId + ": no credentials");
           continue;
-        } else if (item.channelType === "feishu" && !feishuReady) {
-          channelLog("skip feishu: missing appId or appSecret (check Advanced Settings → Channel)");
+        } else if (ct === "feishu" && !feishuReady) {
+          channelLog("skip feishu for bot " + item.botId + ": missing appId or appSecret");
           continue;
-        } else if (item.channelType === "wecom" && !wecomReady) {
-          channelLog("skip wecom: missing botId or secret (check Advanced Settings → Channel)");
+        } else if (ct === "wecom" && !wecomReady) {
+          channelLog("skip wecom for bot " + item.botId + ": missing botId or secret");
           continue;
         } else if (!feishuReady && !wecomReady && !otherReady) {
           continue;
         }
-        channelLog("starting " + item.channelType + " ...");
+        channelLog("starting " + ct + " for bot " + item.botId + " ...");
         await this.startOne({
-          botId: defaultBotId,
-          channelType: item.channelType,
-          credentials: full.credentials,
-          extra: full.extra || {},
+          botId: item.botId,
+          channelType: ct,
+          credentials: item.credentials,
+          extra: item.extra || {},
         });
       }
       channelLog("started " + this._adapters.size + " channel(s)");

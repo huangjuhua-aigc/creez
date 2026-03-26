@@ -57,6 +57,7 @@ class PiConversationEngine {
       memoryContent: context.memoryContent || "",
       memoryPath: context.memoryPath || "",
       chatId: context.chatId || null,
+      sessionKey: context.sessionKey || null,
       channelSend: context.channelSend,
     };
     await runner.createAndSubscribe(sender, config);

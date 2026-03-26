@@ -1,9 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
-import { Bot, Plus, X, Sparkles, Camera, Database, ChevronDown, ChevronUp, Radio, Save, Globe, Trash2 } from "lucide-react";
+import { Bot, Plus, X, Sparkles, Camera, Database, ChevronDown, ChevronUp, Save, Globe, Trash2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { cn } from "../../utils/cn";
 import { toast } from "sonner";
-import { ChannelPlatformIconBox } from "./ChannelPlatformIcon";
+import { BotChannelConfigPanel } from "./BotChannelConfigPanel";
 
 type AgentListItem = {
   id: string;
@@ -11,13 +11,6 @@ type AgentListItem = {
   avatar_url: string | null;
   status: string;
   updated_at: string;
-};
-
-type NotifyChannel = {
-  id: string;
-  channel_type: string;
-  enabled: boolean;
-  config: Record<string, string>;
 };
 
 type AgentDetail = {
@@ -28,74 +21,8 @@ type AgentDetail = {
   greeting_message: string;
   knowledge: string;
   skills_json: Record<string, boolean>;
-  notify_channels: NotifyChannel[];
   status: string;
 };
-
-interface ChannelFieldDef {
-  key: string;
-  label: string;
-  type: "text" | "password";
-  placeholder: string;
-  hint?: string;
-}
-
-const CHANNEL_DEFS: Record<string, { label: string; color: string; fields: ChannelFieldDef[] }> = {
-  weixin_personal: {
-    label: "WeChat",
-    color: "bg-green-50 text-green-600",
-    fields: [],
-  },
-  feishu: {
-    label: "Feishu / Lark",
-    color: "bg-blue-50 text-blue-600",
-    fields: [
-      { key: "FEISHU_APP_ID",     label: "App ID",     type: "text", placeholder: "cli_xxxxxxxxxxxxxxxx",    hint: "Found in Feishu Open Platform → Credentials" },
-      { key: "FEISHU_APP_SECRET", label: "App Secret", type: "text", placeholder: "Enter App Secret",        hint: "Keep this private — do not share" },
-      { key: "FEISHU_OPEN_ID",    label: "Open ID",    type: "text", placeholder: "ou_xxxxxxxxxxxxxxxx",     hint: "Target user / bot Open ID" },
-    ],
-  },
-  wecom: {
-    label: "WeCom",
-    color: "bg-green-50 text-green-600",
-    fields: [
-      { key: "WECOM_BOT_ID", label: "Bot ID",  type: "text", placeholder: "Enter Bot ID", hint: "Found in WeCom AI Bot console" },
-      { key: "WECOM_SECRET", label: "Secret",   type: "text", placeholder: "Enter Secret", hint: "Keep this private — do not share" },
-    ],
-  },
-  slack: {
-    label: "Slack",
-    color: "bg-yellow-50 text-yellow-600",
-    fields: [
-      { key: "SLACK_BOT_TOKEN",      label: "Bot Token",      type: "text", placeholder: "xoxb-xxxxxxxxxxxx" },
-      { key: "SLACK_SIGNING_SECRET", label: "Signing Secret", type: "text", placeholder: "Enter Signing Secret" },
-      { key: "SLACK_CHANNEL_ID",     label: "Channel ID",     type: "text", placeholder: "C0XXXXXXXX" },
-    ],
-  },
-  telegram: {
-    label: "Telegram",
-    color: "bg-sky-50 text-sky-600",
-    fields: [
-      { key: "TELEGRAM_BOT_TOKEN", label: "Bot Token", type: "text", placeholder: "123456789:ABC-xxxxxxxxxxxx" },
-      { key: "TELEGRAM_CHAT_ID",   label: "Chat ID",   type: "text", placeholder: "-100xxxxxxxxxx" },
-    ],
-  },
-  dingtalk: {
-    label: "DingTalk",
-    color: "bg-orange-50 text-orange-500",
-    fields: [
-      { key: "DINGTALK_APP_KEY",    label: "App Key",    type: "text", placeholder: "dingxxxxxxxxxx" },
-      { key: "DINGTALK_APP_SECRET", label: "App Secret", type: "text", placeholder: "Enter App Secret" },
-      { key: "DINGTALK_ROBOT_CODE", label: "Robot Code", type: "text", placeholder: "Enter Robot Code" },
-    ],
-  },
-};
-
-const CHANNEL_OPTIONS = Object.entries(CHANNEL_DEFS).map(([id, def]) => ({
-  id,
-  label: def.label,
-  available: id === "feishu" || id === "wecom" || id === "weixin_personal",
-}));
 
 const EMPTY_AGENT: AgentDetail = {
   id: "",
@@ -105,7 +32,6 @@ const EMPTY_AGENT: AgentDetail = {
   greeting_message: "",
   knowledge: "",
   skills_json: { knowledge_search: true, vc_lead_capture: true },
-  notify_channels: [],
   status: "draft",
 };
 
@@ -118,7 +44,6 @@ export function AgentBuilder() {
   const [isNew, setIsNew] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [isKnowledgeOpen, setIsKnowledgeOpen] = useState(false);
-  const [channelOpenSet, setChannelOpenSet] = useState<Set<string>>(new Set());
 
   const api = window.electron?.agentBuilder;
 
@@ -149,13 +74,11 @@ export function AgentBuilder() {
         greeting_message: d.greeting_message,
         knowledge: d.knowledge || "",
         skills_json: d.skills_json || { knowledge_search: true, vc_lead_capture: true },
-        notify_channels: d.notify_channels || [],
         status: d.status,
       });
       setAvatarPreview(d.avatar_url || "");
       setIsNew(false);
       setIsKnowledgeOpen(!!d.knowledge || !!d.system_prompt);
-      setChannelOpenSet(new Set((d.notify_channels || []).map((ch: NotifyChannel) => ch.id)));
     }
   }, [api]);
 
@@ -171,7 +94,6 @@ export function AgentBuilder() {
     setAvatarPreview("");
     setIsNew(true);
     setIsKnowledgeOpen(true);
-    setChannelOpenSet(new Set());
   };
 
   const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -200,7 +122,6 @@ export function AgentBuilder() {
         greeting_message: form.greeting_message,
         knowledge: form.knowledge,
         avatar_url: form.avatar_url,
-        notify_channels: form.notify_channels,
       });
       if (result.ok) {
         setIsNew(false);
@@ -219,7 +140,6 @@ export function AgentBuilder() {
         greeting_message: form.greeting_message,
         knowledge: form.knowledge,
         avatar_url: form.avatar_url,
-        notify_channels: form.notify_channels,
       });
       if (result.ok) {
         await loadList();
@@ -255,53 +175,6 @@ export function AgentBuilder() {
       }
       await loadList();
     }
-  };
-
-  const addChannel = () => {
-    const newId = crypto.randomUUID();
-    setForm((prev) => ({
-      ...prev,
-      notify_channels: [
-        ...prev.notify_channels,
-        { id: newId, channel_type: "feishu", enabled: true, config: {} },
-      ],
-    }));
-    setChannelOpenSet((prev) => new Set(prev).add(newId));
-  };
-
-  const updateChannel = (idx: number, patch: Partial<NotifyChannel>) => {
-    setForm((prev) => {
-      const channels = [...prev.notify_channels];
-      channels[idx] = { ...channels[idx], ...patch };
-      if (patch.channel_type && patch.channel_type !== prev.notify_channels[idx].channel_type) {
-        channels[idx].config = {};
-      }
-      return { ...prev, notify_channels: channels };
-    });
-  };
-
-  const toggleChannelOpen = (id: string) => {
-    setChannelOpenSet((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const removeChannel = (idx: number) => {
-    setForm((prev) => ({
-      ...prev,
-      notify_channels: prev.notify_channels.filter((_, i) => i !== idx),
-    }));
-  };
-
-  const updateChannelConfig = (idx: number, key: string, value: string) => {
-    setForm((prev) => {
-      const channels = [...prev.notify_channels];
-      channels[idx] = { ...channels[idx], config: { ...channels[idx].config, [key]: value } };
-      return { ...prev, notify_channels: channels };
-    });
   };
 
   const showForm = isNew || selectedId !== null;
@@ -524,124 +397,10 @@ export function AgentBuilder() {
               )}
             </div>
 
-            {/* Notification Channels — Same card style as ChannelSettings */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-8 h-8 rounded bg-orange-50 flex items-center justify-center text-orange-500">
-                  <Radio size={16} />
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">Channels</span>
-                  <span className="text-sm font-semibold text-gray-700 mt-1">Notification Output</span>
-                </div>
-              </div>
-
-              {form.notify_channels.map((ch, idx) => {
-                const def = CHANNEL_DEFS[ch.channel_type] || CHANNEL_DEFS.feishu;
-                const isOpen = channelOpenSet.has(ch.id);
-                return (
-                  <div key={ch.id} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm bg-white transition-all hover:shadow-md group">
-                    {/* Card header */}
-                    <div
-                      className="flex items-center justify-between p-4 bg-white cursor-pointer select-none group-hover:bg-gray-50/50 transition-colors"
-                      onClick={() => toggleChannelOpen(ch.id)}
-                    >
-                      <div className="flex items-center gap-3">
-                        <ChannelPlatformIconBox channelType={ch.channel_type} />
-                        <div className="flex flex-col">
-                          <span className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">Channel</span>
-                          <span className="text-sm font-semibold text-gray-700 mt-1">{def.label}</span>
-                        </div>
-                        <span className={cn(
-                          "ml-1 text-[10px] font-bold px-2 py-0.5 rounded-full border",
-                          ch.enabled ? "bg-green-50 text-green-600 border-green-100" : "bg-gray-100 text-gray-400 border-gray-200"
-                        )}>
-                          {ch.enabled ? "Active" : "Inactive"}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); removeChannel(idx); }}
-                          className="opacity-0 group-hover:opacity-100 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                        <button className="flex items-center justify-center w-8 h-8 text-gray-400 hover:text-gray-600 transition-all">
-                          {isOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Card body */}
-                    {isOpen && (
-                      <div className="p-6 pt-2 space-y-6 animate-in slide-in-from-top-2 duration-200 bg-white border-t border-gray-50">
-                        <div className="grid grid-cols-2 gap-6 items-end">
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Platform</label>
-                            <div className="relative">
-                              <select
-                                value={ch.channel_type}
-                                onChange={(e) => { e.stopPropagation(); const v = e.target.value; if (CHANNEL_OPTIONS.find((x) => x.id === v)?.available) updateChannel(idx, { channel_type: v }); }}
-                                className="w-full appearance-none bg-gray-50 border border-gray-200 text-gray-700 py-2.5 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] font-medium transition-all shadow-inner"
-                              >
-                                {CHANNEL_OPTIONS.map((o) => (
-                                  <option key={o.id} value={o.id} disabled={!o.available}>
-                                    {o.label}{!o.available ? " (Coming soon)" : ""}
-                                  </option>
-                                ))}
-                              </select>
-                              <ChevronDown className="absolute right-4 top-3.5 text-gray-400 pointer-events-none" size={14} />
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</label>
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); updateChannel(idx, { enabled: !ch.enabled }); }}
-                              className={cn(
-                                "flex items-center gap-2 w-full py-2.5 px-4 rounded-lg border text-sm font-medium transition-all",
-                                ch.enabled ? "bg-green-50 border-green-200 text-green-700 hover:bg-green-100" : "bg-gray-50 border-gray-200 text-gray-500 hover:bg-gray-100"
-                              )}
-                            >
-                              <span className={cn("w-2 h-2 rounded-full", ch.enabled ? "bg-green-500" : "bg-gray-400")} />
-                              {ch.enabled ? "Enabled" : "Disabled"}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="space-y-4">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Credentials</span>
-                            <div className="flex-1 h-px bg-gray-100" />
-                          </div>
-                          {def.fields.map((field) => (
-                            <div key={field.key} className="space-y-1.5">
-                              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{field.label}</label>
-                              <input
-                                type={field.type}
-                                value={ch.config[field.key] || ""}
-                                onChange={(e) => updateChannelConfig(idx, field.key, e.target.value)}
-                                placeholder={field.placeholder}
-                                className="w-full bg-gray-50 border border-gray-200 text-gray-800 py-2.5 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] font-mono text-sm transition-all shadow-inner"
-                              />
-                              {field.hint && <p className="text-[10px] text-gray-400 px-0.5">{field.hint}</p>}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              <button
-                onClick={addChannel}
-                className="w-full py-6 border-2 border-dashed border-gray-200 rounded-xl text-gray-400 font-bold hover:border-[#07C160] hover:text-[#07C160] hover:bg-[#07C160]/5 transition-all flex items-center justify-center gap-2 group active:scale-[0.99]"
-              >
-                <Plus size={20} className="group-hover:rotate-90 transition-transform duration-300" />
-                Add New Channel
-              </button>
-            </div>
+            {/* Channel Access — deploy this bot to Feishu / WeCom */}
+            {form.id && !isNew && (
+              <BotChannelConfigPanel botId={form.id} />
+            )}
 
             {/* Bottom Actions */}
             <div className="flex justify-end gap-3 pt-4 mt-auto">
