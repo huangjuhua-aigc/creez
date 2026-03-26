@@ -237,7 +237,7 @@ class FeishuChannelAdapter {
       return;
     }
     await this._startLongConnection();
-    feishuLog("started for default bot " + botId);
+    feishuLog("started for bot " + botId);
   }
 
   async _startLongConnection() {
@@ -458,7 +458,21 @@ class FeishuChannelAdapter {
     await this._onFeishuMessage(feishuChatId, feishuMsgId, content, images);
   }
 
+  _isDefaultBot() {
+    const { contactRepository } = this._deps;
+    const defaultId = contactRepository?.getDefaultAssistantConfigId?.() ?? "11111111-1111-1111-1111-111111111111";
+    return String(this._botId) === String(defaultId);
+  }
+
   async _onFeishuMessage(feishuChatId, feishuMsgId, content, images) {
+    if (this._isDefaultBot()) {
+      await this._handleDefaultBotMessage(feishuChatId, feishuMsgId, content, images);
+    } else {
+      await this._handleExternalBotMessage(feishuChatId, feishuMsgId, content, images);
+    }
+  }
+
+  async _handleDefaultBotMessage(feishuChatId, feishuMsgId, content, images) {
     const { chatRepository } = this._deps;
     const defaultBotId = this._botId;
 
@@ -508,6 +522,63 @@ class FeishuChannelAdapter {
       });
       await this.sendReply(feishuChatId, replyText);
       this._notifyRenderer("channel:newMessage", { chatId, channelType: "feishu" });
+    }
+  }
+
+  async _handleExternalBotMessage(feishuChatId, feishuMsgId, content, images) {
+    const { chatRepository } = this._deps;
+    const botId = this._botId;
+
+    const existing = chatRepository.db
+      .prepare("SELECT id FROM messages WHERE channel_message_id = ? LIMIT 1")
+      .get(feishuMsgId);
+    if (existing) return;
+
+    const { chatId } = chatRepository.getOrCreateChatForChannel({
+      contactId: botId,
+      channelType: "feishu",
+      channelChatId: feishuChatId,
+    });
+
+    const nowTs = Math.floor(Date.now() / 1000);
+    chatRepository.appendMessage({
+      id: randomUUID(),
+      chatId,
+      sender: "user",
+      content,
+      status: "done",
+      createdAt: nowTs,
+      updatedAt: nowTs,
+      channelType: "feishu",
+      channelMessageId: feishuMsgId,
+    });
+
+    const sessionKey = `${botId}:feishu:${feishuChatId}`;
+    const reply = await this._getExternalAgentReply(sessionKey, chatId, content, images || []);
+    const replyText = reply && typeof reply === "object" ? reply.content : reply;
+    if (replyText != null && replyText !== "") {
+      chatRepository.appendMessage({
+        id: randomUUID(),
+        chatId,
+        sender: "assistant",
+        botId,
+        content: replyText,
+        status: "done",
+        createdAt: Math.floor(Date.now() / 1000),
+        updatedAt: Math.floor(Date.now() / 1000),
+        channelType: "feishu",
+      });
+      await this.sendReply(feishuChatId, replyText);
+    }
+
+    if (this._deps.sessionTracker) {
+      this._deps.sessionTracker.touch({
+        sessionKey,
+        botId,
+        channelType: "feishu",
+        externalChatId: feishuChatId,
+        chatId,
+      });
     }
   }
 
@@ -622,6 +693,98 @@ class FeishuChannelAdapter {
 
     const toolCalls = Array.from(toolCallsMap.values());
     return { content: replyContent || null, toolCalls };
+  }
+
+  async _ensureExternalBotSession(sessionKey, chatId) {
+    const { resolveChannelBotConfig, resolveModelApiKey } = require("./channelBotConfig.cjs");
+    const { getRunner } = require("../conversation/PiConversationEngine.cjs");
+    const { contactRepository, assistantConfigRepository, chatRepository } = this._deps;
+    const { engine, rawConfig, assistantConfigId, defaultContactId } = await resolveChannelBotConfig(this._botId, {
+      contactRepository,
+      assistantConfigRepository,
+    });
+
+    const runner = await getRunner();
+    if (runner.hasSession(sessionKey)) {
+      return engine;
+    }
+
+    const models = Array.isArray(rawConfig?.models) ? rawConfig.models : [];
+    const activeModel = models.find((m) => m && m.active) || models[0];
+    if (!activeModel?.provider || !activeModel?.model) return null;
+    const apiKey = resolveModelApiKey({
+      assistantConfigRepository,
+      assistantConfigId,
+      defaultContactId,
+      activeModel,
+    });
+    if (!apiKey) return null;
+
+    const appStateStore = this._deps.appStateStore;
+    const appState = appStateStore ? await appStateStore.getState() : {};
+    const rawRoot = appState?.workspaceRoot ?? null;
+    const workDir = resolveWorkDir(rawRoot) || DEFAULT_WORKSPACE_ROOT;
+    try {
+      await fsp.mkdir(workDir, { recursive: true });
+    } catch (e) {
+      feishuLog("workspace dir create failed: " + (e?.message || String(e)));
+    }
+    const agentDir = path.join(os.homedir(), ".creez");
+
+    const historyRows = chatRepository.getMessages({ chatId, limit: 50 });
+    const memoryContent = (historyRows?.items || [])
+      .map((m) => `${m.sender === "user" ? "User" : "Assistant"}: ${m.content}`)
+      .join("\n");
+
+    await engine.init({
+      chatId: sessionKey,
+      sessionKey,
+      contactId: this._botId,
+      assistantConfigId,
+      defaultContactId,
+      assistantConfig: rawConfig,
+      provider: activeModel.provider,
+      modelId: activeModel.model,
+      apiKey,
+      workDir,
+      agentDir,
+      memoryContent,
+      memoryPath: "",
+      sendEvent: () => {},
+      sendError: () => {},
+    });
+    return engine;
+  }
+
+  async _getExternalAgentReply(sessionKey, chatId, text, images = []) {
+    const engine = await this._ensureExternalBotSession(sessionKey, chatId);
+    if (!engine) return null;
+
+    const { getRunner } = require("../conversation/PiConversationEngine.cjs");
+    const runner = await getRunner();
+
+    let replyContent = "";
+    const listenerId = `feishu-ext:${sessionKey}:${Date.now()}`;
+
+    const collector = {
+      send(channel, data) {
+        if (channel === "agent:eventError") return;
+        if (data.type === "message_end" && data.message?.content) {
+          const c = data.message.content;
+          replyContent = typeof c === "string" ? c : (Array.isArray(c) ? c.filter((x) => x.type === "text").map((x) => x.text).join("") : "");
+        }
+      },
+      isDestroyed() { return false; },
+    };
+
+    runner.addListener(sessionKey, listenerId, collector);
+    try {
+      await engine.prompt({ chatId: sessionKey, text, images: images || [] });
+    } finally {
+      runner.removeListener(sessionKey, listenerId);
+    }
+
+    return { content: replyContent || null };
   }
 
   _notifyRenderer(channel, data) {

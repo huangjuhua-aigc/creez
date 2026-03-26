@@ -133,9 +133,13 @@ export async function createAndSubscribe(sender, config) {
     memoryContent,
     memoryPath,
     chatId: configChatId,
+    sessionKey: configSessionKey,
   } = config;
   const chatId = configChatId != null && String(configChatId).trim() !== "" ? String(configChatId).trim() : null;
-  const botKey = contactId || chatId || "";
+  /** Optional: channel external sessions — isolate runner key while keeping contactId for tools (see PiConversationEngine). */
+  const explicitSessionKey =
+    configSessionKey != null && String(configSessionKey).trim() !== "" ? String(configSessionKey).trim() : null;
+  const botKey = explicitSessionKey || contactId || chatId || "";
   const listenerId = chatId ? `ui:${chatId}` : "ui";
 
   if (chatId && chatId !== botKey) {

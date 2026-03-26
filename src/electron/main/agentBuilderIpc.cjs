@@ -1,5 +1,16 @@
+const { BrowserWindow } = require("electron");
 const { CHANNELS } = require("./channels.cjs");
 const { randomUUID } = require("node:crypto");
+
+function broadcastContactListChanged() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (!win.isDestroyed()) win.webContents.send(CHANNELS.CONTACT_LIST_CHANGED, {});
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 const DEFAULT_BACKEND_URL = "https://creez.lighton.video";
 
@@ -42,7 +53,7 @@ async function backendFetch(path, options = {}) {
 }
 
 function registerAgentBuilderIpc(ipcMain, deps = {}) {
-  const { appStateStore } = deps;
+  const { appStateStore, contactRepository } = deps;
 
   async function getDeviceId() {
     if (!appStateStore) return randomUUID();
@@ -103,8 +114,25 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
         body: JSON.stringify({ ...payload, creator_device_id: deviceId }),
       });
       if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || `HTTP ${status}`);
-      console.log("[agentBuilderIpc] AGENT_BUILDER_CREATE:out", { id: body?.data?.id });
-      return ok(body.data);
+      const data = body.data;
+      console.log("[agentBuilderIpc] AGENT_BUILDER_CREATE:out", { id: data?.id });
+      if (contactRepository && data?.id) {
+        try {
+          const merged = {
+            ...data,
+            name: data.name ?? payload?.name,
+            system_prompt: data.system_prompt ?? payload?.system_prompt,
+            greeting_message: data.greeting_message ?? payload?.greeting_message,
+            skills_json: data.skills_json ?? payload?.skills_json,
+            avatar_url: data.avatar_url ?? payload?.avatar_url,
+          };
+          contactRepository.ensureAuthorCreatedAgent(merged);
+          broadcastContactListChanged();
+        } catch (e) {
+          console.warn("[agentBuilderIpc] ensureAuthorCreatedAgent:warn", e?.message || String(e));
+        }
+      }
+      return ok(data);
     } catch (e) {
       console.error("[agentBuilderIpc] AGENT_BUILDER_CREATE:error", e?.message || String(e));
       return err("NETWORK_ERROR", e?.message || String(e));

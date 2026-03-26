@@ -202,6 +202,104 @@ class ContactRepository {
   }
 
   /**
+   * After Agent Builder creates an agent on the backend, ensure a local contact + assistant_config + creez_app chat.
+   * Uses backend UUID as local contact id (same as addRemoteAgent). Idempotent if contact already exists.
+   */
+  ensureAuthorCreatedAgent(agentPayload) {
+    const agentId = String(agentPayload?.id || "").trim();
+    if (!agentId) throw new Error("agent id is required");
+    if (this.getById(agentId)) {
+      return { contactId: agentId, alreadyExists: true };
+    }
+
+    const defaultContactId = this.getDefaultAssistantConfigId();
+    const defaultConfigRow = this.db.prepare("SELECT models_json FROM assistant_config WHERE id = ?").get(defaultContactId);
+    const modelsJson =
+      typeof defaultConfigRow?.models_json === "string" && defaultConfigRow.models_json.trim() !== ""
+        ? defaultConfigRow.models_json
+        : "[]";
+
+    const ts = nowTs();
+    const name = String(agentPayload.name || "Agent").trim() || "Agent";
+    const avatarPath =
+      agentPayload.avatar_url != null && String(agentPayload.avatar_url).trim() !== ""
+        ? String(agentPayload.avatar_url)
+        : null;
+    const systemPrompt =
+      typeof agentPayload.system_prompt === "string" ? agentPayload.system_prompt : "";
+    let skills = {};
+    const sj = agentPayload.skills_json;
+    if (sj && typeof sj === "object" && !Array.isArray(sj)) {
+      skills = sj;
+    } else if (typeof sj === "string") {
+      skills = safeJsonParse(sj, {});
+    }
+    const skillsJson = JSON.stringify(skills && typeof skills === "object" ? skills : {});
+    const greeting =
+      agentPayload.greeting_message != null ? String(agentPayload.greeting_message).trim() : "";
+
+    const chatId = randomUUID();
+    const messageId = randomUUID();
+
+    const tx = this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO assistant_config (
+          id, name, avatar_path, system_prompt, skills_json, models_json, updated_at, engine_type
+        ) VALUES (@id, @name, @avatarPath, @systemPrompt, @skillsJson, @modelsJson, @updatedAt, 'pi')
+      `).run({
+        id: agentId,
+        name,
+        avatarPath,
+        systemPrompt: systemPrompt,
+        skillsJson,
+        modelsJson,
+        updatedAt: ts,
+      });
+
+      this.db.prepare(`
+        INSERT INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at, remote_agent_id)
+        VALUES (@id, 'bot', @name, @avatarPath, 0, @createdAt, @updatedAt, @remoteAgentId)
+      `).run({
+        id: agentId,
+        name,
+        avatarPath,
+        createdAt: ts,
+        updatedAt: ts,
+        remoteAgentId: agentId,
+      });
+
+      this.db.prepare(`
+        INSERT INTO chats (id, contact_id, channel_type, created_at, updated_at, last_message_at)
+        VALUES (@id, @contactId, 'creez_app', @createdAt, @updatedAt, @lastMessageAt)
+      `).run({
+        id: chatId,
+        contactId: agentId,
+        createdAt: ts,
+        updatedAt: ts,
+        lastMessageAt: ts,
+      });
+
+      if (greeting) {
+        this.db.prepare(`
+          INSERT INTO messages (id, chat_id, sender, bot_id, content, status, created_at, updated_at)
+          VALUES (@id, @chatId, 'assistant', @botId, @content, 'done', @createdAt, @updatedAt)
+        `).run({
+          id: messageId,
+          chatId,
+          botId: agentId,
+          content: greeting,
+          createdAt: ts,
+          updatedAt: ts,
+        });
+      }
+
+      return { contactId: agentId, chatId, alreadyExists: false };
+    });
+
+    return tx();
+  }
+
+  /**
    * Add a remote (published) agent as a local contact.
    * Uses the agent's backend UUID as the local contact id so botId / assistantConfigId stays consistent.
    */

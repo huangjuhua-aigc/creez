@@ -189,6 +189,30 @@ class ChannelConfigRepository {
     return { id, updated: false };
   }
 
+  /** Return all enabled channel config rows (across all bots) with full credentials. */
+  listAllEnabled() {
+    const rows = this.db
+      .prepare(
+        "SELECT id, bot_id, channel_type, enabled, credentials, extra, created_at, updated_at FROM channel_configs WHERE enabled = 1 ORDER BY bot_id, channel_type"
+      )
+      .all();
+
+    return rows.map((row) => {
+      let credentials = {};
+      let extra = {};
+      try { if (row.credentials) credentials = JSON.parse(row.credentials); } catch {}
+      try { if (row.extra) extra = JSON.parse(row.extra); } catch {}
+      return {
+        id: row.id,
+        botId: row.bot_id,
+        channelType: row.channel_type,
+        enabled: true,
+        credentials,
+        extra,
+      };
+    });
+  }
+
   delete(botId, channelType) {
     this.db.prepare("DELETE FROM channel_configs WHERE bot_id = ? AND channel_type = ?").run(botId, channelType);
   }
