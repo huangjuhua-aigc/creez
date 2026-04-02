@@ -17,6 +17,7 @@ import { buildSystemPrompt } from "./system-prompt.mjs";
 
 const require = createRequire(import.meta.url);
 const { BUILTIN_SKILL_IDS } = require("./builtinSkillIds.cjs");
+const { isCreezVerboseDebug } = require("./creezDebug.cjs");
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT_DIR = path.join(RUNNER_DIR, "..", "..");
@@ -29,13 +30,11 @@ const sessionsByBot = new Map();
 /** Reverse map: any key (chatId, feishu:chatId, etc.) → contactId, so callers can look up by chatId. */
 const keyToContactId = new Map();
 
-const DEBUG_AGENT = false;
-
 /** Single-line JSON log of full system prompt on each agent_start (set CREEZ_DEBUG_FULL_SYSTEM_PROMPT=1). */
 const DEBUG_FULL_SYSTEM_PROMPT = process.env.CREEZ_DEBUG_FULL_SYSTEM_PROMPT === "1";
 
 function log(scope, details) {
-  if (!DEBUG_AGENT) return;
+  if (!isCreezVerboseDebug()) return;
   const ts = new Date().toISOString();
   try {
     console.log(`[creezv2 agent-runner][${ts}][${scope}]`, details || "");
@@ -299,9 +298,13 @@ export async function createAndSubscribe(sender, config) {
           skills: base.skills.filter((s) => enabledSkillIds.has(s.name)),
         }),
   });
-  console.log(`[agent-runner] createAndSubscribe: resourceLoader.reload start (${Date.now() - t0}ms)`);
+  if (isCreezVerboseDebug()) {
+    console.log(`[agent-runner] createAndSubscribe: resourceLoader.reload start (${Date.now() - t0}ms)`);
+  }
   await resourceLoader.reload();
-  console.log(`[agent-runner] createAndSubscribe: resourceLoader.reload done (${Date.now() - t0}ms)`);
+  if (isCreezVerboseDebug()) {
+    console.log(`[agent-runner] createAndSubscribe: resourceLoader.reload done (${Date.now() - t0}ms)`);
+  }
 
   // Reasoning models (e.g. gpt-5, gpt-5-mini) require reasoning to be enabled.
   // The pi-ai library sends `reasoning: { effort: "none" }` when thinkingLevel is "off",
@@ -313,7 +316,9 @@ export async function createAndSubscribe(sender, config) {
     initialThinkingLevel = saved && saved !== "off" ? saved : "medium";
   }
 
-  console.log(`[agent-runner] createAndSubscribe: createAgentSession start (${Date.now() - t0}ms)`);
+  if (isCreezVerboseDebug()) {
+    console.log(`[agent-runner] createAndSubscribe: createAgentSession start (${Date.now() - t0}ms)`);
+  }
   const { session } = await createAgentSession({
     cwd,
     agentDir: resolvedAgentDir,
@@ -328,7 +333,9 @@ export async function createAndSubscribe(sender, config) {
     // Pi defaults to read/bash/edit/write when `tools` is omitted; A2A is chat-only (+ Creez customTools).
     ...(isA2aSession ? { tools: [] } : {}),
   });
-  console.log(`[agent-runner] createAndSubscribe: createAgentSession done (${Date.now() - t0}ms)`);
+  if (isCreezVerboseDebug()) {
+    console.log(`[agent-runner] createAndSubscribe: createAgentSession done (${Date.now() - t0}ms)`);
+  }
 
   const sessionEntry = {
     session,
@@ -365,11 +372,13 @@ export async function createAndSubscribe(sender, config) {
             "[creez:agent] system_prompt_full_json=" + JSON.stringify(session.systemPrompt ?? ""),
           );
         }
-        console.log("[creez:agent] === DEBUG: agent_start ===");
-        console.log("[creez:agent] active tools (" + activeTools.length + "):\n" + (toolDefs.join("\n") || "  (none)"));
-        console.log("[creez:agent] loaded skills (" + loadedSkills.length + "):\n" + (skillDefs.join("\n") || "  (none)"));
-        console.log("[creez:agent] system prompt (sent to model):\n", session.systemPrompt || "(empty)");
-        console.log("[creez:agent] === END DEBUG ===");
+        if (isCreezVerboseDebug()) {
+          console.log("[creez:agent] === DEBUG: agent_start ===");
+          console.log("[creez:agent] active tools (" + activeTools.length + "):\n" + (toolDefs.join("\n") || "  (none)"));
+          console.log("[creez:agent] loaded skills (" + loadedSkills.length + "):\n" + (skillDefs.join("\n") || "  (none)"));
+          console.log("[creez:agent] system prompt (sent to model):\n", session.systemPrompt || "(empty)");
+          console.log("[creez:agent] === END DEBUG ===");
+        }
         pendingErrorMsg = null;
         turnHadSuccessfulReply = false;
       }
@@ -377,7 +386,9 @@ export async function createAndSubscribe(sender, config) {
         log("event", { type: ev.type, role, toolName, textLen, botKey });
       }
       if (ev.type === "message_end" && ev.message?.role === "assistant" && contentStr) {
-        console.log("[creez:agent] LLM reply:\n", contentStr);
+        if (isCreezVerboseDebug()) {
+          console.log("[creez:agent] LLM reply:\n", contentStr);
+        }
         turnHadSuccessfulReply = true;
       }
       if (ev.type === "agent_end") {
@@ -401,7 +412,7 @@ export async function createAndSubscribe(sender, config) {
         sessionEntry.lastPromptChatId != null && String(sessionEntry.lastPromptChatId).trim() !== ""
           ? String(sessionEntry.lastPromptChatId).trim()
           : (chatId ?? undefined);
-      if (ev.type === "agent_end" || ev.type === "message_end") {
+      if (isCreezVerboseDebug() && (ev.type === "agent_end" || ev.type === "message_end")) {
         console.log("[creez:stream-debug][main] broadcast to renderer", {
           type: ev.type,
           botKey,
@@ -421,7 +432,9 @@ export async function createAndSubscribe(sender, config) {
 
   const builtinIds = builtinExecutor.listEnabledSkillIds();
   log("session_created", { botKey, listenerId, chatId, builtinSkills: builtinIds.length });
-  console.log(`[agent-runner] createAndSubscribe: sending agent_ready (total ${Date.now() - t0}ms)`, { botKey, chatId });
+  if (isCreezVerboseDebug()) {
+    console.log(`[agent-runner] createAndSubscribe: sending agent_ready (total ${Date.now() - t0}ms)`, { botKey, chatId });
+  }
   sender.send("agent:event", { type: "agent_ready", chatId: chatId ?? undefined });
 }
 
@@ -440,11 +453,13 @@ export async function prompt(payload) {
 
   const run = async () => {
     entry.lastPromptChatId = rawKey || null;
-    console.log("[creez:stream-debug][main] prompt() run", {
-      botKey,
-      rawChatId: rawKey || null,
-      lastPromptChatId: entry.lastPromptChatId,
-    });
+    if (isCreezVerboseDebug()) {
+      console.log("[creez:stream-debug][main] prompt() run", {
+        botKey,
+        rawChatId: rawKey || null,
+        lastPromptChatId: entry.lastPromptChatId,
+      });
+    }
     const promptText = String(text || "");
     entry.lastPromptText = promptText.slice(0, 300).replace(/\s+/g, " ").trim();
     if (promptText.length > 300) entry.lastPromptText += "…";

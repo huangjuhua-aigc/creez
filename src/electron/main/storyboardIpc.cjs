@@ -81,8 +81,19 @@ const {
   uploadLocalAssetFile: uploadLocalAssetFileStorage,
 } = require("./storyboard/storyboardStorage.cjs");
 
-const BACKEND_BASE_URL = "http://localhost:3001";
+const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
+const { isCreezVerboseDebug } = require("./creezDebug.cjs");
+
 const DEFAULT_CREEZ_API_KEY = "make_creator_easy";
+
+function storyboardBackendBase() {
+  return resolveCreezBackendBase();
+}
+
+function backendUnreachableMessage() {
+  const base = storyboardBackendBase();
+  return `Backend unreachable at ${base}. Check network or set CREEZ_A2A_GATEWAY_BASE / CREEZ_BACKEND_URL for a different host.`;
+}
 
 /** 无超时的 HTTP Agent，用于耗时的 storyboard/generate 请求，避免 UND_ERR_HEADERS_TIMEOUT */
 let noTimeoutAgent = null;
@@ -414,7 +425,7 @@ function registerStoryboardIpc(ipcMain, deps) {
       const apiKey = await getCreezApiKey();
       let response;
       try {
-        response = await fetch(`${BACKEND_BASE_URL}/media/generate-image`, {
+        response = await fetch(`${storyboardBackendBase()}/media/generate-image`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
           body: JSON.stringify({
@@ -429,7 +440,7 @@ function registerStoryboardIpc(ipcMain, deps) {
       } catch (fetchErr) {
         const msg = fetchErr?.message || String(fetchErr);
         if (msg === "fetch failed" || msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND")) {
-          return err("SERVICE_UNAVAILABLE", `Backend unreachable at ${BACKEND_BASE_URL}. Is creez_backend running (e.g. port 3001)?`);
+          return err("SERVICE_UNAVAILABLE", backendUnreachableMessage());
         }
         throw fetchErr;
       }
@@ -517,7 +528,7 @@ function registerStoryboardIpc(ipcMain, deps) {
       if (endFrameUrl) body.endFrameUrl = endFrameUrl;
 
       const apiKey = await getCreezApiKey();
-      const response = await fetch(`${BACKEND_BASE_URL}/media/generate-video`, {
+      const response = await fetch(`${storyboardBackendBase()}/media/generate-video`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(body),
@@ -590,7 +601,7 @@ function registerStoryboardIpc(ipcMain, deps) {
       });
 
       const apiKey = await getCreezApiKey();
-      const url = `${BACKEND_BASE_URL}/storyboard/generate`;
+      const url = `${storyboardBackendBase()}/storyboard/generate`;
       const fetchOpts = {
         method: "POST",
         headers: {
@@ -617,11 +628,13 @@ function registerStoryboardIpc(ipcMain, deps) {
       }
 
       const result = await parseChunkedStoryboardBody(response);
-      console.log("[creez storyboard] 后端返回 result.ok:", result.ok, "result.data keys:", result.data ? Object.keys(result.data) : []);
-      if (result.data?.content) {
-        console.log("[creez storyboard] 后端 content keys:", Object.keys(result.data.content));
-      } else {
-        console.warn("[creez storyboard] 后端未返回 content，result.data:", result.data ? JSON.stringify(result.data).slice(0, 300) : "undefined");
+      if (isCreezVerboseDebug()) {
+        console.log("[creez storyboard] 后端返回 result.ok:", result.ok, "result.data keys:", result.data ? Object.keys(result.data) : []);
+        if (result.data?.content) {
+          console.log("[creez storyboard] 后端 content keys:", Object.keys(result.data.content));
+        } else {
+          console.warn("[creez storyboard] 后端未返回 content，result.data:", result.data ? JSON.stringify(result.data).slice(0, 300) : "undefined");
+        }
       }
       if (!result.ok) {
         return err(
@@ -640,10 +653,7 @@ function registerStoryboardIpc(ipcMain, deps) {
     } catch (e) {
       const msg = e?.message || String(e);
       if (msg === "fetch failed" || msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND")) {
-        return err(
-          "SERVICE_UNAVAILABLE",
-          `Backend unreachable at ${BACKEND_BASE_URL}. Is creez_backend running (e.g. port 3001)?`
-        );
+        return err("SERVICE_UNAVAILABLE", backendUnreachableMessage());
       }
       console.error("[creez storyboard] agentCreate error", msg);
       return err("AGENT_CREATE_ERROR", msg);

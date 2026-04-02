@@ -13,6 +13,11 @@ function broadcastContactListChanged() {
 }
 
 const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
+const { isCreezVerboseDebug } = require("./creezDebug.cjs");
+
+function vlog(...args) {
+  if (isCreezVerboseDebug()) console.log(...args);
+}
 
 function ok(data) {
   return { ok: true, data };
@@ -25,7 +30,7 @@ function err(code, message) {
 async function backendFetch(path, options = {}) {
   const baseUrl = resolveCreezBackendBase().replace(/\/+$/, "");
   const url = `${baseUrl}${path}`;
-  console.log("[agentBuilderIpc] request", {
+  vlog("[agentBuilderIpc] request", {
     method: options.method || "GET",
     url,
     hasBody: Boolean(options.body),
@@ -35,7 +40,7 @@ async function backendFetch(path, options = {}) {
   try {
     const res = await fetch(url, { ...options, signal: controller.signal });
     const body = await res.json().catch(() => null);
-    console.log("[agentBuilderIpc] response", {
+    vlog("[agentBuilderIpc] response", {
       method: options.method || "GET",
       url,
       status: res.status,
@@ -62,7 +67,7 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
   ipcMain.handle(CHANNELS.APP_GET_DEVICE_ID, async () => {
     try {
       const id = await getDeviceId();
-      console.log("[agentBuilderIpc] APP_GET_DEVICE_ID:out", { deviceId: id });
+      vlog("[agentBuilderIpc] APP_GET_DEVICE_ID:out", { deviceId: id });
       return ok({ deviceId: id });
     } catch (e) {
       console.error("[agentBuilderIpc] APP_GET_DEVICE_ID:error", e?.message || String(e));
@@ -73,10 +78,10 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
   ipcMain.handle(CHANNELS.AGENT_BUILDER_LIST, async () => {
     try {
       const deviceId = await getDeviceId();
-      console.log("[agentBuilderIpc] AGENT_BUILDER_LIST:in", { deviceId });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_LIST:in", { deviceId });
       const { status, body } = await backendFetch(`/agents/mine?device_id=${encodeURIComponent(deviceId)}`);
       if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || `HTTP ${status}`);
-      console.log("[agentBuilderIpc] AGENT_BUILDER_LIST:out", { count: body?.data?.items?.length || 0 });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_LIST:out", { count: body?.data?.items?.length || 0 });
       return ok(body.data);
     } catch (e) {
       console.error("[agentBuilderIpc] AGENT_BUILDER_LIST:error", e?.message || String(e));
@@ -88,10 +93,10 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
     const id = String(payload?.id || "").trim();
     if (!id) return err("VALIDATION_ERROR", "id is required.");
     try {
-      console.log("[agentBuilderIpc] AGENT_BUILDER_GET:in", { id });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_GET:in", { id });
       const { status, body } = await backendFetch(`/agents/${encodeURIComponent(id)}`);
       if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || `HTTP ${status}`);
-      console.log("[agentBuilderIpc] AGENT_BUILDER_GET:out", { id: body?.data?.id });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_GET:out", { id: body?.data?.id });
       return ok(body.data);
     } catch (e) {
       console.warn("[agentBuilderIpc] AGENT_BUILDER_GET:warn", e?.message || String(e));
@@ -102,7 +107,7 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
   ipcMain.handle(CHANNELS.AGENT_BUILDER_CREATE, async (_event, payload) => {
     try {
       const deviceId = await getDeviceId();
-      console.log("[agentBuilderIpc] AGENT_BUILDER_CREATE:in", { deviceId, name: payload?.name });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_CREATE:in", { deviceId, name: payload?.name });
       const { status, body } = await backendFetch("/agents", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -110,7 +115,7 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
       });
       if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || `HTTP ${status}`);
       const data = body.data;
-      console.log("[agentBuilderIpc] AGENT_BUILDER_CREATE:out", { id: data?.id });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_CREATE:out", { id: data?.id });
       if (contactRepository && data?.id) {
         try {
           const merged = {
@@ -151,14 +156,14 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
     if (!id) return err("VALIDATION_ERROR", "id is required.");
     try {
       const deviceId = await getDeviceId();
-      console.log("[agentBuilderIpc] AGENT_BUILDER_UPDATE:in", { id, deviceId, name: payload?.name });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_UPDATE:in", { id, deviceId, name: payload?.name });
       const { status, body } = await backendFetch(`/agents/${encodeURIComponent(id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...payload, creator_device_id: deviceId }),
       });
       if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || `HTTP ${status}`);
-      console.log("[agentBuilderIpc] AGENT_BUILDER_UPDATE:out", { id: body?.data?.id });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_UPDATE:out", { id: body?.data?.id });
 
       if (assistantConfigRepository) {
         try {
@@ -195,14 +200,14 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
     if (!id) return err("VALIDATION_ERROR", "id is required.");
     try {
       const deviceId = await getDeviceId();
-      console.log("[agentBuilderIpc] AGENT_BUILDER_PUBLISH:in", { id, deviceId });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_PUBLISH:in", { id, deviceId });
       const { status, body } = await backendFetch(`/agents/${encodeURIComponent(id)}/publish`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ creator_device_id: deviceId }),
       });
       if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || `HTTP ${status}`);
-      console.log("[agentBuilderIpc] AGENT_BUILDER_PUBLISH:out", { id: body?.data?.id, status: body?.data?.status });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_PUBLISH:out", { id: body?.data?.id, status: body?.data?.status });
       return ok(body.data);
     } catch (e) {
       console.error("[agentBuilderIpc] AGENT_BUILDER_PUBLISH:error", e?.message || String(e));
@@ -215,12 +220,12 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
     if (!id) return err("VALIDATION_ERROR", "id is required.");
     try {
       const deviceId = await getDeviceId();
-      console.log("[agentBuilderIpc] AGENT_BUILDER_DELETE:in", { id, deviceId });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_DELETE:in", { id, deviceId });
       const { status, body } = await backendFetch(`/agents/${encodeURIComponent(id)}?device_id=${encodeURIComponent(deviceId)}`, {
         method: "DELETE",
       });
       if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || `HTTP ${status}`);
-      console.log("[agentBuilderIpc] AGENT_BUILDER_DELETE:out", { id });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_DELETE:out", { id });
       return ok({});
     } catch (e) {
       console.error("[agentBuilderIpc] AGENT_BUILDER_DELETE:error", e?.message || String(e));
@@ -232,10 +237,10 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
     const q = String(payload?.q || "").trim();
     if (!q) return ok({ items: [] });
     try {
-      console.log("[agentBuilderIpc] AGENT_BUILDER_SEARCH:in", { q });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_SEARCH:in", { q });
       const { status, body } = await backendFetch(`/agents/search?q=${encodeURIComponent(q)}`);
       if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || `HTTP ${status}`);
-      console.log("[agentBuilderIpc] AGENT_BUILDER_SEARCH:out", { q, count: body?.data?.items?.length || 0 });
+      vlog("[agentBuilderIpc] AGENT_BUILDER_SEARCH:out", { q, count: body?.data?.items?.length || 0 });
       return ok(body.data);
     } catch (e) {
       console.error("[agentBuilderIpc] AGENT_BUILDER_SEARCH:error", e?.message || String(e));
