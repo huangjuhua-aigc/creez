@@ -25,6 +25,7 @@ const CHANNELS = Object.freeze({
   SETTINGS_LIST_AVAILABLE_SKILLS: "settings:listAvailableSkills",
   SETTINGS_GET_SKILL_ENV: "settings:getSkillEnv",
   SETTINGS_SAVE_SKILL_ENV: "settings:saveSkillEnv",
+  SETTINGS_ASSISTANT_CONFIG_CHANGED: "settings:assistantConfigChanged",
   MEMORY_READ: "memory:read",
   MEMORY_WRITE: "memory:write",
   AGENT_INIT: "agent:init",
@@ -72,6 +73,16 @@ const CHANNELS = Object.freeze({
   WEIXIN_QR_START: "weixin:qrStart",
   WEIXIN_QR_WAIT: "weixin:qrWait",
   WEIXIN_STATUS: "weixin:status",
+  A2A_GET_STATUS: "a2a:getStatus",
+  A2A_DISCOVER: "a2a:discover",
+  A2A_OPEN_SESSION: "a2a:openSession",
+  A2A_SEND_MESSAGE: "a2a:sendMessage",
+  A2A_CLOSE_SESSION: "a2a:closeSession",
+  A2A_FETCH_MESSAGES: "a2a:fetchMessages",
+  A2A_SESSION_EVENT: "a2a:sessionEvent",
+  A2A_REFRESH_REGISTRATION: "a2a:refreshRegistration",
+  A2A_SEND_TO_REMOTE_BOT: "a2a:sendToRemoteBot",
+  A2A_TRIGGER_AUTO_DISCOVERY: "a2a:triggerAutoDiscovery",
 });
 
 module.exports = {

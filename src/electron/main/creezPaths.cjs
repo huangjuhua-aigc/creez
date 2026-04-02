@@ -9,25 +9,50 @@
  */
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 /** Subdirs under ~/.creez that are created on startup (system config only). */
 const CREEZ_SUBDIRS = ["avatars", "logs", "memory", "skills", "sessions"];
 
 /**
- * @param {string} homeDir - User home (e.g. app.getPath("home")).
+ * @param {string} homeOrCreezDir - User home (e.g. app.getPath("home")) OR creez dir itself.
  * @returns {string} Absolute path to the Creez config root (~/.creez).
  */
-function getCreezDir(homeDir) {
-  return path.join(homeDir, ".creez");
+function getCreezDir(homeOrCreezDir) {
+  const raw = String(homeOrCreezDir || "").trim();
+  if (!raw) return path.join(os.homedir(), ".creez");
+  const abs = path.resolve(raw);
+  if (abs === path.resolve(os.homedir())) return path.join(abs, ".creez");
+  return path.basename(abs).toLowerCase() === ".creez" ? abs : path.join(abs, ".creez");
+}
+
+/**
+ * Resolve Creez root directory with env override.
+ * - If CREEZ_HOME is set, use it directly.
+ * - Otherwise default to ~/.creez (based on provided home dir or os.homedir()).
+ *
+ * @param {string} [defaultHomeDir]
+ * @returns {string}
+ */
+function resolveCreezHome(defaultHomeDir) {
+  const envHome = String(process.env.CREEZ_HOME || "").trim();
+  if (envHome) return path.resolve(envHome);
+  return getCreezDir(defaultHomeDir || os.homedir());
 }
 
 /**
  * Ensures ~/.creez and system subdirs exist. Call once at app startup before using DB or agent.
- * @param {string} homeDir - User home (e.g. app.getPath("home")).
+ * @param {string} homeOrCreezDir - User home (e.g. app.getPath("home")) OR creez dir itself.
  */
-function ensureCreezDirs(homeDir) {
-  const creezDir = getCreezDir(homeDir);
+function ensureCreezDirs(homeOrCreezDir) {
+  const raw = String(homeOrCreezDir || "").trim();
+  const envHome = String(process.env.CREEZ_HOME || "").trim();
+  const isExplicitEnvHome =
+    raw &&
+    envHome &&
+    path.resolve(raw) === path.resolve(envHome);
+  const creezDir = isExplicitEnvHome ? path.resolve(raw) : getCreezDir(raw);
   fs.mkdirSync(creezDir, { recursive: true });
   for (const sub of CREEZ_SUBDIRS) {
     fs.mkdirSync(path.join(creezDir, sub), { recursive: true });
@@ -36,6 +61,7 @@ function ensureCreezDirs(homeDir) {
 
 module.exports = {
   getCreezDir,
+  resolveCreezHome,
   ensureCreezDirs,
   CREEZ_SUBDIRS,
 };

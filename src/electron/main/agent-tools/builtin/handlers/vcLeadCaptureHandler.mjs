@@ -1,11 +1,10 @@
+import { createRequire } from "node:module";
 import { asTextEnvelope, buildErrorEnvelope, buildSuccessEnvelope } from "../errorProtocol.mjs";
 
-const DEFAULT_TIMEOUT_MS = 15000;
+const require = createRequire(import.meta.url);
+const { resolveCreezBackendBase } = require("../../../creezBackendBase.cjs");
 
-function resolveLeadApiBase() {
-  const fromEnv = String(process.env.CREEZ_KNOWLEDGE_API_BASE || "").trim();
-  return fromEnv || "https://creez.lighton.video";
-}
+const DEFAULT_TIMEOUT_MS = 15000;
 
 function hasMinimalContact(args = {}) {
   const name = String(args?.name || "").trim();
@@ -44,8 +43,8 @@ export function createVcLeadCaptureHandler(runtimeContext = {}) {
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(new Error("timeout")), DEFAULT_TIMEOUT_MS);
-      const baseUrl = resolveLeadApiBase();
-      const endpoint = `${baseUrl.replace(/\/+$/, "")}/roundcloser/lead`;
+      const baseUrl = resolveCreezBackendBase();
+      const endpoint = `${baseUrl}/roundcloser/lead`;
 
       const body = {
         name,

@@ -1,13 +1,15 @@
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { getCreezDir } = require("./creezPaths.cjs");
 
 class MemoryStore {
   constructor(options = {}) {
     this.homeDir = options.homeDir || os.homedir();
+    this.creezHome = options.creezHome || getCreezDir(this.homeDir);
     this.fs = options.fs || fs;
     this.path = options.path || path;
-    this.defaultPath = options.defaultPath || this.path.join(this.homeDir, ".creez", "memory", "memory.md");
+    this.defaultPath = options.defaultPath || this.path.join(this.creezHome, "memory", "memory.md");
   }
 
   resolvePath(customPath) {

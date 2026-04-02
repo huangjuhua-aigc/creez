@@ -3,10 +3,12 @@ const fsSync = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { isBuiltinSkillId } = require("./builtinSkillIds.cjs");
+const { getCreezDir } = require("./creezPaths.cjs");
 
 class SkillManager {
   constructor(options = {}) {
     this.homeDir = options.homeDir || os.homedir();
+    this.creezHome = options.creezHome || getCreezDir(this.homeDir);
     this.baseDir = options.baseDir || path.join(__dirname, "..", "..");
     this.fs = options.fs || fs;
     this.fsSync = options.fsSync || fsSync;
@@ -18,7 +20,7 @@ class SkillManager {
   }
 
   getUserSkillsDir() {
-    return this.path.join(this.homeDir, ".creez", "skills");
+    return this.path.join(this.creezHome, "skills");
   }
 
   async listAvailableSkills() {
@@ -84,7 +86,7 @@ class SkillManager {
 
   /** Single .env path for all skill env (app-defined location). */
   getCreezEnvFilePath() {
-    return this.path.join(this.homeDir, ".creez", ".env");
+    return this.path.join(this.creezHome, ".env");
   }
 
   /** Which env keys each skill uses (for reading subset only). "creez" = app-level env in ~/.creez/.env (Creez API / 后端调用). */
@@ -119,8 +121,7 @@ class SkillManager {
 
   /** Write full key-value map to ~/.creez/.env. */
   async _writeCreezEnvFile(env) {
-    const creezDir = this.path.join(this.homeDir, ".creez");
-    await this.fs.mkdir(creezDir, { recursive: true });
+    await this.fs.mkdir(this.creezHome, { recursive: true });
     const envPath = this.getCreezEnvFilePath();
     const lines = Object.entries(env)
       .filter(([, v]) => v != null && String(v).trim() !== "")

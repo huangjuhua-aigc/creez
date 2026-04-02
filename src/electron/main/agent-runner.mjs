@@ -31,6 +31,9 @@ const keyToContactId = new Map();
 
 const DEBUG_AGENT = false;
 
+/** Single-line JSON log of full system prompt on each agent_start (set CREEZ_DEBUG_FULL_SYSTEM_PROMPT=1). */
+const DEBUG_FULL_SYSTEM_PROMPT = process.env.CREEZ_DEBUG_FULL_SYSTEM_PROMPT === "1";
+
 function log(scope, details) {
   if (!DEBUG_AGENT) return;
   const ts = new Date().toISOString();
@@ -140,6 +143,11 @@ export async function createAndSubscribe(sender, config) {
   const explicitSessionKey =
     configSessionKey != null && String(configSessionKey).trim() !== "" ? String(configSessionKey).trim() : null;
   const botKey = explicitSessionKey || contactId || chatId || "";
+  /** Gateway A2A turns use sessionKey/chatId `a2a:<id>` — no Pi coding tools (read/bash/edit/write). */
+  const isA2aSession =
+    String(botKey).startsWith("a2a:")
+    || (chatId && String(chatId).startsWith("a2a:"))
+    || (explicitSessionKey && String(explicitSessionKey).startsWith("a2a:"));
   const listenerId = chatId ? `ui:${chatId}` : "ui";
 
   if (chatId && chatId !== botKey) {
@@ -161,7 +169,17 @@ export async function createAndSubscribe(sender, config) {
     }
     const model = resolveModel(provider, modelId);
     if (model && existing.session.setModel) {
-      try { await existing.session.setModel(model); } catch { /* ignore */ }
+      try {
+        await existing.session.setModel(model);
+      } catch (e) {
+        log("session_reused:setModel_error", e?.message || String(e));
+      }
+      // If reasoning model ended up with thinkingLevel "off", fix it — the pi-ai
+      // library would send `reasoning: { effort: "none" }` which is rejected by
+      // endpoints where reasoning is mandatory.
+      if (model.reasoning && existing.session.thinkingLevel === "off" && existing.session.setThinkingLevel) {
+        try { existing.session.setThinkingLevel("medium"); } catch { /* ignore */ }
+      }
     }
     log("session_reused", { botKey, listenerId, chatId });
     sender.send("agent:event", { type: "agent_ready", chatId: chatId ?? undefined });
@@ -285,6 +303,16 @@ export async function createAndSubscribe(sender, config) {
   await resourceLoader.reload();
   console.log(`[agent-runner] createAndSubscribe: resourceLoader.reload done (${Date.now() - t0}ms)`);
 
+  // Reasoning models (e.g. gpt-5, gpt-5-mini) require reasoning to be enabled.
+  // The pi-ai library sends `reasoning: { effort: "none" }` when thinkingLevel is "off",
+  // which causes a 400 error on endpoints that mandate reasoning.
+  // Ensure reasoning models start with at least "medium" thinking level.
+  let initialThinkingLevel;
+  if (model?.reasoning) {
+    const saved = settingsManager?.getDefaultThinkingLevel?.();
+    initialThinkingLevel = saved && saved !== "off" ? saved : "medium";
+  }
+
   console.log(`[agent-runner] createAndSubscribe: createAgentSession start (${Date.now() - t0}ms)`);
   const { session } = await createAgentSession({
     cwd,
@@ -296,6 +324,9 @@ export async function createAndSubscribe(sender, config) {
     settingsManager,
     resourceLoader,
     customTools,
+    ...(initialThinkingLevel ? { thinkingLevel: initialThinkingLevel } : {}),
+    // Pi defaults to read/bash/edit/write when `tools` is omitted; A2A is chat-only (+ Creez customTools).
+    ...(isA2aSession ? { tools: [] } : {}),
   });
   console.log(`[agent-runner] createAndSubscribe: createAgentSession done (${Date.now() - t0}ms)`);
 
@@ -329,6 +360,11 @@ export async function createAndSubscribe(sender, config) {
         const toolDefs = (session.state?.tools || []).map((t) => `  - ${t.name}: ${t.description || "(no desc)"}`);
         const loadedSkills = resourceLoader.getSkills ? resourceLoader.getSkills().skills || [] : [];
         const skillDefs = loadedSkills.map((s) => `  - ${s.name}: ${(s.description || "").slice(0, 120)}`);
+        if (DEBUG_FULL_SYSTEM_PROMPT) {
+          console.log(
+            "[creez:agent] system_prompt_full_json=" + JSON.stringify(session.systemPrompt ?? ""),
+          );
+        }
         console.log("[creez:agent] === DEBUG: agent_start ===");
         console.log("[creez:agent] active tools (" + activeTools.length + "):\n" + (toolDefs.join("\n") || "  (none)"));
         console.log("[creez:agent] loaded skills (" + loadedSkills.length + "):\n" + (skillDefs.join("\n") || "  (none)"));

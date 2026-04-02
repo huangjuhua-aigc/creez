@@ -27,9 +27,12 @@ import {
 } from "../services/chat";
 import { fetchAssistantConfig, fetchModelApiKey, readLocalImageDataUrl } from "../services/settings";
 import { loadAppState, persistAppState } from "../services/appState";
+import { discoverAgents, sendToRemoteBot, onA2ASessionEvent } from "../services/a2a";
+import { BotOriginBadge } from "./BotOriginBadge";
 
 interface ChatWindowProps {
   activeChatId?: number | string;
+  activeChatMeta?: { name?: string; avatar?: string } | null;
   onSelectChat?: (chatId: string) => void;
   onNavigateToSettings?: () => void;
 }
@@ -767,7 +770,7 @@ function chatLog(scope: string, details?: unknown) {
   }
 }
 
-export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }: ChatWindowProps) {
+export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavigateToSettings }: ChatWindowProps) {
   const [chatList, setChatList] = useState<ChatListItem[]>([]);
   const [selectedChatId, setSelectedChatId] = useState<string>(activeChatId ? String(activeChatId) : "");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
@@ -801,6 +804,8 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   const activeStreamBotIdRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [isLoadingChats, setIsLoadingChats] = useState(true);
+  /** contactId → A2A discover online; only contacts that appear in public discover have an entry */
+  const [a2aPresence, setA2aPresence] = useState<Map<string, boolean>>(new Map());
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [waitingDots, setWaitingDots] = useState("·");
@@ -813,6 +818,8 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   const chatStreamsRef = useRef<Map<string, ChatStreamState>>(new Map());
   const messageQueueRef = useRef<QueuedMessage[]>([]);
   const sendQueuedMessageRef = useRef<(item: QueuedMessage) => void>(() => {});
+  /** Tracks the placeholder message id for a pending remote bot reply. */
+  const a2aWaitingMsgIdRef = useRef<string | null>(null);
 
   const scrollMessagesToBottom = () => {
     const el = messagesScrollRef.current;
@@ -831,26 +838,28 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     });
   }, []);
 
-  const reloadChats = async (preferredChatId?: string | null) => {
-    setIsLoadingChats(true);
-    const [assistantConfig, items, appState] = await Promise.all([
-      fetchAssistantConfig(),
-      fetchChatList(),
+  const loadA2aPresence = useCallback(async () => {
+    try {
+      const result = await discoverAgents({ limit: 200 });
+      const next = new Map<string, boolean>();
+      for (const agent of result.items) {
+        if (agent.id) next.set(agent.id, !!agent.online);
+      }
+      setA2aPresence(next);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  /** Model dropdown + selection: scoped to current chat's contact (default assistant when no contact). Refetch after settings save or tab switch. */
+  const syncModelDropdownForChat = useCallback(async (chatId: string | null, list: ChatListItem[]) => {
+    const chat = chatId ? list.find((c) => c.id === chatId) : null;
+    const contactId = chat?.contactId ?? null;
+    const scope = contactId ? { contactId } : {};
+    const [assistantConfig, appState] = await Promise.all([
+      fetchAssistantConfig(scope),
       loadAppState(),
     ]);
-
-    const assistantName = assistantConfig.name || "Assistant";
-    let assistantAvatar: string;
-    if (assistantConfig.avatar) {
-      if (assistantConfig.avatar.startsWith("data:") || assistantConfig.avatar.startsWith("http://") || assistantConfig.avatar.startsWith("https://")) {
-        assistantAvatar = assistantConfig.avatar;
-      } else {
-        assistantAvatar = (await readLocalImageDataUrl(assistantConfig.avatar)) || avatarFallback(assistantName);
-      }
-    } else {
-      assistantAvatar = avatarFallback(assistantName);
-    }
-
     const configuredModels = (assistantConfig.models || []).map((item) => ({
       id: item.id,
       label: `${String(item.provider || "Provider")} / ${String(item.model || "Model")}`,
@@ -870,31 +879,77 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     if (nextModelId) {
       setSelectedModelId(nextModelId);
     }
+  }, []);
+
+  const reloadChats = async (preferredChatId?: string | null) => {
+    setIsLoadingChats(true);
+    const [assistantConfig, items] = await Promise.all([fetchAssistantConfig(), fetchChatList()]);
+
+    const assistantName = assistantConfig.name || "Assistant";
+    let assistantAvatar: string;
+    if (assistantConfig.avatar) {
+      if (assistantConfig.avatar.startsWith("data:") || assistantConfig.avatar.startsWith("http://") || assistantConfig.avatar.startsWith("https://")) {
+        assistantAvatar = assistantConfig.avatar;
+      } else {
+        assistantAvatar = (await readLocalImageDataUrl(assistantConfig.avatar)) || avatarFallback(assistantName);
+      }
+    } else {
+      assistantAvatar = avatarFallback(assistantName);
+    }
 
     setBotName(assistantName);
     setBotAvatar(assistantAvatar);
     const merged = items
       .filter((chat) => !String(chat.id).startsWith("chat_demo_"))
-      .map((chat) => (chat.id === BOT_CHAT_ID ? { ...chat, name: assistantName, avatar: assistantAvatar } : chat));
+      .map((chat) =>
+        chat.id === BOT_CHAT_ID
+          ? {
+              ...chat,
+              name: assistantName,
+              avatar: assistantAvatar,
+              contactBotOrigin: chat.contactBotOrigin || "assistant",
+            }
+          : chat
+      );
     setChatList(merged);
     setIsLoadingChats(false);
+    void loadA2aPresence();
 
     const nextChatId = preferredChatId || (activeChatId ? String(activeChatId) : selectedChatId);
     if (nextChatId && merged.some((c) => c.id === nextChatId)) {
       setSelectedChatId(nextChatId);
       onSelectChat?.(nextChatId);
-      return;
-    }
-    if (merged.length > 0) {
+    } else if (merged.length > 0) {
       setSelectedChatId(merged[0].id);
       onSelectChat?.(merged[0].id);
     }
+    // Model dropdown refresh runs in useEffect([selectedChatId, chatList]) after state commits.
   };
 
   useEffect(() => {
     void reloadChats();
     return () => {};
   }, []);
+
+  useEffect(() => {
+    if (!selectedChatId || chatList.length === 0) return;
+    void syncModelDropdownForChat(selectedChatId, chatList);
+  }, [selectedChatId, chatList, syncModelDropdownForChat]);
+
+  useEffect(() => {
+    const unsub = (window as any).electron?.settings?.onAssistantConfigChanged?.(() => {
+      void syncModelDropdownForChat(selectedChatId || null, chatList);
+    });
+    return () => {
+      unsub?.();
+    };
+  }, [selectedChatId, chatList, syncModelDropdownForChat]);
+
+  useEffect(() => {
+    void loadA2aPresence();
+    const iv = setInterval(() => void loadA2aPresence(), 30_000);
+    return () => clearInterval(iv);
+  }, [loadA2aPresence]);
 
   useEffect(() => {
     const unsub = window.electron?.channel?.onNewMessage?.(() => {
@@ -910,6 +965,9 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       const nextId = String(activeChatId);
       setSelectedChatId(nextId);
       onSelectChat?.(nextId);
+      if (!chatList.some((c) => c.id === nextId)) {
+        void reloadChats(nextId);
+      }
     }
   }, [activeChatId, onSelectChat]);
 
@@ -917,25 +975,34 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     if (chatList.length === 0) return;
     const exists = chatList.some((chat) => chat.id === selectedChatId);
     if (exists) return;
+    if (activeChatId) {
+      const targetId = String(activeChatId);
+      const targetExists = chatList.some((c) => c.id === targetId);
+      if (targetExists) {
+        setSelectedChatId(targetId);
+        onSelectChat?.(targetId);
+        return;
+      }
+    }
     const fallbackId = chatList[0].id;
     setSelectedChatId(fallbackId);
     onSelectChat?.(fallbackId);
-  }, [chatList, selectedChatId, onSelectChat]);
+  }, [chatList, selectedChatId, activeChatId, onSelectChat]);
 
-  /** Must NOT depend on full chatList: every send updates lastMessage/time and would re-run loadMessages, replacing React state with a DB snapshot and racing streaming (reply disappears / stuck dots). Only reload when switching chats or when the selected id first appears in the list. */
-  const selectedChatExistsInList = Boolean(selectedChatId && chatList.some((c) => c.id === selectedChatId));
-
+  /**
+   * Load messages whenever selectedChatId changes.
+   * Decoupled from chatList — resolves name/avatar from chatList → activeChatMeta → botName fallback.
+   */
   useEffect(() => {
     if (!selectedChatId) {
       setMessages([]);
       return;
     }
-    if (!selectedChatExistsInList) return;
-    const currentChat = chatList.find((c) => c.id === selectedChatId);
-    if (!currentChat) return;
-    const chatId = currentChat.id;
-    const chatName = currentChat.name;
-    const chatAvatar = currentChat.avatar;
+    const chatId = selectedChatId;
+    const currentChat = chatList.find((c) => c.id === chatId);
+    const isActiveTarget = activeChatId && String(activeChatId) === chatId;
+    const chatName = currentChat?.name || (isActiveTarget && activeChatMeta?.name) || botName;
+    const chatAvatar = currentChat?.avatar || (isActiveTarget && activeChatMeta?.avatar) || botAvatar;
 
     let cancelled = false;
     async function loadMessages() {
@@ -943,7 +1010,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       const items = await fetchChatMessages(chatId, chatName, chatAvatar);
       if (cancelled) return;
       const stream = chatStreamsRef.current.get(chatId);
-      console.log("[creez:stream-debug] loadMessages (selectedChatId/chatList effect)", {
+      console.log("[creez:stream-debug] loadMessages (selectedChatId effect)", {
         chatId,
         itemCount: items.length,
         mergeWithStream: Boolean(stream?.assistantMessageId),
@@ -964,7 +1031,7 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     return () => {
       cancelled = true;
     };
-  }, [selectedChatId, selectedChatExistsInList]);
+  }, [selectedChatId]);
 
   useEffect(() => {
     const unsub = onChatMessageAppended((payload) => {
@@ -1012,6 +1079,60 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
     });
     return () => unsub();
   }, [selectedChatId, chatList]);
+
+  useEffect(() => {
+    const unsub = onA2ASessionEvent((event) => {
+      console.log("[creez:a2a-event] received", {
+        type: event.type,
+        chatId: (event as any).chatId,
+        selectedChatId,
+        contentLen: (event.content || "").length,
+        contentPreview: (event.content || "").slice(0, 50),
+        waitingId: a2aWaitingMsgIdRef.current,
+      });
+      if (event.type !== "message_in") return;
+      const eventChatId = (event as any).chatId;
+      if (!eventChatId || String(eventChatId) !== String(selectedChatId)) {
+        console.warn("[creez:a2a-event] chatId mismatch, dropping", { eventChatId, selectedChatId });
+        return;
+      }
+
+      const waitingId = a2aWaitingMsgIdRef.current;
+      const replyContent = event.content || "";
+
+      if (waitingId) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === waitingId ? { ...m, content: replyContent } : m
+          )
+        );
+        a2aWaitingMsgIdRef.current = null;
+      } else {
+        const activeChat = chatList.find((c) => c.id === selectedChatId);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `${Date.now()}-a2a-reply`,
+            sender: "other" as const,
+            name: activeChat?.name || botName,
+            avatar: activeChat?.avatar || botAvatar,
+            content: replyContent,
+            timestamp: formatNowTime(),
+            type: "text" as const,
+          },
+        ]);
+      }
+
+      setIsStreaming(false);
+      const replyPreview = replyContent.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
+      setChatList((prev) =>
+        prev.map((c) =>
+          c.id === selectedChatId ? { ...c, lastMessage: replyPreview, time: formatNowTime() } : c
+        )
+      );
+    });
+    return () => unsub();
+  }, [selectedChatId, chatList, botName, botAvatar]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -1888,6 +2009,8 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
   const doSendMessage = async (contentWithPaths: string, images: { type: "image"; data: string; mimeType: string }[]) => {
     if (!activeChat?.contactId) return;
 
+    const isRemoteBot = activeChat.contactBotOrigin === "remote";
+
     const nowTs = Math.floor(Date.now() / 1000);
     const userMessageId = String(Date.now());
     const userMessage: ChatMessageItem = {
@@ -1907,6 +2030,70 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
         c.id === activeChat.id ? { ...c, lastMessage: preview, time: formatNowTime() } : c
       )
     );
+
+    if (isRemoteBot) {
+      void appendChatMessage({
+        id: userMessageId,
+        chatId: activeChat.id,
+        sender: "user",
+        content: contentWithPaths,
+        status: "done",
+        createdAt: nowTs,
+        updatedAt: nowTs,
+      });
+
+      setIsStreaming(true);
+      const waitingId = `${Date.now()}-assistant-waiting`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: waitingId,
+          sender: "other",
+          name: activeChat.name || botName,
+          avatar: activeChat.avatar || botAvatar,
+          content: "",
+          timestamp: formatNowTime(),
+          type: "text",
+        },
+      ]);
+      a2aWaitingMsgIdRef.current = waitingId;
+
+      try {
+        const result = await sendToRemoteBot({
+          chatId: activeChat.id,
+          toAgentId: activeChat.contactId,
+          content: contentWithPaths,
+        });
+        if (!result) {
+          setIsStreaming(false);
+          a2aWaitingMsgIdRef.current = null;
+          setMessages((prev) => prev.filter((m) => m.id !== waitingId).concat({
+            id: `${Date.now()}-system-a2a-fail`,
+            sender: "system",
+            name: "System",
+            avatar: "",
+            content: "无法发送到远程 Bot（A2A 服务未运行或 Bot 离线）。",
+            timestamp: formatNowTime(),
+            type: "system",
+          }));
+        }
+        chatLog("a2a:sendToRemoteBot", { chatId: activeChat.id, toAgentId: activeChat.contactId });
+      } catch (e) {
+        setIsStreaming(false);
+        a2aWaitingMsgIdRef.current = null;
+        setMessages((prev) => prev.filter((m) => m.id !== waitingId).concat({
+          id: `${Date.now()}-system-a2a-error`,
+          sender: "system",
+          name: "System",
+          avatar: "",
+          content: `发送到远程 Bot 失败: ${(e as Error).message || String(e)}`,
+          timestamp: formatNowTime(),
+          type: "system",
+        }));
+      }
+      return;
+    }
+
     void appendChatMessage({
       id: userMessageId,
       chatId: activeChat.id,
@@ -2128,6 +2315,18 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
               >
                 <div className="relative flex-shrink-0">
                   <img src={chat.avatar} alt={chat.name} className="w-10 h-10 rounded-[4px] object-cover" />
+                  {chat.contactId && chat.contactBotOrigin ? (
+                    <BotOriginBadge origin={chat.contactBotOrigin} positionClassName="-top-0.5 -left-0.5" />
+                  ) : null}
+                  {chat.contactId && a2aPresence.has(chat.contactId) && (
+                    <span
+                      className={cn(
+                        "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#F7F7F7]",
+                        a2aPresence.get(chat.contactId) ? "bg-[#07C160]" : "bg-red-500"
+                      )}
+                      title={a2aPresence.get(chat.contactId) ? "A2A 在线" : "A2A 离线"}
+                    />
+                  )}
                   {chat.unread > 0 && (
                     <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 rounded-full flex items-center justify-center border border-[#F7F7F7]">
                       <span className="text-[10px] text-white transform scale-90 font-medium">{chat.unread}</span>
@@ -2148,8 +2347,27 @@ export function ChatWindow({ activeChatId, onSelectChat, onNavigateToSettings }:
       </div>
 
       <div className="flex-1 flex flex-col bg-[#F5F5F5] min-w-0">
-        <div className="h-16 flex items-center px-6 border-b border-[#E7E7E7] flex-shrink-0">
-          <h2 className="text-[19px] font-medium text-[#1a1a1a] truncate max-w-[80%]">{activeChat?.name || "No chat selected"}</h2>
+        <div className="h-16 flex items-center gap-2 px-6 border-b border-[#E7E7E7] flex-shrink-0 min-w-0">
+          <h2 className="text-[19px] font-medium text-[#1a1a1a] truncate min-w-0 flex-1">{activeChat?.name || "No chat selected"}</h2>
+          {activeChat?.contactId && a2aPresence.has(activeChat.contactId) ? (
+            a2aPresence.get(activeChat.contactId) ? (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#07C160]/10 text-[#07C160] text-[10px] font-medium rounded-full flex-shrink-0"
+                title="该 bot 在 A2A 网关上当前在线，可被远程调用"
+              >
+                <span className="w-1.5 h-1.5 bg-[#07C160] rounded-full" />
+                A2A 在线
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-600 text-[10px] font-medium rounded-full flex-shrink-0 max-w-[42%]"
+                title="该 bot 在 A2A 上离线（对方关客户端或断线）。你在本页的对话仍走本机模型，与 A2A 是否在线无关。"
+              >
+                <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
+                A2A 离线
+              </span>
+            )
+          ) : null}
         </div>
 
         <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">

@@ -1,6 +1,7 @@
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { resolveCreezHome } = require("./creezPaths.cjs");
 const { CHANNELS } = require("./channels.cjs");
 const { getEngineForContact, getPiEngine } = require("./conversation/engineRegistry.cjs");
 
@@ -80,17 +81,9 @@ function normalizeImages(images) {
 
 function registerAgentIpc(ipcMain, deps = {}) {
   const { assistantConfigRepository, appStateStore, memoryStore, contactRepository, chatRepository, creezHome } = deps;
-  const agentDir = creezHome ? path.join(creezHome, ".creez") : path.join(os.homedir(), ".creez");
+  const agentDir = creezHome || resolveCreezHome(os.homedir());
 
   ipcMain.on(CHANNELS.AGENT_INIT, async (event, payload) => {
-    console.log("[agentIpc] AGENT_INIT:in", {
-      contactId: payload?.contactId ?? null,
-      chatId: payload?.chatId ?? null,
-      modelConfigId: payload?.modelConfigId || null,
-      provider: payload?.provider || null,
-      modelId: payload?.modelId || null,
-      hasApiKey: Boolean(payload?.apiKey),
-    });
     log("agent:init:recv", {
       contactId: payload?.contactId ?? null,
       modelConfigId: payload?.modelConfigId || null,
@@ -105,7 +98,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
         assistantConfigRepository,
       });
       currentEngine = engine;
-      console.log("[agentIpc] AGENT_INIT:engine", {
+      log("agent:init:engine", {
         assistantConfigId,
         defaultContactId,
         rawConfigId: rawConfig?.id ?? null,
@@ -115,7 +108,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
 
       const contact = contactRepository ? contactRepository.getById(payload?.contactId) : null;
       const remoteAgentId = contact?.remoteAgentId || null;
-      console.log("[agentIpc] AGENT_INIT:contact", {
+      log("agent:init:contact", {
         contactId: payload?.contactId ?? null,
         contactFound: Boolean(contact),
         remoteAgentId,
@@ -131,7 +124,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
             return;
           }
           const remoteConfig = checked.config || await fetchRemoteAgentConfig(remoteAgentId);
-          console.log("[agentIpc] AGENT_INIT:remoteConfig", {
+          log("agent:init:remoteConfig", {
             remoteAgentId,
             fetched: Boolean(remoteConfig),
             name: remoteConfig?.name ?? null,
@@ -234,7 +227,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
         activeModelId: activeModel?.id || null,
       });
 
-      console.log("[agentIpc] AGENT_INIT:resolved", {
+      log("agent:init:resolvedSummary", {
         provider: provider || "(empty)",
         modelId: modelId || "(empty)",
         hasApiKey: Boolean(apiKey),
@@ -290,9 +283,8 @@ function registerAgentIpc(ipcMain, deps = {}) {
           }
         },
       };
-      console.log("[agentIpc] AGENT_INIT:callingEngine", { provider, modelId, chatId: context.chatId ?? null, contactId: context.contactId ?? null });
+      log("agent:init:callingEngine", { provider, modelId, chatId: context.chatId ?? null, contactId: context.contactId ?? null });
       await currentEngine.init(context);
-      console.log("[agentIpc] AGENT_INIT:ok", { provider, modelId, chatId: context.chatId ?? null });
       log("agent:init:ok", { provider, modelId, chatId: context.chatId ?? null });
     } catch (error) {
       const message = error?.message || String(error);
@@ -308,16 +300,10 @@ function registerAgentIpc(ipcMain, deps = {}) {
     const textLen = userText.length;
     const imageCount = Array.isArray(payload?.images) ? payload.images.length : 0;
     const textPreview = userText.slice(0, 400).replace(/\s+/g, " ").trim();
-    console.log("[agentIpc] AGENT_PROMPT:in", { chatId: chatId || null, textLen, imageCount });
-    log("agent:prompt:recv", { chatId: chatId || null, textLen, imageCount });
+    log("agent:prompt:recv", { chatId: chatId || null, textLen, imageCount, textPreview: textPreview.slice(0, 120) });
     try {
       const engine = currentEngine || getPiEngine();
       const hasSession = await engine.hasSession(chatId);
-      console.log("[creez:stream-debug][main] AGENT_PROMPT", {
-        chatId: chatId || null,
-        hasSession,
-        textPreview: textPreview.slice(0, 120),
-      });
       log("agent:prompt:session", { hasSession, chatId: chatId || null });
       if (!hasSession) {
         console.warn("[agentIpc] AGENT_PROMPT:noSession", { chatId: chatId || null });

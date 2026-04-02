@@ -2,11 +2,11 @@ const path = require("node:path");
 const fs = require("node:fs");
 const os = require("node:os");
 const { app, BrowserWindow, ipcMain, dialog, Menu, protocol, net } = require("electron");
-const { ensureCreezDirs } = require("./creezPaths.cjs");
+const { ensureCreezDirs, resolveCreezHome } = require("./creezPaths.cjs");
 
 function writeCrashLog(message) {
   try {
-    const logDir = path.join(os.homedir(), ".creez", "logs");
+    const logDir = path.join(resolveCreezHome(os.homedir()), "logs");
     fs.mkdirSync(logDir, { recursive: true });
     const logPath = path.join(logDir, "startup.log");
     fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`, "utf8");
@@ -61,16 +61,21 @@ const { ChannelManager } = require("./channel/ChannelManager.cjs");
 const { SessionTracker } = require("./channel/SessionTracker.cjs");
 const { MemoryStore } = require("./memoryStore.cjs");
 const { SkillManager } = require("./skillManager.cjs");
+const { A2AGatewayClient } = require("./a2a/A2AGatewayClient.cjs");
+const { A2ASessionOrchestrator } = require("./a2a/A2ASessionOrchestrator.cjs");
+const { registerA2AIpc } = require("./a2a/A2AIpcBridge.cjs");
+const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
 
 const isMac = process.platform === "darwin";
 const isDev = !app.isPackaged || Boolean(process.env.VITE_DEV_SERVER_URL);
 let creezDb = null;
 let channelManager = null;
 let sessionTrackerInstance = null;
+let a2aOrchestrator = null;
 
 function getStartupLogPath() {
-  const homeDir = app.getPath("home");
-  return path.join(homeDir, ".creez", "logs", "startup.log");
+  const homeDir = app?.isReady?.() ? app.getPath("home") : os.homedir();
+  return path.join(resolveCreezHome(homeDir), "logs", "startup.log");
 }
 
 /** Write a line to ~/.creez/logs/startup.log (and console). Call only after app is ready. */
@@ -349,7 +354,7 @@ app.whenReady().then(async () => {
   startupLog("creez-asset protocol registered");
 
   try {
-    const creezHome = app.getPath("home");
+    const creezHome = resolveCreezHome(app.getPath("home"));
     ensureCreezDirs(creezHome);
     startupLog("ensureCreezDirs done");
 
@@ -357,8 +362,8 @@ app.whenReady().then(async () => {
     const mainWindow = createWindow(true);
     startupLog("splash window shown");
 
-    creezDb = new CreezDatabase({ homeDir: creezHome }).init();
-    seedIfEmpty(creezDb.db, { homeDir: creezHome });
+    creezDb = new CreezDatabase({ creezHome }).init();
+    seedIfEmpty(creezDb.db, { creezHome });
     startupLog("DB init and seed done");
     const appStateRepository = new AppStateRepository(creezDb.db);
     const chatRepository = new ChatRepository(creezDb.db);
@@ -366,8 +371,8 @@ app.whenReady().then(async () => {
     const taskRepository = new TaskRepository(creezDb.db);
     const assistantConfigRepository = new AssistantConfigRepository(creezDb.db);
     const channelConfigRepository = new ChannelConfigRepository(creezDb.db);
-    const memoryStore = new MemoryStore({ homeDir: creezHome });
-    const skillManager = new SkillManager({ homeDir: creezHome });
+    const memoryStore = new MemoryStore({ creezHome });
+    const skillManager = new SkillManager({ creezHome });
 
     const { ensureBundledSkillsInConfig } = require("./ensureSkillsConfig.cjs");
     const defaultContactId = contactRepository.getDefaultAssistantConfigId();
@@ -386,11 +391,11 @@ app.whenReady().then(async () => {
       }
     }
 
-    const appStateStore = new AppStateStore({ repository: appStateRepository, homeDir: creezHome });
+    const appStateStore = new AppStateStore({ repository: appStateRepository, creezHome });
     registerAppStateIpc(ipcMain, appStateStore);
     registerShellIpc(ipcMain);
-    registerChatIpc(ipcMain, chatRepository, { contactRepository });
-    registerContactIpc(ipcMain, contactRepository);
+    registerChatIpc(ipcMain, chatRepository, { contactRepository, appStateStore });
+    registerContactIpc(ipcMain, contactRepository, { appStateStore });
     const sessionTracker = new SessionTracker({
       chatRepository,
       contactRepository,
@@ -413,7 +418,7 @@ app.whenReady().then(async () => {
     registerWorkspaceIpc(ipcMain, appStateStore);
     registerStoryboardIpc(ipcMain, { appStateStore, skillManager });
     registerAttachmentIpc(ipcMain);
-    registerAgentBuilderIpc(ipcMain, { appStateStore, contactRepository });
+    registerAgentBuilderIpc(ipcMain, { appStateStore, contactRepository, assistantConfigRepository });
     registerAgentIpc(ipcMain, {
       assistantConfigRepository,
       appStateStore,
@@ -470,6 +475,60 @@ app.whenReady().then(async () => {
         console.warn("[creez] channelManager.startAll:", msg);
       });
 
+    // ── A2A subsystem ──
+    (async () => {
+      try {
+        const state = appStateStore ? await appStateStore.getState() : {};
+        let ownerId = state?.deviceId;
+        if (!ownerId) {
+          ownerId = require("node:crypto").randomUUID();
+          if (appStateStore) await appStateStore.setState({ deviceId: ownerId });
+        }
+        const gatewayUrl = resolveCreezBackendBase();
+        startupLog("Creez backend base (CREEZ_A2A_GATEWAY_BASE): " + gatewayUrl);
+        const gatewayClient = new A2AGatewayClient({ gatewayUrl, ownerId });
+        function a2aSendToRenderer(payload) {
+          const channel = (payload && payload.channel === "a2a:sessionEvent")
+            ? CHANNELS.A2A_SESSION_EVENT
+            : CHANNELS.CHAT_MESSAGE_APPENDED;
+          try {
+            for (const win of BrowserWindow.getAllWindows()) {
+              if (win.webContents && !win.isDestroyed()) {
+                win.webContents.send(channel, payload);
+              }
+            }
+          } catch (e) {
+            console.warn("[A2A] sendToRenderer failed", e?.message || e);
+          }
+        }
+        a2aOrchestrator = new A2ASessionOrchestrator({
+          gatewayClient,
+          contactRepository,
+          chatRepository,
+          assistantConfigRepository,
+          appStateStore,
+          memoryStore,
+          db: creezDb?.db ?? null,
+          creezHome,
+          sendToRenderer: a2aSendToRenderer,
+          mainLog: startupLog,
+        });
+        registerA2AIpc(ipcMain, a2aOrchestrator);
+        const a2aResult = await a2aOrchestrator.start();
+        const a2aSummary =
+          a2aResult.ok
+            ? `ok, ${a2aResult.agentCount} agent(s) registered`
+            : a2aResult.reason === "no_bots"
+              ? "idle (no type=bot contacts in local DB)"
+              : `not fully online (${a2aResult.error || a2aResult.reason || "unknown"})`;
+        startupLog(`A2A done: ${a2aSummary}; ownerId=${ownerId.substring(0, 8)}… — full A2A lines also in this file`);
+      } catch (e) {
+        const msg = e?.message || String(e);
+        startupLog("A2A start error: " + msg);
+        console.warn("[creez] A2A start error:", msg);
+      }
+    })();
+
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow(false);
@@ -488,6 +547,10 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", async () => {
   stopSyncPullTask();
+  if (a2aOrchestrator) {
+    await a2aOrchestrator.stop().catch(() => {});
+    a2aOrchestrator = null;
+  }
   if (sessionTrackerInstance) {
     sessionTrackerInstance.stop();
     sessionTrackerInstance = null;

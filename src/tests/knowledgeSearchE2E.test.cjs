@@ -71,8 +71,8 @@ test("knowledge_search e2e: non-default bot success path", async () => {
     }));
   });
 
-  const prevBase = process.env.CREEZ_KNOWLEDGE_API_BASE;
-  process.env.CREEZ_KNOWLEDGE_API_BASE = baseUrl;
+  const prevBase = process.env.CREEZ_A2A_GATEWAY_BASE;
+  process.env.CREEZ_A2A_GATEWAY_BASE = baseUrl;
   const events = [];
 
   try {
@@ -110,7 +110,7 @@ test("knowledge_search e2e: non-default bot success path", async () => {
     assert.equal(events[1]?.type, "builtin_tool_end");
     assert.equal(events[1]?.isError, false);
   } finally {
-    process.env.CREEZ_KNOWLEDGE_API_BASE = prevBase;
+    process.env.CREEZ_A2A_GATEWAY_BASE = prevBase;
     await new Promise((resolve) => server.close(resolve));
   }
 });
@@ -123,8 +123,8 @@ test("knowledge_search e2e: empty matches returns structured protocol error", as
     res.end(JSON.stringify({ ok: true, data: { matches: [] } }));
   });
 
-  const prevBase = process.env.CREEZ_KNOWLEDGE_API_BASE;
-  process.env.CREEZ_KNOWLEDGE_API_BASE = baseUrl;
+  const prevBase = process.env.CREEZ_A2A_GATEWAY_BASE;
+  process.env.CREEZ_A2A_GATEWAY_BASE = baseUrl;
 
   try {
     const registry = createBuiltinSkillRegistry();
@@ -147,7 +147,7 @@ test("knowledge_search e2e: empty matches returns structured protocol error", as
     assert.equal(result?.details?.error?.retryable, false);
     assert.match(String(result?.content?.[0]?.text || ""), /BUILTIN_SKILL_ERROR/);
   } finally {
-    process.env.CREEZ_KNOWLEDGE_API_BASE = prevBase;
+    process.env.CREEZ_A2A_GATEWAY_BASE = prevBase;
     await new Promise((resolve) => server.close(resolve));
   }
 });

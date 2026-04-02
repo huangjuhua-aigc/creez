@@ -8,6 +8,8 @@ const fs = require("node:fs");
 const { app, BrowserWindow } = require("electron");
 const { randomUUID } = require("node:crypto");
 const { CHANNELS } = require("./channels.cjs");
+const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
+const { resolveCreezHome } = require("./creezPaths.cjs");
 
 const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const REQUEST_TIMEOUT_MS = 15000;
@@ -16,7 +18,7 @@ let intervalId = null;
 
 function getDeviceIdPath() {
   const homeDir = app.getPath("home");
-  return path.join(homeDir, ".creez", "device_id");
+  return path.join(resolveCreezHome(homeDir), "device_id");
 }
 
 /**
@@ -42,11 +44,6 @@ function getOrCreateDeviceId() {
   return deviceId;
 }
 
-function resolveSyncApiBase() {
-  const fromEnv = String(process.env.CREEZ_KNOWLEDGE_API_BASE || "").trim();
-  return fromEnv || "https://creez.lighton.video";
-}
-
 /**
  * Returns true if there is at least one non-default bot contact.
  */
@@ -60,7 +57,7 @@ function hasNonDefaultBots(contactRepository) {
  * Fetch pending messages from backend. Returns { ok, items } or { ok: false, error }.
  */
 async function pullPendingMessages(deviceId) {
-  const baseUrl = resolveSyncApiBase().replace(/\/+$/, "");
+  const baseUrl = resolveCreezBackendBase().replace(/\/+$/, "");
   const url = `${baseUrl}/sync/pull?device_id=${encodeURIComponent(deviceId)}`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(new Error("timeout")), REQUEST_TIMEOUT_MS);

@@ -17,7 +17,7 @@ class ContactRepository {
   constructor(db) {
     this.db = db;
     this.getByIdStmt = db.prepare(
-      "SELECT id, type, name, avatar_path, is_default, updated_at, remote_agent_id FROM contacts WHERE id = ?"
+      "SELECT id, type, name, avatar_path, is_default, updated_at, remote_agent_id, bot_origin FROM contacts WHERE id = ?"
     );
   }
 
@@ -35,14 +35,51 @@ class ContactRepository {
       isDefault: Boolean(row.is_default),
       updatedAt: row.updated_at,
       remoteAgentId: row.remote_agent_id || null,
+      botOrigin: row.bot_origin || null,
     };
+  }
+
+  /**
+   * Mark contacts that belong to this device as author-created (Agent Builder).
+   * @param {Set<string> | string[]} ownedAgentIds
+   */
+  backfillAuthorBotOrigin(ownedAgentIds) {
+    if (!ownedAgentIds) return;
+    if (ownedAgentIds instanceof Set && ownedAgentIds.size === 0) return;
+    if (Array.isArray(ownedAgentIds) && ownedAgentIds.length === 0) return;
+    const ids = ownedAgentIds instanceof Set ? [...ownedAgentIds] : ownedAgentIds;
+    const stmt = this.db.prepare(`
+      UPDATE contacts
+      SET bot_origin = 'author'
+      WHERE id = ?
+        AND type = 'bot'
+        AND is_default = 0
+        AND (bot_origin IS NULL OR TRIM(bot_origin) = '')
+    `);
+    for (const id of ids) {
+      const sid = String(id || "").trim();
+      if (sid) stmt.run(sid);
+    }
+  }
+
+  /** Remaining NULL bot_origin with remote_agent_id → remote (他人 / 广场添加). */
+  backfillRemoteBotOrigin() {
+    this.db.prepare(`
+      UPDATE contacts
+      SET bot_origin = 'remote'
+      WHERE type = 'bot'
+        AND is_default = 0
+        AND (bot_origin IS NULL OR TRIM(bot_origin) = '')
+        AND remote_agent_id IS NOT NULL
+        AND TRIM(remote_agent_id) != ''
+    `).run();
   }
 
   list(rawParams = {}) {
     const type = typeof rawParams.type === "string" ? rawParams.type.trim() : "";
     const where = type ? "WHERE type = @type" : "";
     const rows = this.db.prepare(`
-      SELECT id, type, name, avatar_path, is_default, updated_at
+      SELECT id, type, name, avatar_path, is_default, updated_at, remote_agent_id, bot_origin
       FROM contacts
       ${where}
       ORDER BY is_default DESC, updated_at DESC
@@ -55,6 +92,8 @@ class ContactRepository {
         name: row.name,
         avatarPath: row.avatar_path || null,
         isDefault: Boolean(row.is_default),
+        remoteAgentId: row.remote_agent_id || null,
+        botOrigin: row.bot_origin || null,
       })),
       total: rows.length,
     };
@@ -116,8 +155,8 @@ class ContactRepository {
       )
     `);
     const insertContact = this.db.prepare(`
-      INSERT INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at)
-      VALUES (@id, 'bot', @name, @avatarPath, 0, @createdAt, @updatedAt)
+      INSERT INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at, bot_origin)
+      VALUES (@id, 'bot', @name, @avatarPath, 0, @createdAt, @updatedAt, 'template')
     `);
     const insertChat = this.db.prepare(`
       INSERT INTO chats (id, contact_id, channel_type, created_at, updated_at, last_message_at)
@@ -201,6 +240,24 @@ class ContactRepository {
     return tx();
   }
 
+  updateBotMeta(contactId, patch) {
+    if (!contactId) return;
+    const existing = this.getById(contactId);
+    if (!existing) return;
+    const name = patch?.name != null ? String(patch.name).trim() : null;
+    const avatarPath = patch?.avatar_path != null ? String(patch.avatar_path).trim() || null : null;
+    const sets = [];
+    const params = { id: contactId, updated_at: nowTs() };
+    if (name) { sets.push("name = @name"); params.name = name; }
+    if (avatarPath !== undefined && patch?.avatar_path != null) {
+      sets.push("avatar_path = @avatar_path");
+      params.avatar_path = avatarPath;
+    }
+    if (sets.length === 0) return;
+    sets.push("updated_at = @updated_at");
+    this.db.prepare(`UPDATE contacts SET ${sets.join(", ")} WHERE id = @id`).run(params);
+  }
+
   /**
    * After Agent Builder creates an agent on the backend, ensure a local contact + assistant_config + creez_app chat.
    * Uses backend UUID as local contact id (same as addRemoteAgent). Idempotent if contact already exists.
@@ -257,8 +314,8 @@ class ContactRepository {
       });
 
       this.db.prepare(`
-        INSERT INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at, remote_agent_id)
-        VALUES (@id, 'bot', @name, @avatarPath, 0, @createdAt, @updatedAt, @remoteAgentId)
+        INSERT INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at, remote_agent_id, bot_origin)
+        VALUES (@id, 'bot', @name, @avatarPath, 0, @createdAt, @updatedAt, @remoteAgentId, 'author')
       `).run({
         id: agentId,
         name,
@@ -316,8 +373,8 @@ class ContactRepository {
 
     const tx = this.db.transaction(() => {
       this.db.prepare(`
-        INSERT INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at, remote_agent_id)
-        VALUES (@id, 'bot', @name, @avatarPath, 0, @createdAt, @updatedAt, @remoteAgentId)
+        INSERT INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at, remote_agent_id, bot_origin)
+        VALUES (@id, 'bot', @name, @avatarPath, 0, @createdAt, @updatedAt, @remoteAgentId, 'remote')
       `).run({
         id: agentId,
         name: name || "Agent",

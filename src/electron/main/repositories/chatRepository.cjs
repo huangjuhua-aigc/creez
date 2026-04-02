@@ -36,6 +36,7 @@ class ChatRepository {
         c.updated_at,
         ct.name AS contact_name,
         ct.avatar_path AS contact_avatar_path,
+        ct.bot_origin AS contact_bot_origin,
         (
           SELECT m.content
           FROM messages m
@@ -75,6 +76,7 @@ class ChatRepository {
         title: row.contact_name || "Untitled",
         contactId: row.contact_id || null,
         contactAvatarPath: row.contact_avatar_path || null,
+        contactBotOrigin: row.contact_bot_origin || null,
         lastMessage: row.last_message || null,
         lastMessageAt: row.last_message_at || null,
         unreadCount: 0,

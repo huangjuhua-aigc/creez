@@ -1,7 +1,9 @@
 import { User, UserPlus, MessageSquare, Search, Bot, Plus, Trash2 } from 'lucide-react';
 import { cn } from '../../utils/cn';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchContacts, getOrCreateChatByContactId, type ContactItem } from '../services/contact';
+import { BotOriginBadge } from './BotOriginBadge';
+import { discoverAgents } from '../services/a2a';
 import { toast } from 'sonner';
 
 type SearchResult = {
@@ -19,10 +21,30 @@ type SuggestedBot = {
 };
 
 interface ContactsWindowProps {
-  onStartChat?: (contactId: number | string) => void;
+  onStartChat?: (chatId: string, meta?: { name?: string; avatar?: string }) => void;
 }
 
 const BOT_CONTACT_ID = '11111111-1111-1111-1111-111111111111';
+
+const CONTACT_SECTION_HEADER = "px-3 py-1 text-[11px] text-gray-400 mb-1";
+
+function partitionBotContacts(items: ContactItem[]) {
+  const defaultAssistant: ContactItem[] = [];
+  const myBots: ContactItem[] = [];
+  const othersBots: ContactItem[] = [];
+  for (const c of items) {
+    if (c.type !== "bot") continue;
+    if (c.isDefault || c.botOrigin === "assistant") {
+      defaultAssistant.push(c);
+    } else if (c.botOrigin === "remote") {
+      othersBots.push(c);
+    } else {
+      // author, template, or legacy empty origin — treat as yours
+      myBots.push(c);
+    }
+  }
+  return { defaultAssistant, myBots, othersBots };
+}
 
 export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
   const [selectedId, setSelectedId] = useState<string>(BOT_CONTACT_ID);
@@ -35,6 +57,8 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
   const [isSearching, setIsSearching] = useState(false);
   const [suggestedBots, setSuggestedBots] = useState<SuggestedBot[]>([]);
   const [addingSuggestId, setAddingSuggestId] = useState<string | null>(null);
+  /** agentId → online (from A2A discover); only bots that appear in discover (public + active) have an entry */
+  const [a2aPresence, setA2aPresence] = useState<Map<string, boolean>>(new Map());
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
@@ -42,6 +66,17 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
     const items = await fetchContacts("bot");
     setContacts(items);
     return items;
+  }, []);
+
+  const loadOnlineStatus = useCallback(async () => {
+    try {
+      const result = await discoverAgents({ limit: 200 });
+      const next = new Map<string, boolean>();
+      for (const agent of result.items) {
+        if (agent.id) next.set(agent.id, !!agent.online);
+      }
+      setA2aPresence(next);
+    } catch {}
   }, []);
 
   const loadSuggestedBots = useCallback(async () => {
@@ -62,8 +97,11 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
     }
     hydrateContacts();
     loadSuggestedBots();
+    loadOnlineStatus();
+    const iv = setInterval(loadOnlineStatus, 30_000);
     return () => {
       cancelled = true;
+      clearInterval(iv);
     };
   }, []);
 
@@ -73,8 +111,9 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
     return api.onListChanged(() => {
       void loadContacts();
       void loadSuggestedBots();
+      void loadOnlineStatus();
     });
-  }, [loadContacts, loadSuggestedBots]);
+  }, [loadContacts, loadSuggestedBots, loadOnlineStatus]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -117,7 +156,7 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
     });
     if (result.ok) {
       if (result.data.alreadyExists) {
-        toast.info("该 Agent 已在联系人列表中");
+        toast.info("This agent is already in your contacts.");
       }
       setShowSearchDropdown(false);
       setSearchQuery('');
@@ -137,7 +176,7 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
       await loadSuggestedBots();
       setSelectedId(items.length > 0 ? items[0].id : BOT_CONTACT_ID);
     } else {
-      toast.error(result.error?.message || "删除失败");
+      toast.error(result.error?.message || "Failed to delete contact.");
     }
   };
 
@@ -152,6 +191,8 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
   };
 
   const selectedContact = contacts.find((c) => c.id === selectedId) || null;
+
+  const botContactSections = useMemo(() => partitionBotContacts(contacts), [contacts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,7 +226,7 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
     try {
       const chatId = await getOrCreateChatByContactId(selectedContact.id);
       if (!chatId) return;
-      onStartChat?.(chatId);
+      onStartChat?.(chatId, { name: selectedContact.name, avatar: selectedContact.avatar });
     } finally {
       setIsStartingChat(false);
     }
@@ -241,20 +282,57 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar">
-          <div className="px-3 py-1 text-[11px] text-gray-400 mt-2">Contacts</div>
-          {contacts.map((contact) => (
-            <div
-              key={contact.id}
-              onClick={() => setSelectedId(contact.id)}
-              className={cn(
-                "flex items-center gap-3 px-3 py-2.5 cursor-pointer",
-                selectedId === contact.id ? "bg-[#C6C6C6]" : "hover:bg-[#D9D9D9]"
-              )}
-            >
-              <img src={contact.avatar} alt="" className="w-9 h-9 rounded-[4px] object-cover" />
-              <span className="text-[13px] text-black truncate">{contact.name}</span>
-            </div>
-          ))}
+          {(
+            [
+              { key: "default", title: "Default assistant", items: botContactSections.defaultAssistant },
+              { key: "mine", title: "My bots", items: botContactSections.myBots },
+              { key: "others", title: "Others' bots", items: botContactSections.othersBots },
+            ] as const
+          )
+            .filter((s) => s.items.length > 0)
+            .map(({ key, title, items }, sectionIndex) => (
+              <Fragment key={key}>
+                <div
+                  className={cn(
+                    CONTACT_SECTION_HEADER,
+                    sectionIndex === 0 ? "mt-2" : "mt-4"
+                  )}
+                >
+                  {title}
+                </div>
+                {items.map((contact) => {
+                  const inDiscover = a2aPresence.has(contact.id);
+                  const isOnline = a2aPresence.get(contact.id) === true;
+                  return (
+                    <div
+                      key={contact.id}
+                      onClick={() => setSelectedId(contact.id)}
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2.5 cursor-pointer",
+                        selectedId === contact.id ? "bg-[#C6C6C6]" : "hover:bg-[#D9D9D9]"
+                      )}
+                    >
+                      <div className="relative flex-shrink-0">
+                        <img src={contact.avatar} alt="" className="w-9 h-9 rounded-[4px] object-cover" />
+                        {contact.type === "bot" && contact.botOrigin ? (
+                          <BotOriginBadge origin={contact.botOrigin} positionClassName="-top-0.5 -right-0.5" />
+                        ) : null}
+                        {inDiscover && (
+                          <span
+                            className={cn(
+                              "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#F7F7F7]",
+                              isOnline ? "bg-[#07C160]" : "bg-red-500"
+                            )}
+                            title={isOnline ? "Online (A2A)" : "Offline (A2A)"}
+                          />
+                        )}
+                      </div>
+                      <span className="text-[13px] text-black truncate">{contact.name}</span>
+                    </div>
+                  );
+                })}
+              </Fragment>
+            ))}
 
           {suggestedBots.length > 0 && (() => {
             const contactIds = new Set(contacts.map((c) => c.id));
@@ -304,6 +382,19 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
                 <div className="flex items-center gap-2 mb-2">
                   <h2 className="text-[18px] font-medium text-black">{selectedContact.name}</h2>
                   <User size={14} className="text-blue-500 fill-blue-500" />
+                  {a2aPresence.has(selectedContact.id) && (
+                    a2aPresence.get(selectedContact.id) ? (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#07C160]/10 text-[#07C160] text-[10px] font-medium rounded-full">
+                        <span className="w-1.5 h-1.5 bg-[#07C160] rounded-full" />
+                        Online
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-red-50 text-red-600 text-[10px] font-medium rounded-full">
+                        <span className="w-1.5 h-1.5 bg-red-500 rounded-full" />
+                        Offline
+                      </span>
+                    )
+                  )}
                 </div>
                 <div className="text-[12px] text-gray-500 space-y-1">
                   <p>ID: {selectedContact.id}</p>
@@ -324,7 +415,7 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
                       className="flex flex-col items-center gap-2 text-gray-400 hover:text-red-500 group"
                     >
                       <Trash2 size={20} strokeWidth={1.5} />
-                      <span className="text-[13px]">删除联系人</span>
+                      <span className="text-[13px]">Delete contact</span>
                     </button>
                   </div>
                 )}
@@ -337,7 +428,7 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
                   className="flex flex-col items-center gap-2 text-[#576B95] hover:text-[#4a5a80] group"
                 >
                   <MessageSquare size={24} strokeWidth={1.5} />
-                  <span className="text-[13px]">发消息</span>
+                  <span className="text-[13px]">Send message</span>
                 </button>
                 {!selectedContact.isDefault && (
                   <button
@@ -345,7 +436,7 @@ export function ContactsWindow({ onStartChat }: ContactsWindowProps) {
                     className="flex flex-col items-center gap-2 text-gray-400 hover:text-red-500 group"
                   >
                     <Trash2 size={20} strokeWidth={1.5} />
-                    <span className="text-[13px]">删除联系人</span>
+                    <span className="text-[13px]">Delete contact</span>
                   </button>
                 )}
               </div>

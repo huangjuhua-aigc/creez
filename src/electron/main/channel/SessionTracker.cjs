@@ -14,7 +14,12 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const os = require("node:os");
-const { randomUUID } = require("node:crypto");
+const {
+  summarizeTranscriptWithDefaultPiAssistant,
+  appendToDefaultAssistantMainChat,
+  resolveWorkDir: resolveWorkDirSummary,
+  DEFAULT_WORKSPACE_ROOT: DEFAULT_WORKSPACE_SUMMARY,
+} = require("./transcriptSummaryService.cjs");
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const SCAN_INTERVAL_MS = 60 * 1000;
@@ -29,17 +34,8 @@ function trackerLog(message) {
   } catch {}
 }
 
-function resolveWorkDir(raw) {
-  if (raw == null || String(raw).trim() === "") return null;
-  const s = String(raw).trim();
-  const home = os.homedir();
-  if (s === "~" || s.startsWith("~/") || s.startsWith("~\\")) {
-    return path.join(home, s.slice(1).replace(/\//g, path.sep));
-  }
-  return path.resolve(s);
-}
-
-const DEFAULT_WORKSPACE_ROOT = path.join(os.homedir(), ".creez", "workplace");
+const resolveWorkDir = resolveWorkDirSummary;
+const DEFAULT_WORKSPACE_ROOT = DEFAULT_WORKSPACE_SUMMARY;
 
 class SessionTracker {
   constructor(deps) {
@@ -184,101 +180,21 @@ class SessionTracker {
   }
 
   async _generateSummary(session, transcript, botName) {
-    const { getEngineForContact } = require("../conversation/engineRegistry.cjs");
-    const { getRunner } = require("../conversation/PiConversationEngine.cjs");
-    const { contactRepository, assistantConfigRepository } = this._deps;
-
-    const defaultContactId = contactRepository.getDefaultAssistantConfigId();
-    const { engine, rawConfig, assistantConfigId } = getEngineForContact(defaultContactId, {
-      contactRepository,
-      assistantConfigRepository,
-    });
-
-    const models = Array.isArray(rawConfig?.models) ? rawConfig.models : [];
-    const activeModel = models.find((m) => m && m.active) || models[0];
-    if (!activeModel?.provider || !activeModel?.model) {
-      throw new Error("no active model for summary generation");
-    }
-    let apiKey = (activeModel.apiKey && String(activeModel.apiKey).trim()) || "";
-    if (!apiKey && assistantConfigRepository?.getModelApiKeyFromConfig) {
-      apiKey = assistantConfigRepository.getModelApiKeyFromConfig(assistantConfigId, activeModel.id) || "";
-    }
-    if (!apiKey) throw new Error("no API key for summary generation");
-
-    const summarySessionKey = `summary:${session.sessionKey}:${Date.now()}`;
-    const agentDir = path.join(os.homedir(), ".creez");
-
-    const appState = this._deps.appStateStore ? await this._deps.appStateStore.getState() : {};
-    const rawRoot = appState?.workspaceRoot ?? null;
-    const workDir = resolveWorkDir(rawRoot) || DEFAULT_WORKSPACE_ROOT;
-
-    const runner = await getRunner();
-
-    const summaryPromptText = [
-      `请根据以下对话记录生成结构化摘要（中文）。这是 Agent "${botName}" 通过${session.channelType}渠道与外部用户的对话。`,
-      "",
-      "要求输出：",
-      "1. **会话概览**（1-2句话概括）",
-      "2. **关键诉求/问题**（列表，最多5条）",
-      "3. **结论与下一步**（列表，最多3条）",
-      "4. **风险/注意事项**（如有）",
-      "",
-      "---",
-      "对话记录：",
-      transcript.slice(0, 8000),
-    ].join("\n");
-
-    let summaryResult = "";
-    const collector = {
-      send(channel, data) {
-        if (data.type === "message_end" && data.message?.content) {
-          const c = data.message.content;
-          summaryResult = typeof c === "string" ? c : (Array.isArray(c) ? c.filter((x) => x.type === "text").map((x) => x.text).join("") : "");
-        }
+    const { contactRepository, assistantConfigRepository, appStateStore } = this._deps;
+    return summarizeTranscriptWithDefaultPiAssistant(
+      { contactRepository, assistantConfigRepository, appStateStore },
+      {
+        transcript,
+        botName,
+        channelType: session.channelType,
+        scenarioDescription: `这是 Agent "${botName}" 通过 **${session.channelType}** 渠道与外部用户的对话。`,
+        summarySessionKeyPrefix: `summary:${session.sessionKey}`,
       },
-      isDestroyed() { return false; },
-    };
-
-    const summaryConfig = {
-      ...rawConfig,
-      systemPrompt: "你是一个专业的对话摘要助手。请简洁、准确地总结对话内容，输出 Markdown 格式。",
-    };
-
-    await runner.createAndSubscribe(collector, {
-      provider: activeModel.provider,
-      modelId: activeModel.model,
-      apiKey,
-      contactId: summarySessionKey,
-      assistantConfigId,
-      defaultContactId,
-      workDir,
-      agentDir,
-      assistantConfig: summaryConfig,
-      memoryContent: "",
-      memoryPath: "",
-      chatId: summarySessionKey,
-    });
-
-    await runner.prompt({ chatId: summarySessionKey, text: summaryPromptText, images: [] });
-
-    try {
-      runner.abort(summarySessionKey);
-    } catch {}
-
-    if (!summaryResult) {
-      throw new Error("empty summary from LLM");
-    }
-    return summaryResult;
+    );
   }
 
   async _notifyOwner(session, summaryText, summaryPath, transcriptPath, botName) {
     const { chatRepository, contactRepository } = this._deps;
-
-    const defaultContactId = contactRepository.getDefaultAssistantConfigId();
-
-    const { chatId: ownerChatId } = chatRepository.getOrCreateMainChatForContact({
-      contactId: defaultContactId,
-    });
 
     const startTime = new Date(session.createdAt).toISOString().slice(0, 19).replace("T", " ");
     const endTime = new Date(session.lastActivityAt).toISOString().slice(0, 19).replace("T", " ");
@@ -301,31 +217,11 @@ class SessionTracker {
       `📁 **完整记录：** ${transcriptPath}`,
     ].join("\n");
 
-    const nowTs = Math.floor(Date.now() / 1000);
-    chatRepository.appendMessage({
-      id: randomUUID(),
-      chatId: ownerChatId,
-      sender: "assistant",
-      botId: defaultContactId,
-      content: notificationContent,
-      status: "done",
-      createdAt: nowTs,
-      updatedAt: nowTs,
-    });
-
-    this._notifyRenderer("channel:newMessage", { chatId: ownerChatId });
-    trackerLog("owner notified in chat " + ownerChatId);
-  }
-
-  _notifyRenderer(channel, data) {
-    try {
-      const { BrowserWindow } = require("electron");
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (win.webContents && !win.isDestroyed()) {
-          win.webContents.send(channel, data);
-        }
-      }
-    } catch {}
+    appendToDefaultAssistantMainChat(
+      { contactRepository, chatRepository },
+      { content: notificationContent },
+    );
+    trackerLog("owner notified (default assistant main chat)");
   }
 }
 

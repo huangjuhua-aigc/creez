@@ -1,4 +1,5 @@
 const { CHANNELS } = require("./channels.cjs");
+const { syncContactBotOrigins } = require("./contactBotOrigin.cjs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 
@@ -24,9 +25,12 @@ async function getFetchRemote() {
 }
 
 function registerChatIpc(ipcMain, chatRepository, deps = {}) {
-  const { contactRepository } = deps;
+  const { contactRepository, appStateStore } = deps;
   ipcMain.handle(CHANNELS.CHAT_LIST, async (_event, payload) => {
     try {
+      if (contactRepository) {
+        await syncContactBotOrigins(contactRepository, appStateStore);
+      }
       const result = chatRepository.list(payload || {});
       return ok(result);
     } catch (error) {

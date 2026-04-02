@@ -9,11 +9,13 @@ const os = require("node:os");
 const path = require("node:path");
 const Database = require("better-sqlite3");
 const { MIGRATIONS } = require("./migrations.cjs");
+const { getCreezDir } = require("../creezPaths.cjs");
 
 class CreezDatabase {
   constructor(options = {}) {
     this.homeDir = options.homeDir || os.homedir();
-    this.dbPath = options.dbPath || path.join(this.homeDir, ".creez", "app.db");
+    this.creezHome = options.creezHome || getCreezDir(this.homeDir);
+    this.dbPath = options.dbPath || path.join(this.creezHome, "app.db");
     this.db = null;
   }
 

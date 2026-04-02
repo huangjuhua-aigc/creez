@@ -234,6 +234,7 @@ declare global {
         >;
         getSkillEnv: (payload: { skillId: string }) => Promise<IpcResult<{ env: Record<string, string> }>>;
         saveSkillEnv: (payload: { skillId: string; env: Record<string, string> }) => Promise<IpcResult<{ updated: boolean }>>;
+        onAssistantConfigChanged?: (listener: () => void) => (() => void) | undefined;
       };
       attachment: {
         save: (payload: { buffer: ArrayBuffer; fileName: string }) => Promise<

@@ -56,8 +56,11 @@ export default function App() {
     });
   }, [activeTab, currentChatId]);
 
-  const handleStartChat = (contactId: number | string) => {
-    setCurrentChatId(contactId);
+  const [activeChatMeta, setActiveChatMeta] = useState<{ name?: string; avatar?: string } | null>(null);
+
+  const handleStartChat = (chatId: string, meta?: { name?: string; avatar?: string }) => {
+    setCurrentChatId(chatId);
+    setActiveChatMeta(meta || null);
     setActiveTab('chat');
   };
 
@@ -115,7 +118,7 @@ export default function App() {
         ) : (
           <>
         <div className={activeTab === 'chat' ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
-          <ChatWindow activeChatId={currentChatId} onSelectChat={handleSelectChat} onNavigateToSettings={() => setActiveTab('settings')} />
+          <ChatWindow activeChatId={currentChatId} activeChatMeta={activeChatMeta} onSelectChat={handleSelectChat} onNavigateToSettings={() => setActiveTab('settings')} />
         </div>
         <div className={activeTab === 'contacts' ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
           <ContactsWindow onStartChat={handleStartChat} />

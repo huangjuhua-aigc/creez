@@ -1,6 +1,7 @@
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { getCreezDir } = require("./creezPaths.cjs");
 
 const DEFAULT_APP_STATE = Object.freeze({
   lastTab: "chat",
@@ -65,9 +66,10 @@ class AppStateStore {
   constructor(options = {}) {
     this.repository = options.repository || null;
     this.homeDir = options.homeDir || os.homedir();
+    this.creezHome = options.creezHome || getCreezDir(this.homeDir);
     this.fs = options.fs || fs;
     this.path = options.path || path;
-    this.filePath = options.filePath || this.path.join(this.homeDir, ".creez", "app-state.json");
+    this.filePath = options.filePath || this.path.join(this.creezHome, "app-state.json");
   }
 
   async getState() {

@@ -7,11 +7,12 @@
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { resolveCreezHome } = require("../creezPaths.cjs");
 const { getEngineForContact } = require("../conversation/engineRegistry.cjs");
 const { CHANNELS } = require("../channels.cjs");
 const { addListener, removeListener } = require("../agent-runner.mjs");
 
-const DEFAULT_WORKSPACE_ROOT = path.join(os.homedir(), ".creez", "workplace");
+const DEFAULT_WORKSPACE_ROOT = path.join(resolveCreezHome(os.homedir()), "workplace");
 
 function resolveWorkDir(raw) {
   if (raw == null || String(raw).trim() === "") return null;
@@ -64,7 +65,7 @@ async function executeTask(task, deps) {
     return;
   }
 
-  const agentDir = creezHome ? path.join(creezHome, ".creez") : path.join(os.homedir(), ".creez");
+  const agentDir = creezHome || resolveCreezHome(os.homedir());
 
   try {
     taskRepository.insertLog({ task_id: taskId, status: "running" });

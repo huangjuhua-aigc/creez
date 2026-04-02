@@ -1,6 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
+const { getCreezDir } = require("../creezPaths.cjs");
 
 function nowTs() {
   return Math.floor(Date.now() / 1000);
@@ -9,11 +10,11 @@ function nowTs() {
 const ASSETS_DIR = path.join(__dirname, "..", "..", "..", "assets");
 
 /** Copy bundled avatar from assets/ to ~/.creez/avatars/; return target path or null. */
-function copyBundledAvatar(homeDir, filename) {
+function copyBundledAvatar(creezHome, filename) {
   const bundledPath = path.join(ASSETS_DIR, filename);
   if (!fs.existsSync(bundledPath)) return null;
-  const baseDir = homeDir || os.homedir();
-  const avatarDir = path.join(baseDir, ".creez", "avatars");
+  const baseDir = creezHome || getCreezDir(os.homedir());
+  const avatarDir = path.join(baseDir, "avatars");
   const targetPath = path.join(avatarDir, filename);
   try {
     fs.mkdirSync(avatarDir, { recursive: true });
@@ -25,8 +26,8 @@ function copyBundledAvatar(homeDir, filename) {
 }
 
 /** Default bot default avatar: creezv2/assets/bot_avatar_256x256.png → ~/.creez/avatars/bot_avatar_256x256.png */
-function resolveDefaultBotAvatarPath(homeDir) {
-  return copyBundledAvatar(homeDir, "bot_avatar_256x256.png");
+function resolveDefaultBotAvatarPath(creezHome) {
+  return copyBundledAvatar(creezHome, "bot_avatar_256x256.png");
 }
 
 /** Fixed UUID for default assistant bot (config id = contact id). */
@@ -52,8 +53,8 @@ function safeJsonParse(value, fallback) {
 
 function seedIfEmpty(db, options = {}) {
   const base = nowTs();
-  const homeDir = options.homeDir || os.homedir();
-  const defaultBotAvatarPath = resolveDefaultBotAvatarPath(homeDir);
+  const creezHome = options.creezHome || getCreezDir(options.homeDir || os.homedir());
+  const defaultBotAvatarPath = resolveDefaultBotAvatarPath(creezHome);
   const assistantRow = db
     .prepare("SELECT name, avatar_path, models_json FROM assistant_config WHERE id = ?")
     .get(BOT_CONTACT_ID);
@@ -71,8 +72,8 @@ function seedIfEmpty(db, options = {}) {
     VALUES (@id, @contactId, @createdAt, @updatedAt, @lastMessageAt)
   `);
   const insertContact = db.prepare(`
-    INSERT OR IGNORE INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at, remote_agent_id)
-    VALUES (@id, @type, @name, @avatarPath, @isDefault, @createdAt, @updatedAt, @remoteAgentId)
+    INSERT OR IGNORE INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at, remote_agent_id, bot_origin)
+    VALUES (@id, @type, @name, @avatarPath, @isDefault, @createdAt, @updatedAt, @remoteAgentId, @botOrigin)
   `);
   const updateContact = db.prepare(`
     UPDATE contacts
@@ -132,6 +133,7 @@ function seedIfEmpty(db, options = {}) {
       createdAt,
       updatedAt: base,
       remoteAgentId: null,
+      botOrigin: "assistant",
     }).changes;
     updateContact.run({
       id: BOT_CONTACT_ID,
@@ -178,6 +180,7 @@ function seedIfEmpty(db, options = {}) {
       createdAt: createdAt + 1,
       updatedAt: base,
       remoteAgentId: ROUNDCLOSER_BACKEND_AGENT_ID,
+      botOrigin: "remote",
     }).changes;
     const rcChatInserted = insertChat.run({
       id: ROUNDCLOSER_CHAT_ID,

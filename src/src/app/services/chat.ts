@@ -6,6 +6,7 @@ export type ChatListItem = {
   avatar: string;
   contactId?: string | null;
   contactAvatarPath?: string | null;
+  contactBotOrigin?: string | null;
   lastMessage: string;
   unread: number;
   time: string;
@@ -67,6 +68,7 @@ export async function fetchChatList(): Promise<ChatListItem[]> {
       avatar: avatarFromContact || avatarFromName(name),
       contactId: item.contactId || null,
       contactAvatarPath: item.contactAvatarPath || null,
+      contactBotOrigin: item.contactBotOrigin ?? null,
       lastMessage: item.lastMessage || "",
       unread: item.unreadCount || 0,
       time: formatTime(item.lastMessageAt),

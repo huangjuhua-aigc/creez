@@ -511,6 +511,43 @@ const MIGRATIONS = [
       ALTER TABLE app_state ADD COLUMN last_selected_model_id TEXT;
     `,
   },
+  {
+    version: 17,
+    name: "a2a_support",
+    sql: `
+      ALTER TABLE contacts ADD COLUMN a2a_agent_id TEXT;
+
+      CREATE TABLE IF NOT EXISTS a2a_contact_history (
+        id TEXT PRIMARY KEY,
+        from_agent_id TEXT NOT NULL,
+        to_agent_id TEXT NOT NULL,
+        last_session_id TEXT,
+        last_contacted_at TEXT DEFAULT (datetime('now')),
+        total_sessions INTEGER DEFAULT 1,
+        next_allowed_at TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(from_agent_id, to_agent_id)
+      );
+    `,
+  },
+  {
+    version: 18,
+    name: "contacts_bot_origin",
+    sql: `
+      ALTER TABLE contacts ADD COLUMN bot_origin TEXT;
+      UPDATE contacts SET bot_origin = 'assistant' WHERE type = 'bot' AND is_default = 1;
+      UPDATE contacts SET bot_origin = 'template'
+        WHERE type = 'bot' AND is_default = 0
+          AND (remote_agent_id IS NULL OR TRIM(remote_agent_id) = '');
+    `,
+  },
+  {
+    version: 19,
+    name: "add_assistant_config_a2a_strategy",
+    sql: `
+      ALTER TABLE assistant_config ADD COLUMN a2a_strategy_json TEXT;
+    `,
+  },
 ];
 
 module.exports = {
