@@ -66,6 +66,11 @@ contextBridge.exposeInMainWorld("electron", {
     listAvailableSkills: () => ipcRenderer.invoke(CHANNELS.SETTINGS_LIST_AVAILABLE_SKILLS),
     getSkillEnv: (payload) => ipcRenderer.invoke(CHANNELS.SETTINGS_GET_SKILL_ENV, payload),
     saveSkillEnv: (payload) => ipcRenderer.invoke(CHANNELS.SETTINGS_SAVE_SKILL_ENV, payload),
+    onAssistantConfigChanged: (listener) => {
+      const wrapped = () => listener();
+      ipcRenderer.on(CHANNELS.SETTINGS_ASSISTANT_CONFIG_CHANGED, wrapped);
+      return () => ipcRenderer.removeListener(CHANNELS.SETTINGS_ASSISTANT_CONFIG_CHANGED, wrapped);
+    },
   },
   memory: {
     read: (payload) => ipcRenderer.invoke(CHANNELS.MEMORY_READ, payload),
@@ -113,6 +118,22 @@ contextBridge.exposeInMainWorld("electron", {
     search: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_SEARCH, payload),
     recent: () => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_RECENT),
     getDeviceId: () => ipcRenderer.invoke(CHANNELS.APP_GET_DEVICE_ID),
+  },
+  a2a: {
+    getStatus: () => ipcRenderer.invoke(CHANNELS.A2A_GET_STATUS),
+    discover: (payload) => ipcRenderer.invoke(CHANNELS.A2A_DISCOVER, payload),
+    openSession: (payload) => ipcRenderer.invoke(CHANNELS.A2A_OPEN_SESSION, payload),
+    sendMessage: (payload) => ipcRenderer.invoke(CHANNELS.A2A_SEND_MESSAGE, payload),
+    closeSession: (payload) => ipcRenderer.invoke(CHANNELS.A2A_CLOSE_SESSION, payload),
+    fetchMessages: (payload) => ipcRenderer.invoke(CHANNELS.A2A_FETCH_MESSAGES, payload),
+    onSessionEvent: (listener) => {
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on(CHANNELS.A2A_SESSION_EVENT, wrapped);
+      return () => ipcRenderer.removeListener(CHANNELS.A2A_SESSION_EVENT, wrapped);
+    },
+    sendToRemoteBot: (payload) => ipcRenderer.invoke(CHANNELS.A2A_SEND_TO_REMOTE_BOT, payload),
+    refreshRegistration: () => ipcRenderer.invoke(CHANNELS.A2A_REFRESH_REGISTRATION),
+    triggerAutoDiscovery: (payload) => ipcRenderer.invoke(CHANNELS.A2A_TRIGGER_AUTO_DISCOVERY, payload),
   },
   storyboard: {
     list: () => ipcRenderer.invoke(CHANNELS.STORYBOARD_LIST),

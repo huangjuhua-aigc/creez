@@ -3,15 +3,14 @@
  * Used when a contact has remote_agent_id set.
  */
 
-const DEFAULT_BACKEND_URL = "https://creez.lighton.video";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
+
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
 const cache = new Map();
-
-function resolveBackendUrl() {
-  const fromEnv = String(process.env.CREEZ_KNOWLEDGE_API_BASE || "").trim();
-  return fromEnv || DEFAULT_BACKEND_URL;
-}
 
 function toConfig(agent) {
   const skills = agent.skills_json && typeof agent.skills_json === "object"
@@ -38,7 +37,7 @@ function toConfig(agent) {
  */
 export async function checkRemoteAgentById(agentId) {
   if (!agentId) return { exists: false, config: null, reason: "not_found" };
-  const baseUrl = resolveBackendUrl().replace(/\/+$/, "");
+  const baseUrl = resolveCreezBackendBase();
   const url = `${baseUrl}/agents/${encodeURIComponent(agentId)}`;
   try {
     const controller = new AbortController();

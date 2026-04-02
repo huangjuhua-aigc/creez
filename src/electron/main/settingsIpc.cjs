@@ -4,6 +4,7 @@ const path = require("node:path");
 const { BrowserWindow, dialog } = require("electron");
 const { CHANNELS } = require("./channels.cjs");
 const { stripBuiltinSkillFlags } = require("./builtinSkillIds.cjs");
+const { getCreezDir } = require("./creezPaths.cjs");
 
 function ok(data) {
   return { ok: true, data };
@@ -52,7 +53,7 @@ async function saveAvatarFromDataUrl(payload, avatarDir) {
 
   const ext = inferExtFromDataUrl(dataUrl);
   const baseName = toSafeFilename(payload?.fileName || `avatar_${Date.now()}`);
-  const dir = avatarDir || path.join(os.homedir(), ".creez", "avatars");
+  const dir = avatarDir || path.join(getCreezDir(os.homedir()), "avatars");
   const targetPath = path.join(dir, `${baseName}${ext}`);
 
   await fs.mkdir(dir, { recursive: true });
@@ -61,8 +62,8 @@ async function saveAvatarFromDataUrl(payload, avatarDir) {
 }
 
 function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, skillManager, contactRepository, options = {}) {
-  const creezHome = options.creezHome ?? os.homedir();
-  const avatarDir = path.join(creezHome, ".creez", "avatars");
+  const creezHome = options.creezHome ?? getCreezDir(os.homedir());
+  const avatarDir = path.join(creezHome, "avatars");
   const DEFAULT_BOT_ID = "11111111-1111-1111-1111-111111111111";
   ipcMain.handle(CHANNELS.SETTINGS_GET_ASSISTANT_CONFIG, async (_event, payload) => {
     try {
@@ -137,6 +138,13 @@ function registerSettingsIpc(ipcMain, assistantConfigRepository, memoryStore, sk
             assistantConfigRepository.saveConfigById(configId, { models: rawDefault.models });
           }
         }
+      }
+      try {
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed()) win.webContents.send(CHANNELS.SETTINGS_ASSISTANT_CONFIG_CHANGED);
+        }
+      } catch (_) {
+        /* ignore */
       }
       return ok({ updated: true, updatedAt: Math.floor(Date.now() / 1000), config: saved });
     } catch (error) {

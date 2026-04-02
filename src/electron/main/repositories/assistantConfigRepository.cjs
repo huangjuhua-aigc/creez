@@ -39,9 +39,9 @@ class AssistantConfigRepository {
     this.getByIdStmt = db.prepare("SELECT * FROM assistant_config WHERE id = ?");
     this.insertIfMissingStmt = db.prepare(`
       INSERT OR IGNORE INTO assistant_config (
-        id, name, avatar_path, system_prompt, skills_json, models_json, engine_type, updated_at
+        id, name, avatar_path, system_prompt, skills_json, models_json, engine_type, a2a_strategy_json, updated_at
       ) VALUES (
-        @id, @name, @avatar_path, @system_prompt, @skills_json, @models_json, @engine_type, @updated_at
+        @id, @name, @avatar_path, @system_prompt, @skills_json, @models_json, @engine_type, @a2a_strategy_json, @updated_at
       )
     `);
     this.updateByIdStmt = db.prepare(`
@@ -52,6 +52,7 @@ class AssistantConfigRepository {
           skills_json = @skills_json,
           models_json = @models_json,
           engine_type = @engine_type,
+          a2a_strategy_json = @a2a_strategy_json,
           updated_at = @updated_at
       WHERE id = @id
     `);
@@ -70,6 +71,7 @@ class AssistantConfigRepository {
       skills: skills && typeof skills === "object" ? skills : {},
       models: Array.isArray(models) ? models : [],
       engineType,
+      a2a_strategy_json: safeJsonParse(row.a2a_strategy_json, null),
     };
   }
 
@@ -143,6 +145,10 @@ class AssistantConfigRepository {
         ? String(incoming.engineType).trim()
         : (current.engineType || "pi");
 
+    const a2aStrategy = incoming.a2a_strategy_json !== undefined
+      ? incoming.a2a_strategy_json
+      : (current.a2a_strategy_json || null);
+
     const merged = {
       name: incoming.name != null ? String(incoming.name) : current.name,
       avatar: incoming.avatar != null ? String(incoming.avatar) : current.avatar,
@@ -150,6 +156,7 @@ class AssistantConfigRepository {
       skills: incoming.skills && typeof incoming.skills === "object" ? incoming.skills : current.skills,
       models: nextModels,
       engineType,
+      a2a_strategy_json: a2aStrategy,
     };
 
     const updatedAt = Math.floor(Date.now() / 1000);
@@ -161,6 +168,7 @@ class AssistantConfigRepository {
       skills_json: JSON.stringify(merged.skills),
       models_json: JSON.stringify(merged.models),
       engine_type: merged.engineType,
+      a2a_strategy_json: a2aStrategy ? JSON.stringify(a2aStrategy) : null,
       updated_at: updatedAt,
     };
     this.insertIfMissingStmt.run(writePayload);

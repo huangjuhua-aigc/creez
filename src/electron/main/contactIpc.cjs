@@ -1,4 +1,5 @@
 const { CHANNELS } = require("./channels.cjs");
+const { syncContactBotOrigins } = require("./contactBotOrigin.cjs");
 
 function ok(data) {
   return { ok: true, data };
@@ -11,9 +12,11 @@ function err(code, message, details) {
   };
 }
 
-function registerContactIpc(ipcMain, contactRepository) {
+function registerContactIpc(ipcMain, contactRepository, deps = {}) {
+  const { appStateStore } = deps;
   ipcMain.handle(CHANNELS.CONTACT_LIST, async (_event, payload) => {
     try {
+      await syncContactBotOrigins(contactRepository, appStateStore);
       const result = contactRepository.list(payload || {});
       return ok(result);
     } catch (error) {

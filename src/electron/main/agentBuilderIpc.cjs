@@ -12,12 +12,7 @@ function broadcastContactListChanged() {
   }
 }
 
-const DEFAULT_BACKEND_URL = "https://creez.lighton.video";
-
-function resolveBackendUrl() {
-  const fromEnv = String(process.env.CREEZ_KNOWLEDGE_API_BASE || "").trim();
-  return fromEnv || DEFAULT_BACKEND_URL;
-}
+const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
 
 function ok(data) {
   return { ok: true, data };
@@ -28,7 +23,7 @@ function err(code, message) {
 }
 
 async function backendFetch(path, options = {}) {
-  const baseUrl = resolveBackendUrl().replace(/\/+$/, "");
+  const baseUrl = resolveCreezBackendBase().replace(/\/+$/, "");
   const url = `${baseUrl}${path}`;
   console.log("[agentBuilderIpc] request", {
     method: options.method || "GET",
@@ -53,7 +48,7 @@ async function backendFetch(path, options = {}) {
 }
 
 function registerAgentBuilderIpc(ipcMain, deps = {}) {
-  const { appStateStore, contactRepository } = deps;
+  const { appStateStore, contactRepository, assistantConfigRepository } = deps;
 
   async function getDeviceId() {
     if (!appStateStore) return randomUUID();
@@ -132,6 +127,18 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
           console.warn("[agentBuilderIpc] ensureAuthorCreatedAgent:warn", e?.message || String(e));
         }
       }
+      if (assistantConfigRepository && data?.id) {
+        try {
+          assistantConfigRepository.saveConfigById(data.id, {
+            name: payload.name,
+            systemPrompt: payload.system_prompt,
+            avatar: payload.avatar_url,
+            a2a_strategy_json: payload.a2a_strategy_json || undefined,
+          });
+        } catch (e) {
+          console.warn("[agentBuilderIpc] sync local config on create:", e?.message || String(e));
+        }
+      }
       return ok(data);
     } catch (e) {
       console.error("[agentBuilderIpc] AGENT_BUILDER_CREATE:error", e?.message || String(e));
@@ -152,6 +159,30 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
       });
       if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || `HTTP ${status}`);
       console.log("[agentBuilderIpc] AGENT_BUILDER_UPDATE:out", { id: body?.data?.id });
+
+      if (assistantConfigRepository) {
+        try {
+          assistantConfigRepository.saveConfigById(id, {
+            name: payload.name,
+            systemPrompt: payload.system_prompt,
+            avatar: payload.avatar_url,
+            a2a_strategy_json: payload.a2a_strategy_json || undefined,
+          });
+        } catch (e) {
+          console.warn("[agentBuilderIpc] sync local assistant_config failed:", e?.message || String(e));
+        }
+      }
+      if (contactRepository) {
+        try {
+          contactRepository.updateBotMeta(id, {
+            name: payload.name,
+            avatar_path: payload.avatar_url,
+          });
+        } catch (e) {
+          console.warn("[agentBuilderIpc] sync local contact failed:", e?.message || String(e));
+        }
+      }
+
       return ok(body.data);
     } catch (e) {
       console.error("[agentBuilderIpc] AGENT_BUILDER_UPDATE:error", e?.message || String(e));

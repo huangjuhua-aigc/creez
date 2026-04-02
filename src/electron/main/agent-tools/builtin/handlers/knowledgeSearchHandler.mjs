@@ -1,4 +1,8 @@
+import { createRequire } from "node:module";
 import { asTextEnvelope, buildErrorEnvelope, buildSuccessEnvelope } from "../errorProtocol.mjs";
+
+const require = createRequire(import.meta.url);
+const { resolveCreezBackendBase } = require("../../../creezBackendBase.cjs");
 
 const DEFAULT_TIMEOUT_MS = 12000;
 const DEFAULT_TOP_K = 5;
@@ -8,11 +12,6 @@ function normalizeTopK(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return DEFAULT_TOP_K;
   return Math.max(1, Math.min(MAX_TOP_K, Math.floor(n)));
-}
-
-function resolveBaseUrl() {
-  const fromEnv = String(process.env.CREEZ_KNOWLEDGE_API_BASE || "").trim();
-  return fromEnv || "https://creez.lighton.video";
 }
 
 function normalizeMatch(raw, index) {
@@ -70,7 +69,7 @@ export function createKnowledgeSearchHandler(runtimeContext = {}) {
 
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(new Error("timeout")), DEFAULT_TIMEOUT_MS);
-      const baseUrl = resolveBaseUrl();
+      const baseUrl = resolveCreezBackendBase();
       const endpoint = `${baseUrl.replace(/\/+$/, "")}/knowledge/search`;
       console.log("[creezv2 knowledge_search] request", {
         endpoint,

@@ -1,9 +1,12 @@
 import { useEffect, useState, useCallback } from "react";
-import { Bot, Plus, X, Sparkles, Camera, Database, ChevronDown, ChevronUp, Save, Globe, Trash2 } from "lucide-react";
+import { Bot, Plus, X, Sparkles, Camera, Database, ChevronDown, ChevronUp, Save, Globe, Trash2, Network, Zap, RefreshCw } from "lucide-react";
 import { Button } from "./ui/button";
 import { cn } from "../../utils/cn";
 import { toast } from "sonner";
 import { BotChannelConfigPanel } from "./BotChannelConfigPanel";
+import { AgentCardEditor, type AgentCardData } from "./AgentCardEditor";
+import { A2AStrategyPanel, DEFAULT_A2A_STRATEGY, type A2AStrategyData } from "./A2AStrategyPanel";
+import { refreshA2ARegistration, triggerAutoDiscoveryNow } from "../services/a2a";
 
 type AgentListItem = {
   id: string;
@@ -22,6 +25,9 @@ type AgentDetail = {
   knowledge: string;
   skills_json: Record<string, boolean>;
   status: string;
+  agent_card_json: AgentCardData | null;
+  a2a_strategy_json: A2AStrategyData | null;
+  visibility: string;
 };
 
 const EMPTY_AGENT: AgentDetail = {
@@ -33,7 +39,40 @@ const EMPTY_AGENT: AgentDetail = {
   knowledge: "",
   skills_json: { knowledge_search: true, vc_lead_capture: true },
   status: "draft",
+  agent_card_json: null,
+  a2a_strategy_json: null,
+  visibility: "public",
 };
+
+/** Merge API `visibility` with `agent_card_json` so the card editor shows the correct option. */
+function normalizeAgentCardFromApi(
+  card: unknown,
+  visibilityFallback: string
+): AgentCardData {
+  const c = card && typeof card === "object" ? (card as Record<string, unknown>) : {};
+  const rawSkills = c.skills;
+  const skills: string[] = [];
+  if (Array.isArray(rawSkills)) {
+    for (const s of rawSkills) {
+      if (typeof s === "string" && s.trim()) skills.push(s.trim());
+      else if (s && typeof s === "object") {
+        const o = s as { id?: string; name?: string };
+        const label = o.name || o.id;
+        if (label) skills.push(String(label));
+      }
+    }
+  }
+  const rawVis = (typeof c.visibility === "string" && c.visibility ? c.visibility : null)
+    || visibilityFallback
+    || "public";
+  const visibility = (["public", "private", "unlisted"].includes(rawVis) ? rawVis : "public") as AgentCardData["visibility"];
+  const desc = c.description;
+  return {
+    description: typeof desc === "string" ? desc : "",
+    skills,
+    visibility,
+  };
+}
 
 export function AgentBuilder() {
   const [agents, setAgents] = useState<AgentListItem[]>([]);
@@ -44,6 +83,8 @@ export function AgentBuilder() {
   const [isNew, setIsNew] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [isKnowledgeOpen, setIsKnowledgeOpen] = useState(false);
+  const [isA2AOpen, setIsA2AOpen] = useState(false);
+  const [discoveryBusy, setDiscoveryBusy] = useState(false);
 
   const api = window.electron?.agentBuilder;
 
@@ -66,6 +107,7 @@ export function AgentBuilder() {
     const result = await api.get({ id });
     if (result.ok) {
       const d = result.data;
+      const vis = d.visibility || "public";
       setForm({
         id: d.id,
         name: d.name,
@@ -75,10 +117,14 @@ export function AgentBuilder() {
         knowledge: d.knowledge || "",
         skills_json: d.skills_json || { knowledge_search: true, vc_lead_capture: true },
         status: d.status,
+        agent_card_json: normalizeAgentCardFromApi(d.agent_card_json, vis),
+        a2a_strategy_json: d.a2a_strategy_json || null,
+        visibility: vis,
       });
       setAvatarPreview(d.avatar_url || "");
       setIsNew(false);
       setIsKnowledgeOpen(!!d.knowledge || !!d.system_prompt);
+      setIsA2AOpen(!!d.agent_card_json || !!d.a2a_strategy_json);
     }
   }, [api]);
 
@@ -94,6 +140,7 @@ export function AgentBuilder() {
     setAvatarPreview("");
     setIsNew(true);
     setIsKnowledgeOpen(true);
+    setIsA2AOpen(false);
   };
 
   const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -122,6 +169,9 @@ export function AgentBuilder() {
         greeting_message: form.greeting_message,
         knowledge: form.knowledge,
         avatar_url: form.avatar_url,
+        agent_card_json: form.agent_card_json,
+        a2a_strategy_json: form.a2a_strategy_json,
+        visibility: form.visibility,
       });
       if (result.ok) {
         setIsNew(false);
@@ -129,6 +179,7 @@ export function AgentBuilder() {
         await loadList();
         await loadAgent(result.data.id);
         toast.success("Agent created successfully!");
+        refreshA2ARegistration().catch(() => {});
       } else {
         toast.error(result.error?.message || "Failed to create agent");
       }
@@ -140,10 +191,14 @@ export function AgentBuilder() {
         greeting_message: form.greeting_message,
         knowledge: form.knowledge,
         avatar_url: form.avatar_url,
+        agent_card_json: form.agent_card_json,
+        a2a_strategy_json: form.a2a_strategy_json,
+        visibility: form.visibility,
       });
       if (result.ok) {
         await loadList();
         toast.success("Agent updated successfully!");
+        refreshA2ARegistration().catch(() => {});
       } else {
         toast.error(result.error?.message || "Failed to update agent");
       }
@@ -159,6 +214,7 @@ export function AgentBuilder() {
       setForm((prev) => ({ ...prev, status: "published" }));
       await loadList();
       toast.success("Agent published!");
+      refreshA2ARegistration().catch(() => {});
     }
     setSaving(false);
   };
@@ -402,6 +458,88 @@ export function AgentBuilder() {
               <BotChannelConfigPanel botId={form.id} />
             )}
 
+            {/* A2A Configuration — Agent Card + Strategy */}
+            <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm bg-white transition-all hover:shadow-md group">
+              <div
+                className="flex items-center justify-between p-4 bg-white cursor-pointer select-none group-hover:bg-gray-50/50 transition-colors"
+                onClick={() => setIsA2AOpen(!isA2AOpen)}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded bg-emerald-50 flex items-center justify-center text-emerald-600">
+                    <Network size={16} />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">A2A</span>
+                    <span className="text-sm font-semibold text-gray-700 mt-1">Agent-to-Agent</span>
+                  </div>
+                </div>
+                <button className="flex items-center justify-center w-8 h-8 text-gray-400 hover:text-gray-600 transition-all">
+                  {isA2AOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                </button>
+              </div>
+
+              {isA2AOpen && (
+                <div className="border-t border-gray-50 animate-in slide-in-from-top-2 duration-200">
+                  {/* Agent Card */}
+                  <div className="p-6 space-y-6 border-b border-gray-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Globe size={16} className="text-emerald-600" />
+                      <h4 className="text-sm font-bold text-gray-800">Agent Card</h4>
+                    </div>
+                    <AgentCardEditor
+                      value={normalizeAgentCardFromApi(form.agent_card_json, form.visibility || "public")}
+                      onChange={(v) => setForm((f) => ({
+                        ...f,
+                        agent_card_json: v,
+                        visibility: v.visibility,
+                      }))}
+                    />
+                  </div>
+
+                  {/* A2A Strategy */}
+                  <div className="p-6 space-y-6">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <Zap size={16} className="text-amber-500" />
+                        <h4 className="text-sm font-bold text-gray-800">Auto discovery</h4>
+                      </div>
+                      {!isNew && form.id && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={discoveryBusy || !form.a2a_strategy_json?.autoDiscover}
+                          className="h-8 text-xs gap-1.5"
+                          onClick={async () => {
+                            if (!form.id) return;
+                            setDiscoveryBusy(true);
+                            try {
+                              const r = await triggerAutoDiscoveryNow(form.id);
+                              if (r.ok) {
+                                toast.success("Discovery tick ran — check startup log for [A2A:scheduler] / [A2A:client]");
+                              } else {
+                                toast.error(r.error || "Discovery failed");
+                              }
+                            } finally {
+                              setDiscoveryBusy(false);
+                            }
+                          }}
+                          title={!form.a2a_strategy_json?.autoDiscover ? "Turn on Auto discovery first" : "Run one discover tick now (same as the scheduler)"}
+                        >
+                          <RefreshCw size={14} className={discoveryBusy ? "animate-spin" : ""} />
+                          {discoveryBusy ? "Running…" : "Run discovery now"}
+                        </Button>
+                      )}
+                    </div>
+                    <A2AStrategyPanel
+                      value={form.a2a_strategy_json || { ...DEFAULT_A2A_STRATEGY }}
+                      onChange={(v) => setForm((f) => ({ ...f, a2a_strategy_json: v }))}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Bottom Actions */}
             <div className="flex justify-end gap-3 pt-4 mt-auto">
               {!isNew && form.id && (
@@ -435,7 +573,7 @@ export function AgentBuilder() {
                 className="bg-[#07C160] hover:bg-[#06ad56] text-white px-6 py-2 rounded-lg font-semibold transition-all shadow-sm flex items-center gap-2 h-auto"
               >
                 <Save size={16} />
-                {saving ? "Saving..." : isNew ? "Publish Agent" : "Update"}
+                {saving ? "Saving..." : isNew ? "Create agent" : "Save changes"}
               </Button>
             </div>
           </div>

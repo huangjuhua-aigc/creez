@@ -6,6 +6,8 @@ export type ContactItem = {
   name: string;
   avatar: string;
   isDefault: boolean;
+  /** assistant | author | remote | template — from main process contacts.bot_origin */
+  botOrigin?: string | null;
 };
 
 function avatarFallback(name: string) {
@@ -33,6 +35,7 @@ export async function fetchContacts(type?: "bot" | "human" | "group"): Promise<C
       name: item.name,
       avatar: avatar || avatarFallback(item.name),
       isDefault: Boolean(item.isDefault),
+      botOrigin: item.botOrigin ?? (item.isDefault ? "assistant" : null),
     };
   }));
   return mapped;
