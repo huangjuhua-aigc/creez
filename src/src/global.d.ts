@@ -394,7 +394,7 @@ declare global {
           projectId: string;
           resourceType?: "artAsset" | "sceneImage";
           resourceId: string;
-          prompt: string;
+          prompt?: string;
           model?: string;
           ratio?: string;
           numImages?: number;

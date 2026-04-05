@@ -405,8 +405,14 @@ function registerStoryboardIpc(ipcMain, deps) {
     const enableWebSearch = Boolean(payload?.enableWebSearch);
     const referenceImageUrls = Array.isArray(payload?.referenceImageUrls) ? payload.referenceImageUrls : [];
     const referenceImageBase64sFromFrontend = Array.isArray(payload?.referenceImageBase64s) ? payload.referenceImageBase64s : [];
+    const hasRefInput =
+      referenceImageBase64sFromFrontend.length > 0 ||
+      referenceImageUrls.some((u) => typeof u === "string" && String(u).trim());
 
-    if (!projectId || !prompt) return err("VALIDATION_ERROR", "projectId and prompt are required");
+    if (!projectId) return err("VALIDATION_ERROR", "projectId is required");
+    if (!prompt && !hasRefInput) {
+      return err("VALIDATION_ERROR", "prompt or at least one reference image is required");
+    }
     if (!resourceType || !resourceId) return err("VALIDATION_ERROR", "resourceType and resourceId are required");
 
     try {
@@ -422,6 +428,11 @@ function registerStoryboardIpc(ipcMain, deps) {
         if (dataUri) base64Refs.push(dataUri);
       }
 
+      const httpsFallbackUrls = referenceImageUrls
+        .filter((u) => typeof u === "string" && /^\s*https?:\/\//i.test(u))
+        .map((u) => u.trim())
+        .slice(0, 10);
+
       const apiKey = await getCreezApiKey();
       let response;
       try {
@@ -435,6 +446,8 @@ function registerStoryboardIpc(ipcMain, deps) {
             numImages,
             enableWebSearch,
             referenceImageBase64s: base64Refs.length ? base64Refs : undefined,
+            referenceImageUrls:
+              base64Refs.length > 0 ? undefined : httpsFallbackUrls.length ? httpsFallbackUrls : undefined,
           }),
         });
       } catch (fetchErr) {

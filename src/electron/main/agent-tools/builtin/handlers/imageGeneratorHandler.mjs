@@ -192,16 +192,6 @@ export function createImageGeneratorHandler(runtimeContext = {}) {
     id: "image_generator",
     async execute(args = {}) {
       const prompt = String(args?.prompt || "").trim();
-      if (!prompt) {
-        const envelope = buildErrorEnvelope({
-          toolName: "image_generator",
-          code: "INVALID_ARGUMENT",
-          message: "prompt is required.",
-          retryable: false,
-          nextAction: "Call image_generator again with a text description of the image to generate.",
-        });
-        return { content: [{ type: "text", text: asTextEnvelope(envelope, "image_generator") }], details: envelope, isError: true };
-      }
 
       const apiKey = resolveCreezApiKey();
       if (!apiKey) {
@@ -228,6 +218,18 @@ export function createImageGeneratorHandler(runtimeContext = {}) {
         };
       }
       const referenceImageBase64s = refLoad.base64s;
+
+      if (!prompt && referenceImageBase64s.length === 0) {
+        const envelope = buildErrorEnvelope({
+          toolName: "image_generator",
+          code: "INVALID_ARGUMENT",
+          message: "prompt or referenceImagePaths is required.",
+          retryable: false,
+          nextAction:
+            "Provide a text description, or paths/URLs to reference images for image-to-image.",
+        });
+        return { content: [{ type: "text", text: asTextEnvelope(envelope, "image_generator") }], details: envelope, isError: true };
+      }
 
       const baseUrl = resolveBackendUrl().replace(/\/+$/, "");
       const endpoint = `${baseUrl}/media/generate-image`;
