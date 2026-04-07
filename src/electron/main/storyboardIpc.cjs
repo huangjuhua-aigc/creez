@@ -92,7 +92,7 @@ function storyboardBackendBase() {
 
 function backendUnreachableMessage() {
   const base = storyboardBackendBase();
-  return `Backend unreachable at ${base}. Check network or set CREEZ_A2A_GATEWAY_BASE / CREEZ_BACKEND_URL for a different host.`;
+  return `Backend unreachable at ${base}. Check network or set CREEZ_BACKEND_URL for a different host.`;
 }
 
 /** 无超时的 HTTP Agent，用于耗时的 storyboard/generate 请求，避免 UND_ERR_HEADERS_TIMEOUT */

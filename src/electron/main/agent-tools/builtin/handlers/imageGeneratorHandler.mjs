@@ -1,10 +1,12 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { asTextEnvelope, buildErrorEnvelope, buildSuccessEnvelope } from "../errorProtocol.mjs";
 
-const DEFAULT_BACKEND_BASE_URL = "https://creez.lighton.video";
+const require = createRequire(import.meta.url);
+const { resolveCreezBackendBase } = require("../../../creezBackendBase.cjs");
 const DEFAULT_TIMEOUT_MS = 120_000;
 const GENERATED_IMAGE_DIR = "GeneratedImage";
 const MAX_REFERENCE_IMAGE_BYTES = 12 * 1024 * 1024;
@@ -74,10 +76,12 @@ function resolveCreezApiKey() {
 }
 
 function resolveBackendUrl() {
-  const fromEnv = (process.env.CREEZ_BACKEND_URL ?? "").trim();
-  if (fromEnv) return fromEnv;
+  const fromEnv = (process.env.CREEZ_BACKEND_URL || "").trim();
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
   const file = loadCreezEnvFile();
-  return (file.CREEZ_BACKEND_URL || "").trim() || DEFAULT_BACKEND_BASE_URL;
+  const fromFile = (file.CREEZ_BACKEND_URL || "").trim();
+  if (fromFile) return fromFile.replace(/\/+$/, "");
+  return resolveCreezBackendBase();
 }
 
 function mimeFromExt(filePath) {

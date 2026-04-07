@@ -8,7 +8,7 @@
     "build": "vite build",
     "dev:web": "vite",
     "dev:electron": "wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron electron/main/index.cjs",
-    "dev:local-a2a": "concurrently \"npm:dev:web\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 CREEZ_A2A_GATEWAY_BASE=http://localhost:3001 electron electron/main/index.cjs\"",
+    "dev:local-a2a": "concurrently \"npm:dev:web\" \"wait-on http://localhost:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 CREEZ_BACKEND_URL=http://localhost:3001 electron electron/main/index.cjs\"",
     "dev:electron:local-a2a": "npm run dev:local-a2a",
     "dev": "concurrently \"npm:dev:web\" \"npm:dev:electron\"",
     "start": "electron electron/main/index.cjs",

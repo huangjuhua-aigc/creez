@@ -782,6 +782,8 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const [composerVersion, setComposerVersion] = useState(0);
   const [botName, setBotName] = useState("Assistant");
   const [botAvatar, setBotAvatar] = useState(avatarFallback("Assistant"));
+  /** Bumped when contact:listChanged fires so message list re-resolves name/avatar from refreshed chatList. */
+  const [contactsRevision, setContactsRevision] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const emojiRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -926,9 +928,23 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
     // Model dropdown refresh runs in useEffect([selectedChatId, chatList]) after state commits.
   };
 
+  const reloadChatsRef = useRef(reloadChats);
+  reloadChatsRef.current = reloadChats;
+
   useEffect(() => {
     void reloadChats();
     return () => {};
+  }, []);
+
+  useEffect(() => {
+    const api = window.electron?.contact;
+    if (!api?.onListChanged) return;
+    return api.onListChanged(() => {
+      void (async () => {
+        await reloadChatsRef.current(selectedChatIdRef.current || undefined);
+        setContactsRevision((r) => r + 1);
+      })();
+    });
   }, []);
 
   useEffect(() => {
@@ -990,8 +1006,8 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   }, [chatList, selectedChatId, activeChatId, onSelectChat]);
 
   /**
-   * Load messages whenever selectedChatId changes.
-   * Decoupled from chatList — resolves name/avatar from chatList → activeChatMeta → botName fallback.
+   * Load messages when the selected chat changes or contactsRevision bumps (contact:listChanged after Agent Builder save, etc.).
+   * Uses chatList from the same render as that bump so avatars/names stay in sync without re-fetching on every lastMessage update.
    */
   useEffect(() => {
     if (!selectedChatId) {
@@ -1031,7 +1047,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
     return () => {
       cancelled = true;
     };
-  }, [selectedChatId]);
+  }, [selectedChatId, contactsRevision]);
 
   useEffect(() => {
     const unsub = onChatMessageAppended((payload) => {

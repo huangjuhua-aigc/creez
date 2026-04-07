@@ -54,37 +54,24 @@ IMPORTANT RULES:
 /** Appended only when the local bot is the A2A session initiator (auto-discovery / proactive open). */
 const A2A_INITIATOR_AGENT_PROMPT = `
 
---- A2A: Initiator agent playbook ---
-[Role]
-You are the Initiator Agent in an A2A network. Your goal is to dictate the dialogue's pace and efficiently achieve your objective.
-
+--- A2A Network Rules ---
 [Rules]
-
-Zero-Shot Intent: Skip human pleasantries. Your first message MUST state your identity, core objective, and the immediate action required.
-
-Context Pre-loading: Provide all necessary data and Artifacts upfront. Do not wait to be asked.
-
-Proactive Steering: You are the interrogator. End every turn with a direct, goal-oriented question. Assertively redirect any topic deviations.
-
-Drive to Closure: Prevent infinite loops. Terminate the session immediately (via agreement, logging, or human handoff) once your goal is met or deemed unachievable.
+- Zero-Shot Intent: Skip pleasantries. Your first message MUST state your identity, core objective, and the immediate action required.
+- Context Pre-loading: Provide all necessary data and Artifacts upfront. Do not wait to be asked.
+- Proactive Steering: End every turn with a direct, goal-oriented question. Assertively redirect any topic deviations.
+- Drive to Closure: Prevent infinite loops. Terminate the session immediately (via agreement, logging, or human handoff) once your goal is met or deemed unachievable.
 `;
 
 /** Appended only when the local bot is the A2A responder (peer opened the session / inbound). */
 const A2A_RESPONDER_AGENT_PROMPT = `
 
---- A2A: Responder agent playbook ---
-[Role]
-You are the Responder Agent in an A2A network. Act as a collaborative and welcoming representative for your owner. Your goal is to facilitate valuable exchanges while strictly safeguarding privacy and core boundaries.
-
+--- A2A Network Rules ---
 [Rules]
-
-Candid yet Secure: Provide truthful, accurate, and helpful answers to build trust. However, strictly protect user privacy and confidential data. Politely decline any unauthorized requests without being hostile.
-
-Constructive Clarification: Do not make assumptions. If the counterpart's request is ambiguous or lacks critical context, warmly ask for specific details to help them move the conversation forward.
-
-Firm Circuit Breaking: Value efficiency. If the counterpart engages in endless loops, vague probing, or fails to clarify their intent, politely but firmly terminate the session.
-
-Efficient Fulfillment: Once mutual alignment is reached and constraints are met, swiftly provide the required structured response or confirmation to successfully close the interaction.
+- Act as a collaborative and welcoming representative for your owner. Facilitate valuable exchanges while strictly safeguarding privacy and core boundaries.
+- Candid yet Secure: Provide truthful, accurate, and helpful answers. Strictly protect user privacy and confidential data. Politely decline any unauthorized requests.
+- Constructive Clarification: Do not make assumptions. If the request is ambiguous, warmly ask for specific details.
+- Firm Circuit Breaking: If the counterpart engages in endless loops or vague probing, politely but firmly terminate the session.
+- Efficient Fulfillment: Once mutual alignment is reached, swiftly provide the required response to close the interaction.
 `;
 
 function truncateOneLine(text, maxLen) {
@@ -94,39 +81,36 @@ function truncateOneLine(text, maxLen) {
 }
 
 /**
- * Appended once at A2A engine init into assistant systemPrompt → Pi `customPrompt` → `_baseSystemPrompt`.
- * Uses display names (not UUIDs). Peer summary comes from Gateway `agent_card_json` when available.
+ * A2A session context block — appended AFTER the creator's system prompt.
  *
  * @param {"inbound"|"auto_discovery"|string} origin
  * @param {string} localDisplayName
- * @param {string} peerDisplayName
- * @param {string} [peerCardSummary] — single-line excerpt from peer agent card `description`
+ * @param {string} peerDisplayName — name if known, otherwise visitor ID
+ * @param {string} [peerCardSummary]
  */
 function buildA2aRoleContextPrompt(origin, localDisplayName, peerDisplayName, peerCardSummary) {
   const you = String(localDisplayName || "").trim() || "this bot";
-  const peer = String(peerDisplayName || "").trim() || "the other agent";
+  const peer = String(peerDisplayName || "").trim() || "the other party";
   const cardLine = peerCardSummary
-    ? `\n- Peer agent card (public): ${peerCardSummary}`
+    ? `\n- Peer description: ${peerCardSummary}`
     : "";
 
   if (origin === "inbound") {
     return `
 
---- A2A: session roles (apply on every reply in this session) ---
-- You (local): ${you}
-- Other party: ${peer}${cardLine}
-- Initiator: ${peer} — inbound; they started this thread or sent the first agent message.
-- Keep this framing for the whole conversation (do not imply you opened the session).
+--- A2A Session Context ---
+- You: ${you}
+- Talking to: ${peer}${cardLine}
+- Session type: inbound (they initiated this conversation)
 `;
   }
   if (origin === "auto_discovery") {
     return `
 
---- A2A: session roles (apply on every reply in this session) ---
-- You (local): ${you}
-- Other party: ${peer}${cardLine}
-- Initiator: ${you} — proactive / auto-discovery; you may have already sent an opening message on your behalf.
-- Keep this framing for the whole conversation.
+--- A2A Session Context ---
+- You: ${you}
+- Talking to: ${peer}${cardLine}
+- Session type: auto-discovery (you initiated this conversation)
 `;
   }
   return "";
@@ -966,6 +950,15 @@ class A2ASessionOrchestrator {
       { contactRepository: this.contactRepo, assistantConfigRepository: this.assistantConfigRepo },
     );
 
+    console.log(TAG, `_ensureBotSession config:`, {
+      contactId,
+      assistantConfigId,
+      hasSystemPrompt: !!(rawConfig?.systemPrompt),
+      systemPromptLength: (rawConfig?.systemPrompt || "").length,
+      systemPromptPreview: (rawConfig?.systemPrompt || "").slice(0, 200),
+      skills: rawConfig?.skills ? Object.keys(rawConfig.skills) : [],
+    });
+
     const models = Array.isArray(rawConfig?.models) ? rawConfig.models : [];
     const activeModel = models.find((m) => m && m.active) || models[0];
     if (!activeModel?.provider || !activeModel?.model) {
@@ -983,9 +976,8 @@ class A2ASessionOrchestrator {
       throw new Error(`No API key for contact ${contactId}`);
     }
 
-    const appState = this.appStateStore ? await this.appStateStore.getState() : {};
-    const workDir = resolveWorkDir(appState?.workspaceRoot) || DEFAULT_WORKSPACE_ROOT;
-    try { await fsp.mkdir(workDir, { recursive: true }); } catch (_) {}
+    const { ensureBotWorkplace } = require("../creezPaths.cjs");
+    const workDir = ensureBotWorkplace(this.creezHome, contactId);
     const agentDir = this.creezHome;
 
     const memory = this.memoryStore ? await this.memoryStore.read() : { content: "", path: "" };
@@ -1005,25 +997,45 @@ class A2ASessionOrchestrator {
       peerCardSummary = peer.cardSummary;
     }
 
-    let basePrompt = (rawConfig?.systemPrompt && String(rawConfig.systemPrompt)) || "";
-    const originExtra =
+    // 1. Creator's system prompt is the primary identity / personality
+    const creatorPrompt = (rawConfig?.systemPrompt && String(rawConfig.systemPrompt).trim()) || "";
+
+    // 2. A2A session context (who you are, who you're talking to)
+    const sessionContext =
       sessionOrigin === "inbound" || sessionOrigin === "auto_discovery"
         ? buildA2aRoleContextPrompt(sessionOrigin, localDisplayName, peerDisplayName, peerCardSummary)
         : "";
-    if (originExtra) basePrompt += originExtra;
-    if (conversationGoal) {
-      basePrompt += GOAL_PROMPT_SUFFIX.replace("{GOAL}", String(conversationGoal));
-    }
+
+    // 3. A2A rules (behavioral guidelines for the network interaction)
+    let a2aRules = "";
     if (sessionOrigin === "auto_discovery") {
-      basePrompt += A2A_INITIATOR_AGENT_PROMPT;
-    }
-    if (sessionOrigin === "inbound") {
-      basePrompt += A2A_RESPONDER_AGENT_PROMPT;
+      a2aRules = A2A_INITIATOR_AGENT_PROMPT;
+    } else if (sessionOrigin === "inbound") {
+      a2aRules = A2A_RESPONDER_AGENT_PROMPT;
     }
 
+    // 4. Auto-discovery conversation goal (if applicable)
+    const goalBlock = conversationGoal
+      ? GOAL_PROMPT_SUFFIX.replace("{GOAL}", String(conversationGoal))
+      : "";
+
+    // Compose: creator prompt → context → rules → goal
+    const finalPrompt = [creatorPrompt, sessionContext, a2aRules, goalBlock]
+      .filter(Boolean)
+      .join("\n");
+
+    console.log(TAG, `_ensureBotSession prompt composition:`, {
+      creatorPromptLength: creatorPrompt.length,
+      creatorPromptPreview: creatorPrompt.slice(0, 300),
+      hasSessionContext: !!sessionContext,
+      hasA2aRules: !!a2aRules,
+      hasGoal: !!goalBlock,
+      finalPromptLength: finalPrompt.length,
+    });
+
     let effectiveConfig = rawConfig;
-    if (originExtra || conversationGoal) {
-      effectiveConfig = { ...rawConfig, systemPrompt: basePrompt };
+    if (sessionContext || a2aRules || goalBlock) {
+      effectiveConfig = { ...rawConfig, systemPrompt: finalPrompt };
     }
 
     await engine.init({
@@ -1159,14 +1171,14 @@ class A2ASessionOrchestrator {
         }
 
         const localConfig = this.assistantConfigRepo.getRawConfigById(id);
-        if (localConfig?.a2a_strategy_json && localConfig.a2a_strategy_json.autoDiscover != null) {
-          this._line(`[strategy-sync] bot ${id}: local already has strategy (autoDiscover=${localConfig.a2a_strategy_json.autoDiscover}), skip`);
+        if (localConfig?.a2aStrategyJson && localConfig.a2aStrategyJson.autoDiscover != null) {
+          this._line(`[strategy-sync] bot ${id}: local already has strategy (autoDiscover=${localConfig.a2aStrategyJson.autoDiscover}), skip`);
           continue;
         }
 
         this._line(`[strategy-sync] bot ${id}: syncing strategy from backend (autoDiscover=${remoteStrategy.autoDiscover})`);
         try {
-          this.assistantConfigRepo.saveConfigById(id, { a2a_strategy_json: remoteStrategy });
+          this.assistantConfigRepo.saveConfigById(id, { a2aStrategyJson: remoteStrategy });
           synced++;
         } catch (e) {
           console.warn(TAG, `[strategy-sync] saveConfigById failed for ${id}:`, e.message);
@@ -1231,10 +1243,10 @@ class A2ASessionOrchestrator {
     try {
       if (!this.assistantConfigRepo) return null;
       const config = this.assistantConfigRepo.getRawConfigById(botId);
-      if (config?.a2a_strategy_json) {
-        const s = typeof config.a2a_strategy_json === "string"
-          ? JSON.parse(config.a2a_strategy_json)
-          : config.a2a_strategy_json;
+      if (config?.a2aStrategyJson) {
+        const s = typeof config.a2aStrategyJson === "string"
+          ? JSON.parse(config.a2aStrategyJson)
+          : config.a2aStrategyJson;
         return s;
       }
     } catch (e) {
@@ -1274,24 +1286,28 @@ class A2ASessionOrchestrator {
    */
   async _resolvePeerDisplayForPrompt(remoteAgentId) {
     const id = remoteAgentId != null ? String(remoteAgentId).trim() : "";
-    if (!id) return { displayName: "Unknown peer", cardSummary: "" };
+    if (!id) return { displayName: "a user", cardSummary: "" };
     try {
       const data = await this.client.fetchPublicAgentCard(id);
       const card = data?.agentCard && typeof data.agentCard === "object" ? data.agentCard : {};
       const displayName =
         (data?.name && String(data.name).trim())
-        || (card.name && String(card.name).trim())
-        || id;
-      const rawDesc = card.description != null ? String(card.description) : "";
-      return { displayName, cardSummary: truncateOneLine(rawDesc, 400) };
+        || (card.name && String(card.name).trim());
+      if (displayName) {
+        const rawDesc = card.description != null ? String(card.description) : "";
+        return { displayName, cardSummary: truncateOneLine(rawDesc, 400) };
+      }
     } catch {
-      try {
-        const contact = this.contactRepo?.getById?.(id);
-        const fromContact = contact?.name && String(contact.name).trim();
-        if (fromContact) return { displayName: fromContact, cardSummary: "" };
-      } catch (_) {}
-      return { displayName: id, cardSummary: "" };
+      /* gateway lookup failed — try local */
     }
+    try {
+      const contact = this.contactRepo?.getById?.(id);
+      const fromContact = contact?.name && String(contact.name).trim();
+      if (fromContact) return { displayName: fromContact, cardSummary: "" };
+    } catch (_) {}
+    // Visitor from miniapp: not a registered agent, use short ID prefix
+    const shortId = id.length > 8 ? id.slice(0, 8) : id;
+    return { displayName: `user (${shortId})`, cardSummary: "" };
   }
 
   _getLocalBots() {

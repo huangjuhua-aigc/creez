@@ -485,7 +485,7 @@ app.whenReady().then(async () => {
           if (appStateStore) await appStateStore.setState({ deviceId: ownerId });
         }
         const gatewayUrl = resolveCreezBackendBase();
-        startupLog("Creez backend base (CREEZ_A2A_GATEWAY_BASE): " + gatewayUrl);
+        startupLog("Creez backend base (CREEZ_BACKEND_URL): " + gatewayUrl);
         const gatewayClient = new A2AGatewayClient({ gatewayUrl, ownerId });
         function a2aSendToRenderer(payload) {
           const channel = (payload && payload.channel === "a2a:sessionEvent")

@@ -41,6 +41,7 @@ class ContactRepository {
 
   /**
    * Mark contacts that belong to this device as author-created (Agent Builder).
+   * Also corrects contacts seeded as 'remote' that are actually owned by this device.
    * @param {Set<string> | string[]} ownedAgentIds
    */
   backfillAuthorBotOrigin(ownedAgentIds) {
@@ -54,7 +55,7 @@ class ContactRepository {
       WHERE id = ?
         AND type = 'bot'
         AND is_default = 0
-        AND (bot_origin IS NULL OR TRIM(bot_origin) = '')
+        AND (bot_origin IS NULL OR TRIM(bot_origin) = '' OR bot_origin = 'remote')
     `);
     for (const id of ids) {
       const sid = String(id || "").trim();
@@ -266,6 +267,10 @@ class ContactRepository {
     const agentId = String(agentPayload?.id || "").trim();
     if (!agentId) throw new Error("agent id is required");
     if (this.getById(agentId)) {
+      this.db.prepare(`
+        UPDATE contacts SET bot_origin = 'author'
+        WHERE id = ? AND type = 'bot' AND bot_origin != 'author'
+      `).run(agentId);
       return { contactId: agentId, alreadyExists: true };
     }
 
@@ -356,6 +361,10 @@ class ContactRepository {
     return tx();
   }
 
+  /**
+   * Add a remote (published) agent as a local contact.
+   * Uses the agent's backend UUID as the local contact id so botId / assistantConfigId stays consistent.
+   */
   /**
    * Add a remote (published) agent as a local contact.
    * Uses the agent's backend UUID as the local contact id so botId / assistantConfigId stays consistent.

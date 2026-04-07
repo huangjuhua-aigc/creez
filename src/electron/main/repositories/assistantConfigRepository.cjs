@@ -2,9 +2,15 @@ const DEFAULT_CONFIG = Object.freeze({
   name: "Assistant",
   avatar: null,
   systemPrompt: "",
+  greetingMessage: "",
+  knowledge: "",
   skills: {},
   models: [],
   engineType: "pi",
+  agentCardJson: null,
+  a2aStrategyJson: null,
+  visibility: "public",
+  status: "draft",
 });
 
 function safeJsonParse(value, fallback) {
@@ -33,52 +39,49 @@ function normalizeModel(model) {
   };
 }
 
+const ALL_COLUMNS = [
+  "id", "name", "avatar_path", "system_prompt", "greeting_message",
+  "knowledge", "skills_json", "models_json", "engine_type",
+  "agent_card_json", "a2a_strategy_json", "visibility", "status", "updated_at",
+];
+
+const UPSERT_SQL = `
+  INSERT INTO assistant_config (${ALL_COLUMNS.join(", ")})
+  VALUES (${ALL_COLUMNS.map((c) => "@" + c).join(", ")})
+  ON CONFLICT(id) DO UPDATE SET
+    ${ALL_COLUMNS.filter((c) => c !== "id").map((c) => `${c} = @${c}`).join(",\n    ")}
+`;
+
 class AssistantConfigRepository {
   constructor(db) {
     this.db = db;
     this.getByIdStmt = db.prepare("SELECT * FROM assistant_config WHERE id = ?");
-    this.insertIfMissingStmt = db.prepare(`
-      INSERT OR IGNORE INTO assistant_config (
-        id, name, avatar_path, system_prompt, skills_json, models_json, engine_type, a2a_strategy_json, updated_at
-      ) VALUES (
-        @id, @name, @avatar_path, @system_prompt, @skills_json, @models_json, @engine_type, @a2a_strategy_json, @updated_at
-      )
-    `);
-    this.updateByIdStmt = db.prepare(`
-      UPDATE assistant_config
-      SET name = @name,
-          avatar_path = @avatar_path,
-          system_prompt = @system_prompt,
-          skills_json = @skills_json,
-          models_json = @models_json,
-          engine_type = @engine_type,
-          a2a_strategy_json = @a2a_strategy_json,
-          updated_at = @updated_at
-      WHERE id = @id
-    `);
+    this.upsertStmt = db.prepare(UPSERT_SQL);
+    this.deleteByIdStmt = db.prepare("DELETE FROM assistant_config WHERE id = ?");
   }
 
   _rowToRawConfig(row) {
     if (!row) return null;
     const skills = safeJsonParse(row.skills_json, {});
     const models = safeJsonParse(row.models_json, []).map(normalizeModel);
-    const engineType = typeof row.engine_type === "string" && row.engine_type.trim() ? row.engine_type.trim() : "pi";
     return {
       id: row.id,
       name: row.name || DEFAULT_CONFIG.name,
       avatar: row.avatar_path || null,
       systemPrompt: row.system_prompt || "",
+      greetingMessage: row.greeting_message || "",
+      knowledge: row.knowledge || "",
       skills: skills && typeof skills === "object" ? skills : {},
       models: Array.isArray(models) ? models : [],
-      engineType,
-      a2a_strategy_json: safeJsonParse(row.a2a_strategy_json, null),
+      engineType: (row.engine_type || "pi").trim(),
+      agentCardJson: safeJsonParse(row.agent_card_json, null),
+      a2aStrategyJson: safeJsonParse(row.a2a_strategy_json, null),
+      visibility: row.visibility || "public",
+      status: row.status || "draft",
+      updatedAt: row.updated_at || null,
     };
   }
 
-  /**
-   * Get config by id (contact id = config id for bots). Returns null if not found.
-   * @param {string|number|null} configOrContactId - Bot contact id (TEXT) or legacy integer id.
-   */
   getRawConfigById(configOrContactId) {
     const id = configOrContactId != null ? String(configOrContactId) : null;
     if (!id || id.trim() === "") return null;
@@ -86,14 +89,9 @@ class AssistantConfigRepository {
     return this._rowToRawConfig(row);
   }
 
-  /** Get config by id for frontend/settings (masked apiKey). Returns null if not found. */
   getConfigById(assistantConfigId) {
     const raw = this.getRawConfigById(assistantConfigId);
     if (!raw) return null;
-    return this._configWithMaskedModels(raw);
-  }
-
-  _configWithMaskedModels(raw) {
     return {
       ...raw,
       models: raw.models.map((model) => ({
@@ -113,7 +111,6 @@ class AssistantConfigRepository {
     return matched?.apiKey || "";
   }
 
-  /** Get model API key from a specific config (by assistant_config_id). */
   getModelApiKeyFromConfig(assistantConfigId, modelId) {
     const raw = this.getRawConfigById(assistantConfigId);
     if (!raw || !modelId) return "";
@@ -121,16 +118,19 @@ class AssistantConfigRepository {
     return matched?.apiKey || "";
   }
 
+  /**
+   * Upsert full config. Patch semantics: undefined fields keep current value.
+   */
   saveConfigById(configOrContactId, patch) {
     const id = configOrContactId != null ? String(configOrContactId) : null;
     if (!id || id.trim() === "") {
       throw new Error("configOrContactId (bot contact id) is required.");
     }
     const current = this.getRawConfigById(id) || { id, ...DEFAULT_CONFIG };
-    const incoming = patch && typeof patch === "object" ? patch : {};
+    const p = patch && typeof patch === "object" ? patch : {};
 
-    const nextModelsInput = Array.isArray(incoming.models) ? incoming.models : current.models;
-    const currentById = new Map(current.models.map((m) => [m.id, m]));
+    const nextModelsInput = Array.isArray(p.models) ? p.models : current.models;
+    const currentById = new Map((current.models || []).map((m) => [m.id, m]));
     const nextModels = nextModelsInput.map((model) => {
       const normalized = normalizeModel(model);
       if (!normalized.apiKey) {
@@ -140,41 +140,44 @@ class AssistantConfigRepository {
       return normalized;
     });
 
-    const engineType =
-      incoming.engineType != null && String(incoming.engineType).trim()
-        ? String(incoming.engineType).trim()
-        : (current.engineType || "pi");
-
-    const a2aStrategy = incoming.a2a_strategy_json !== undefined
-      ? incoming.a2a_strategy_json
-      : (current.a2a_strategy_json || null);
-
     const merged = {
-      name: incoming.name != null ? String(incoming.name) : current.name,
-      avatar: incoming.avatar != null ? String(incoming.avatar) : current.avatar,
-      systemPrompt: incoming.systemPrompt != null ? String(incoming.systemPrompt) : current.systemPrompt,
-      skills: incoming.skills && typeof incoming.skills === "object" ? incoming.skills : current.skills,
+      name: p.name != null ? String(p.name) : current.name,
+      avatar: p.avatar != null ? String(p.avatar) : current.avatar,
+      systemPrompt: p.systemPrompt != null ? String(p.systemPrompt) : current.systemPrompt,
+      greetingMessage: p.greetingMessage != null ? String(p.greetingMessage) : current.greetingMessage,
+      knowledge: p.knowledge != null ? String(p.knowledge) : current.knowledge,
+      skills: p.skills && typeof p.skills === "object" ? p.skills : current.skills,
       models: nextModels,
-      engineType,
-      a2a_strategy_json: a2aStrategy,
+      engineType: (p.engineType != null && String(p.engineType).trim()) || current.engineType || "pi",
+      agentCardJson: p.agentCardJson !== undefined ? p.agentCardJson : current.agentCardJson,
+      a2aStrategyJson: p.a2aStrategyJson !== undefined ? p.a2aStrategyJson : current.a2aStrategyJson,
+      visibility: p.visibility || current.visibility || "public",
+      status: p.status || current.status || "draft",
     };
 
-    const updatedAt = Math.floor(Date.now() / 1000);
-    const writePayload = {
+    this.upsertStmt.run({
       id,
       name: merged.name,
       avatar_path: merged.avatar,
       system_prompt: merged.systemPrompt,
+      greeting_message: merged.greetingMessage,
+      knowledge: merged.knowledge,
       skills_json: JSON.stringify(merged.skills),
       models_json: JSON.stringify(merged.models),
       engine_type: merged.engineType,
-      a2a_strategy_json: a2aStrategy ? JSON.stringify(a2aStrategy) : null,
-      updated_at: updatedAt,
-    };
-    this.insertIfMissingStmt.run(writePayload);
-    this.updateByIdStmt.run(writePayload);
+      agent_card_json: merged.agentCardJson ? JSON.stringify(merged.agentCardJson) : null,
+      a2a_strategy_json: merged.a2aStrategyJson ? JSON.stringify(merged.a2aStrategyJson) : null,
+      visibility: merged.visibility,
+      status: merged.status,
+      updated_at: Math.floor(Date.now() / 1000),
+    });
 
     return this.getConfigById(id);
+  }
+
+  deleteById(id) {
+    if (!id) return;
+    this.deleteByIdStmt.run(String(id));
   }
 }
 

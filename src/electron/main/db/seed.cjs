@@ -35,13 +35,6 @@ const BOT_CONTACT_ID = "11111111-1111-1111-1111-111111111111";
 const BOT_CHAT_ID = "1f2e3d4c-5b6a-47d8-9c01-23456789abcd";
 const BOT_WELCOME_MESSAGE_ID = "2a3b4c5d-6e7f-48a9-b012-3456789abcde";
 
-/** Creez Round Closer: canonical backend agent UUID (`contacts.id` === `remote_agent_id`, same as server). */
-const ROUNDCLOSER_BACKEND_AGENT_ID = "a7234742-761a-49ba-9deb-2eef7b5ae55b";
-const ROUNDCLOSER_CHAT_ID = "rc000001-0001-4000-8000-000000000001";
-const ROUNDCLOSER_MSG_ID = "rc000001-0001-4000-8000-000000000002";
-const ROUNDCLOSER_NAME = "Creez Round Closer";
-const ROUNDCLOSER_GREETING = "Hi, I'm Round Closer — your fundraising assistant for Creez. Ask me anything about the product, metrics, or fundraising.";
-
 function safeJsonParse(value, fallback) {
   try {
     if (typeof value !== "string" || value.trim() === "") return fallback;
@@ -171,56 +164,10 @@ function seedIfEmpty(db, options = {}) {
       updatedAt: base,
     });
 
-    const rcContactInserted = insertContact.run({
-      id: ROUNDCLOSER_BACKEND_AGENT_ID,
-      type: "bot",
-      name: ROUNDCLOSER_NAME,
-      avatarPath: null,
-      isDefault: 0,
-      createdAt: createdAt + 1,
-      updatedAt: base,
-      remoteAgentId: ROUNDCLOSER_BACKEND_AGENT_ID,
-      botOrigin: "remote",
-    }).changes;
-    const rcChatInserted = insertChat.run({
-      id: ROUNDCLOSER_CHAT_ID,
-      contactId: ROUNDCLOSER_BACKEND_AGENT_ID,
-      createdAt: createdAt + 1,
-      updatedAt: base,
-      lastMessageAt: createdAt + 1,
-    }).changes;
-    // Unique (contact_id, channel_type, channel_chat_id): if this contact already had a creez_app
-    // chat (e.g. addRemoteAgent), INSERT OR IGNORE skips the row above — resolve real chat id.
-    const rcChatRow = db
-      .prepare(
-        `SELECT id FROM chats WHERE contact_id = ? AND channel_type = 'creez_app'
-         AND (channel_chat_id IS NULL OR TRIM(channel_chat_id) = '')
-         ORDER BY updated_at DESC LIMIT 1`,
-      )
-      .get(ROUNDCLOSER_BACKEND_AGENT_ID);
-    const effectiveRcChatId = rcChatRow?.id || null;
-    const rcMessageInserted =
-      effectiveRcChatId != null
-        ? insertMessage.run({
-            id: ROUNDCLOSER_MSG_ID,
-            chatId: effectiveRcChatId,
-            sender: "assistant",
-            content: ROUNDCLOSER_GREETING,
-            status: "done",
-            modelUsed: activeModelId,
-            botId: ROUNDCLOSER_BACKEND_AGENT_ID,
-            createdAt: createdAt + 1,
-            updatedAt: createdAt + 1,
-          }).changes
-        : 0;
-
     return {
       contactInserted,
       chatInserted,
       messageInserted,
-      rcContactInserted,
-      rcChatInserted,
-      rcMessageInserted,
     };
   });
   const result = tx();
@@ -228,8 +175,7 @@ function seedIfEmpty(db, options = {}) {
   return {
     seeded: Boolean(
       result.chatInserted ||
-      result.messageInserted ||
-      result.rcContactInserted
+      result.messageInserted
     ),
     botContactId: BOT_CONTACT_ID,
     botChatId: BOT_CHAT_ID,

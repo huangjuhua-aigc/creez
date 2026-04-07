@@ -59,9 +59,36 @@ function ensureCreezDirs(homeOrCreezDir) {
   }
 }
 
+/**
+ * Per-bot isolated workplace: ~/.creez/.#<botId>_workplace/
+ * Contains knowledge/, skills/, data/ subdirs for the bot's runtime.
+ * @param {string} creezHome - Resolved ~/.creez path
+ * @param {string} botId
+ * @returns {string}
+ */
+function getBotWorkplace(creezHome, botId) {
+  return path.join(creezHome, `.#${botId}_workplace`);
+}
+
+/**
+ * Create the bot workplace directory and its subdirs. Idempotent.
+ * @param {string} creezHome
+ * @param {string} botId
+ * @returns {string} The workplace root path
+ */
+function ensureBotWorkplace(creezHome, botId) {
+  const wp = getBotWorkplace(creezHome, botId);
+  for (const sub of ["knowledge", "skills", "data"]) {
+    fs.mkdirSync(path.join(wp, sub), { recursive: true });
+  }
+  return wp;
+}
+
 module.exports = {
   getCreezDir,
   resolveCreezHome,
   ensureCreezDirs,
+  getBotWorkplace,
+  ensureBotWorkplace,
   CREEZ_SUBDIRS,
 };
