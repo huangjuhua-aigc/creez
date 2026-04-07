@@ -153,7 +153,14 @@ export async function createAndSubscribe(sender, config) {
     keyToContactId.set(chatId, botKey);
   }
 
-  const cwd = workDir || process.cwd();
+  let cwd = workDir;
+  if (!cwd && contactId) {
+    try {
+      const { resolveCreezHome, ensureBotWorkplace } = require("./creezPaths.cjs");
+      cwd = ensureBotWorkplace(resolveCreezHome(), contactId);
+    } catch { /* fall through */ }
+  }
+  if (!cwd) cwd = process.cwd();
   const existing = sessionsByBot.get(botKey);
   const fingerprint = configFingerprint(assistantConfig, assistantConfigId, defaultContactId);
   // Reuse only if workDir and assistant config (skills, systemPrompt) match
@@ -232,9 +239,21 @@ export async function createAndSubscribe(sender, config) {
   const isDefaultBot = assistantConfigId != null && defaultContactId != null
     && String(assistantConfigId) === String(defaultContactId);
   const skillsConfig = assistantConfig?.skills && typeof assistantConfig.skills === "object" ? assistantConfig.skills : {};
-  const enabledSkillIds = isDefaultBot
-    ? undefined
-    : new Set(Object.keys(skillsConfig).filter((id) => skillsConfig[id] !== false));
+  /** Non-default bots: builtins are gated by skills_json (registry listEnabled uses allowedBuiltinIds). */
+  const A2A_DEFAULT_READ_BUILTINS = ["knowledge_search", "web_fetch"];
+  let enabledSkillIds;
+  if (isDefaultBot) {
+    enabledSkillIds = undefined;
+  } else {
+    enabledSkillIds = new Set(Object.keys(skillsConfig).filter((id) => skillsConfig[id] !== false));
+    // 小程序 / A2A 访客会话：不加载磁盘 skill 目录（skillsOverride 清空），仅靠 customTools。
+    // 若本地 skills_json 为空或漏配，会导致 knowledge_search 从未注册；访客端无法检索已同步到网关的知识库。
+    if (isA2aSession) {
+      for (const id of A2A_DEFAULT_READ_BUILTINS) {
+        if (skillsConfig[id] !== false) enabledSkillIds.add(id);
+      }
+    }
+  }
 
   const additionalSkillPath = path.join(cwd, ".creez", "skills");
   const builtinSkillPath = path.join(APP_ROOT_DIR, "skills", "builtin", "skills");
@@ -262,7 +281,19 @@ export async function createAndSubscribe(sender, config) {
     },
     replyInstructions,
   });
-  const customTools = builtinExecutor.listEnabledToolDefinitions();
+  const A2A_ALLOWED_TOOLS = new Set(["knowledge_search", "web_fetch"]);
+  const allCustomTools = builtinExecutor.listEnabledToolDefinitions();
+  const customTools = isA2aSession
+    ? allCustomTools.filter((t) => A2A_ALLOWED_TOOLS.has(t.name))
+    : allCustomTools;
+  if (isA2aSession && allCustomTools.length !== customTools.length) {
+    console.log(`[agent-runner] A2A session: filtered tools from ${allCustomTools.length} to ${customTools.length} (read-only)`);
+  }
+  if (isA2aSession && customTools.length === 0) {
+    console.warn(
+      "[agent-runner] A2A session has no custom tools (check skills_json / knowledge_search not false). Miniapp KB search will be unavailable.",
+    );
+  }
 
   // Build system prompt BEFORE resource loader — PI's AgentSession overrides
   // agent.setSystemPrompt() every turn, so the only way to inject our prompt
@@ -284,19 +315,23 @@ export async function createAndSubscribe(sender, config) {
     log("system_prompt:custom_agent", { length: systemPrompt.length });
   }
 
+  const skillsOverrideFn = isA2aSession
+    ? (base) => ({ ...base, skills: [] })
+    : isDefaultBot
+      ? (base) => base
+      : (base) => ({
+          ...base,
+          skills: base.skills.filter((s) => enabledSkillIds.has(s.name)),
+        });
+
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: resolvedAgentDir,
     settingsManager,
     noExtensions: true,
-    additionalSkillPaths: [additionalSkillPath, builtinSkillPath],
+    additionalSkillPaths: isA2aSession ? [] : [additionalSkillPath, builtinSkillPath],
     systemPrompt: systemPrompt || undefined,
-    skillsOverride: isDefaultBot
-      ? (base) => base
-      : (base) => ({
-          ...base,
-          skills: base.skills.filter((s) => enabledSkillIds.has(s.name)),
-        }),
+    skillsOverride: skillsOverrideFn,
   });
   if (isCreezVerboseDebug()) {
     console.log(`[agent-runner] createAndSubscribe: resourceLoader.reload start (${Date.now() - t0}ms)`);
@@ -330,8 +365,8 @@ export async function createAndSubscribe(sender, config) {
     resourceLoader,
     customTools,
     ...(initialThinkingLevel ? { thinkingLevel: initialThinkingLevel } : {}),
-    // Pi defaults to read/bash/edit/write when `tools` is omitted; A2A is chat-only (+ Creez customTools).
-    ...(isA2aSession ? { tools: [] } : {}),
+    // A2A: only allow read (filesystem browsing); bash/edit/write are destructive and must be blocked.
+    ...(isA2aSession ? { tools: ["read"] } : {}),
   });
   if (isCreezVerboseDebug()) {
     console.log(`[agent-runner] createAndSubscribe: createAgentSession done (${Date.now() - t0}ms)`);
@@ -474,6 +509,29 @@ export async function prompt(payload) {
 
     const imageCount = Array.isArray(images) ? images.length : 0;
     log("prompt", { botKey, chatId: rawKey || undefined, textLen: promptText.length, imageCount });
+
+    // ── Full prompt dump (temporary debug) ──
+    console.log("\n========== [CREEZ PROMPT DEBUG] ==========");
+    console.log("[PROMPT DEBUG] botKey:", botKey);
+    console.log("[PROMPT DEBUG] chatId:", rawKey || "(none)");
+    console.log("[PROMPT DEBUG] user text:\n" + promptText);
+    console.log("[PROMPT DEBUG] systemPrompt:\n" + (entry.session.systemPrompt || "(empty)"));
+    const historyMessages = entry.session.state?.messages;
+    if (Array.isArray(historyMessages)) {
+      console.log("[PROMPT DEBUG] conversation history (" + historyMessages.length + " messages):");
+      for (const m of historyMessages) {
+        const role = m.role || "?";
+        const c = typeof m.content === "string"
+          ? m.content
+          : Array.isArray(m.content)
+            ? m.content.filter(p => p?.type === "text").map(p => p.text).join("")
+            : JSON.stringify(m.content);
+        console.log(`  [${role}] ${c}`);
+      }
+    } else {
+      console.log("[PROMPT DEBUG] conversation history: (unavailable)");
+    }
+    console.log("========== [/CREEZ PROMPT DEBUG] ==========\n");
 
     log("prompt:start", { botKey, textLen: promptText.length });
     const options = {

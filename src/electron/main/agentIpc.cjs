@@ -35,7 +35,7 @@ const DEFAULT_WORKSPACE_ROOT = path.join(os.homedir(), ".creez", "workplace");
 /** Engine used for the current session (set on init, used for prompt/setModel/abort). */
 let currentEngine = null;
 
-const DEBUG_AGENT = false;
+const DEBUG_AGENT = true;
 
 function log(scope, details) {
   if (!DEBUG_AGENT) return;

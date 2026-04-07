@@ -1,10 +1,12 @@
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { asTextEnvelope, buildErrorEnvelope, buildSuccessEnvelope } from "../errorProtocol.mjs";
 
-const DEFAULT_BACKEND_BASE_URL = "https://creez.lighton.video";
+const require = createRequire(import.meta.url);
+const { resolveCreezBackendBase } = require("../../../creezBackendBase.cjs");
 const DEFAULT_TIMEOUT_MS = 120_000;
 const GENERATED_IMAGE_DIR = "GeneratedImage";
 const MAX_REFERENCE_IMAGE_BYTES = 12 * 1024 * 1024;
@@ -74,10 +76,12 @@ function resolveCreezApiKey() {
 }
 
 function resolveBackendUrl() {
-  const fromEnv = (process.env.CREEZ_BACKEND_URL ?? "").trim();
-  if (fromEnv) return fromEnv;
+  const fromEnv = (process.env.CREEZ_BACKEND_URL || "").trim();
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
   const file = loadCreezEnvFile();
-  return (file.CREEZ_BACKEND_URL || "").trim() || DEFAULT_BACKEND_BASE_URL;
+  const fromFile = (file.CREEZ_BACKEND_URL || "").trim();
+  if (fromFile) return fromFile.replace(/\/+$/, "");
+  return resolveCreezBackendBase();
 }
 
 function mimeFromExt(filePath) {
@@ -192,16 +196,6 @@ export function createImageGeneratorHandler(runtimeContext = {}) {
     id: "image_generator",
     async execute(args = {}) {
       const prompt = String(args?.prompt || "").trim();
-      if (!prompt) {
-        const envelope = buildErrorEnvelope({
-          toolName: "image_generator",
-          code: "INVALID_ARGUMENT",
-          message: "prompt is required.",
-          retryable: false,
-          nextAction: "Call image_generator again with a text description of the image to generate.",
-        });
-        return { content: [{ type: "text", text: asTextEnvelope(envelope, "image_generator") }], details: envelope, isError: true };
-      }
 
       const apiKey = resolveCreezApiKey();
       if (!apiKey) {
@@ -228,6 +222,18 @@ export function createImageGeneratorHandler(runtimeContext = {}) {
         };
       }
       const referenceImageBase64s = refLoad.base64s;
+
+      if (!prompt && referenceImageBase64s.length === 0) {
+        const envelope = buildErrorEnvelope({
+          toolName: "image_generator",
+          code: "INVALID_ARGUMENT",
+          message: "prompt or referenceImagePaths is required.",
+          retryable: false,
+          nextAction:
+            "Provide a text description, or paths/URLs to reference images for image-to-image.",
+        });
+        return { content: [{ type: "text", text: asTextEnvelope(envelope, "image_generator") }], details: envelope, isError: true };
+      }
 
       const baseUrl = resolveBackendUrl().replace(/\/+$/, "");
       const endpoint = `${baseUrl}/media/generate-image`;

@@ -548,6 +548,17 @@ const MIGRATIONS = [
       ALTER TABLE assistant_config ADD COLUMN a2a_strategy_json TEXT;
     `,
   },
+  {
+    version: 20,
+    name: "assistant_config_local_first_fields",
+    sql: `
+      ALTER TABLE assistant_config ADD COLUMN greeting_message TEXT DEFAULT '';
+      ALTER TABLE assistant_config ADD COLUMN knowledge TEXT DEFAULT '';
+      ALTER TABLE assistant_config ADD COLUMN agent_card_json TEXT;
+      ALTER TABLE assistant_config ADD COLUMN visibility TEXT DEFAULT 'public';
+      ALTER TABLE assistant_config ADD COLUMN status TEXT DEFAULT 'draft';
+    `,
+  },
 ];
 
 module.exports = {
