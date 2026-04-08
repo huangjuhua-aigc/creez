@@ -4,7 +4,7 @@
  * - Local contact in DB → getEngineForContact + optional remote merge when remote_agent_id is set
  * - No local row (e.g. Agent Builder id only) → fetch remote agent by id and use default bot's models for API keys
  *
- * Mirrors agentIpc AGENT_INIT resolution so channel traffic uses the same prompt/skills as in-app chat.
+ * Mirrors agentIpc AGENT_INIT resolution so channel traffic uses the same prompt merge as in-app chat (non-default Pi builtins: agent-runner registry, not skills_json allowlist).
  */
 
 const path = require("node:path");

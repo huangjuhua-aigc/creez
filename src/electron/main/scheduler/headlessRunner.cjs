@@ -4,37 +4,12 @@
  * only the task_prompt is sent and the reply is persisted to the chat.
  */
 
-const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { resolveCreezHome } = require("../creezPaths.cjs");
-const { getEngineForContact } = require("../conversation/engineRegistry.cjs");
 const { CHANNELS } = require("../channels.cjs");
 const { addListener, removeListener } = require("../agent-runner.mjs");
-
-const DEFAULT_WORKSPACE_ROOT = path.join(resolveCreezHome(os.homedir()), "workplace");
-
-function resolveWorkDir(raw) {
-  if (raw == null || String(raw).trim() === "") return null;
-  const s = String(raw).trim();
-  const home = os.homedir();
-  if (s === "~" || s.startsWith("~/") || s.startsWith("~\\")) {
-    return path.join(home, s.slice(1).replace(/\//g, path.sep));
-  }
-  return path.resolve(s);
-}
-
-function pickActiveModel(models) {
-  const list = Array.isArray(models) ? models : [];
-  return list.find((item) => item && item.active) || list[0] || null;
-}
-
-function normalizeProvider(raw) {
-  const value = String(raw || "").trim();
-  if (!value) return "";
-  const alias = { OpenRouter: "openrouter", OpenAI: "openai", Anthropic: "anthropic", Google: "google" };
-  return alias[value] || value.toLowerCase();
-}
+const { AgentConfigBuilder } = require("../AgentConfigBuilder.cjs");
 
 /**
  * Execute a scheduled task: append user message, ensure session, prompt, persist assistant message, notify UI.
@@ -76,49 +51,21 @@ async function executeTask(task, deps) {
   let assistantMessageId = null;
 
   try {
-    const { engine, rawConfig, assistantConfigId, defaultContactId } = getEngineForContact(contactId, {
-      contactRepository,
-      assistantConfigRepository,
-    });
-    console.log("[creez:task] headlessRunner getEngineForContact ok", { contactId, assistantConfigId });
+    const config = await new AgentConfigBuilder()
+      .setContactId(contactId)
+      .setScenario("headless")
+      .setDeps({ contactRepository, assistantConfigRepository, appStateStore, memoryStore })
+      .setChatId(chatId)
+      .setSessionKey("headless:" + taskId)
+      .setCreezHome(agentDir)
+      .build();
 
-    const appState = appStateStore ? await appStateStore.getState() : {};
-    const activeModel = pickActiveModel(rawConfig?.models);
-    const provider = normalizeProvider(activeModel?.provider);
-    const modelId = activeModel?.model || "";
-    let apiKey = (activeModel?.apiKey && String(activeModel.apiKey).trim()) || "";
-    if (!apiKey && assistantConfigRepository?.getModelApiKeyFromConfig) {
-      apiKey = assistantConfigRepository.getModelApiKeyFromConfig(assistantConfigId, activeModel?.id) || "";
-    }
-    if (!apiKey && assistantConfigRepository?.getModelApiKey) {
-      apiKey = assistantConfigRepository.getModelApiKey(activeModel?.id, defaultContactId) || "";
-    }
+    console.log("[creez:task] headlessRunner AgentConfigBuilder ok", { contactId, assistantConfigId: config.assistantConfigId });
 
-    const rawRoot = appState?.workspaceRoot || null;
-    const workDir = resolveWorkDir(rawRoot) || DEFAULT_WORKSPACE_ROOT;
-    try {
-      await fs.mkdir(workDir, { recursive: true });
-    } catch (e) {
-      console.warn("[creez:scheduler] workDir mkdir failed", e?.message || e);
-    }
-
-    let memoryContent = "";
-    let memoryPath = "";
-    if (memoryStore) {
-      try {
-        const memory = await memoryStore.read();
-        memoryContent = memory?.content || "";
-        memoryPath = memory?.path || "";
-      } catch {
-        // ignore
-      }
-    }
-
-    // No chat history: headless runs with only the task prompt, no prior conversation context.
-
-    if (!provider || !modelId || !apiKey) {
-      const errMsg = "Scheduled task skipped: no model/apiKey configured for default bot.";
-      console.warn("[creez:scheduler]", errMsg, { taskId, chatId });
+    if (!config.provider || !config.modelId || !config.apiKey) {
+      const errMsg =
+        "Scheduled task skipped: no model/apiKey configured for this task's bot (contact_id).";
+      console.warn("[creez:scheduler]", errMsg, { taskId, chatId, contactId });
       taskRepository.insertLog({ task_id: taskId, status: "failed", error_message: errMsg });
       if (sendToRenderer) {
         sendToRenderer({ type: "scheduled_task_skipped", chatId, taskId, message: errMsg });
@@ -247,24 +194,11 @@ async function executeTask(task, deps) {
       },
     };
 
-    const context = {
-      chatId,
-      contactId: sessionKey,
-      assistantConfigId,
-      defaultContactId: defaultContactId ?? null,
-      assistantConfig: rawConfig,
-      workDir,
-      agentDir,
-      memoryContent,
-      memoryPath,
-      provider,
-      modelId,
-      apiKey,
+    await config.engine.init({
+      ...config,
       sendEvent: (data) => headlessSender.send("agent:event", data),
       sendError: (msg) => headlessSender.send("agent:event", { type: "agent_end", isError: msg }),
-    };
-
-    await engine.init(context);
+    });
     console.log("[creez:task] headlessRunner engine.init done (headless session, no chat history)");
 
     try {

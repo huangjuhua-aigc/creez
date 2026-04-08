@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Plus, X, Globe, Lock, Users } from "lucide-react";
 import { cn } from "../../utils/cn";
 
+/** Agent card for discovery/A2A. `skills` is the API field name only — these are search/discovery tags, not Creez builtin tool toggles. */
 export type AgentCardData = {
   description: string;
   skills: string[];
@@ -48,9 +49,9 @@ export function AgentCardEditor({ value, onChange }: AgentCardEditorProps) {
         <p className="text-[11px] text-gray-400">Shown on the A2A network and in discovery.</p>
       </div>
 
-      {/* Skills / Tags */}
+      {/* agent_card_json.skills: discovery tags only (not Pi/builtin toggles) */}
       <div className="space-y-2">
-        <label className="block text-sm font-semibold text-gray-700">Skill tags</label>
+        <label className="block text-sm font-semibold text-gray-700">Discovery tags</label>
         <div className="flex flex-wrap gap-2 mb-2">
           {value.skills.map((skill) => (
             <span

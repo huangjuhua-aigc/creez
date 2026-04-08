@@ -3,7 +3,7 @@ const { CHANNELS } = require("./channels.cjs");
 const { randomUUID } = require("node:crypto");
 const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
 const { isCreezVerboseDebug } = require("./creezDebug.cjs");
-const { ensureBotWorkplace } = require("./creezPaths.cjs");
+const { ensureBotDir } = require("./creezPaths.cjs");
 
 function vlog(...args) {
   if (isCreezVerboseDebug()) console.log(...args);
@@ -232,7 +232,7 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
 
       const creezHome = getCreezHome();
       if (creezHome) {
-        try { ensureBotWorkplace(creezHome, agentId); } catch { /* non-fatal */ }
+        try { ensureBotDir(creezHome, agentId); } catch { /* non-fatal */ }
       }
 
       broadcastContactListChanged();

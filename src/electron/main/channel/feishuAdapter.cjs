@@ -586,57 +586,32 @@ class FeishuChannelAdapter {
     const { getEngineForContact } = require("../conversation/engineRegistry.cjs");
     const { getRunner } = require("../conversation/PiConversationEngine.cjs");
     const { contactRepository, assistantConfigRepository, chatRepository } = this._deps;
-    const { engine, rawConfig, assistantConfigId, defaultContactId } = getEngineForContact(this._botId, {
-      contactRepository,
-      assistantConfigRepository,
-    });
+    const { engine } = getEngineForContact(this._botId, { contactRepository, assistantConfigRepository });
 
     const runner = await getRunner();
-    if (runner.hasSession(this._botId)) {
-      return engine;
-    }
+    if (runner.hasSession(this._botId)) return engine;
 
-    const models = Array.isArray(rawConfig?.models) ? rawConfig.models : [];
-    const activeModel = models.find((m) => m && m.active) || models[0];
-    if (!activeModel?.provider || !activeModel?.model) return null;
-    let apiKey = (activeModel.apiKey && String(activeModel.apiKey).trim()) || "";
-    if (!apiKey && assistantConfigRepository?.getModelApiKeyFromConfig) {
-      apiKey = assistantConfigRepository.getModelApiKeyFromConfig(assistantConfigId, activeModel.id) || "";
-    }
-    if (!apiKey) return null;
+    const { AgentConfigBuilder } = require("../AgentConfigBuilder.cjs");
 
-    const appStateStore = this._deps.appStateStore;
-    const appState = appStateStore ? await appStateStore.getState() : {};
-    const rawRoot = appState?.workspaceRoot ?? null;
-    const workDir = resolveWorkDir(rawRoot) || DEFAULT_WORKSPACE_ROOT;
+    let chatHistory = "";
     try {
-      await fsp.mkdir(workDir, { recursive: true });
-    } catch (e) {
-      feishuLog("workspace dir create failed: " + (e?.message || String(e)));
-    }
-    const agentDir = path.join(os.homedir(), ".creez");
+      const historyRows = chatRepository.getMessages({ chatId, limit: 50 });
+      chatHistory = (historyRows?.items || [])
+        .map((m) => `${m.sender === "user" ? "User" : "Assistant"}: ${m.content}`)
+        .join("\n");
+    } catch { /* ignore */ }
 
-    const historyRows = chatRepository.getMessages({ chatId, limit: 50 });
-    const memoryContent = (historyRows?.items || [])
-      .map((m) => `${m.sender === "user" ? "User" : "Assistant"}: ${m.content}`)
-      .join("\n");
+    const config = await new AgentConfigBuilder()
+      .setContactId(this._botId)
+      .setScenario("channel")
+      .setDeps({ contactRepository, assistantConfigRepository, appStateStore: this._deps.appStateStore, chatRepository })
+      .setChatId(chatId)
+      .setChatHistory(chatHistory)
+      .build();
 
-    await engine.init({
-      chatId,
-      contactId: this._botId,
-      assistantConfigId,
-      defaultContactId,
-      assistantConfig: rawConfig,
-      provider: activeModel.provider,
-      modelId: activeModel.model,
-      apiKey,
-      workDir,
-      agentDir,
-      memoryContent,
-      memoryPath: "",
-      sendEvent: () => {},
-      sendError: () => {},
-    });
+    if (!config.provider || !config.modelId || !config.apiKey) return null;
+
+    await config.engine.init(config);
     return engine;
   }
 

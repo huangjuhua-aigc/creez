@@ -7,6 +7,7 @@ import {
   SessionManager,
   SettingsManager,
   createAgentSession,
+  readTool,
 } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import { createRequire } from "node:module";
@@ -71,17 +72,11 @@ function resolveModel(provider, modelId) {
   return getModel(provider, modelId) || null;
 }
 
-/** Fingerprint of assistant config that affects session (skills, systemPrompt). Used to invalidate session when user changes config. Default bot excludes skills so toggling "copy to ~/.creez/skills" does not rebuild session. */
+/** Fingerprint of assistant config that affects session. Default bot: systemPrompt only (skills toggles do not rebuild). Non-default: systemPrompt only (skills_json does not gate runner). */
 function configFingerprint(assistantConfig, assistantConfigId, defaultContactId) {
   if (!assistantConfig) return "";
   const systemPrompt = (assistantConfig.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
-  const isDefaultBot = assistantConfigId != null && defaultContactId != null
-    && String(assistantConfigId) === String(defaultContactId);
-  if (isDefaultBot) return systemPrompt;
-  const skills = assistantConfig.skills && typeof assistantConfig.skills === "object"
-    ? Object.keys(assistantConfig.skills).sort().map((k) => `${k}:${!!assistantConfig.skills[k]}`).join("|")
-    : "";
-  return `${skills}\n${systemPrompt}`;
+  return systemPrompt;
 }
 
 /**
@@ -138,15 +133,11 @@ export async function createAndSubscribe(sender, config) {
     sessionKey: configSessionKey,
   } = config;
   const chatId = configChatId != null && String(configChatId).trim() !== "" ? String(configChatId).trim() : null;
-  /** Optional: channel external sessions — isolate runner key while keeping contactId for tools (see PiConversationEngine). */
   const explicitSessionKey =
     configSessionKey != null && String(configSessionKey).trim() !== "" ? String(configSessionKey).trim() : null;
   const botKey = explicitSessionKey || contactId || chatId || "";
-  /** Gateway A2A turns use sessionKey/chatId `a2a:<id>` — no Pi coding tools (read/bash/edit/write). */
-  const isA2aSession =
-    String(botKey).startsWith("a2a:")
-    || (chatId && String(chatId).startsWith("a2a:"))
-    || (explicitSessionKey && String(explicitSessionKey).startsWith("a2a:"));
+  /** External user sessions (remote_user / a2a_agent / auto_discovery): restrict Pi tools + builtin whitelist. */
+  const isExternalUser = Boolean(config.isExternalUser);
   const listenerId = chatId ? `ui:${chatId}` : "ui";
 
   if (chatId && chatId !== botKey) {
@@ -156,8 +147,8 @@ export async function createAndSubscribe(sender, config) {
   let cwd = workDir;
   if (!cwd && contactId) {
     try {
-      const { resolveCreezHome, ensureBotWorkplace } = require("./creezPaths.cjs");
-      cwd = ensureBotWorkplace(resolveCreezHome(), contactId);
+      const { resolveCreezHome, ensureBotDir } = require("./creezPaths.cjs");
+      cwd = ensureBotDir(resolveCreezHome(), contactId);
     } catch { /* fall through */ }
   }
   if (!cwd) cwd = process.cwd();
@@ -230,32 +221,29 @@ export async function createAndSubscribe(sender, config) {
     }
   };
 
-  const safeCwd = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-  const safeBotKey = botKey.replace(/[^a-zA-Z0-9_-]/g, "_") || "default";
-  const sessionDir = path.join(resolvedAgentDir, "sessions", safeCwd, safeBotKey);
+  const isDefaultBot = assistantConfigId != null && defaultContactId != null
+    && String(assistantConfigId) === String(defaultContactId);
+
+  let botDir = null;
+  if (!isDefaultBot && contactId) {
+    const { resolveCreezHome: rch, getBotDir } = require("./creezPaths.cjs");
+    botDir = getBotDir(rch(), contactId);
+  }
+
+  let sessionDir;
+  if (botDir) {
+    const safeBotKey = botKey.replace(/[^a-zA-Z0-9_-]/g, "_") || "default";
+    sessionDir = path.join(botDir, "sessions", safeBotKey);
+  } else {
+    const safeCwd = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+    const safeBotKey = botKey.replace(/[^a-zA-Z0-9_-]/g, "_") || "default";
+    sessionDir = path.join(resolvedAgentDir, "sessions", safeCwd, safeBotKey);
+  }
   const sessionManager = SessionManager.continueRecent(cwd, sessionDir);
   const settingsManager = SettingsManager.create(cwd, resolvedAgentDir);
 
-  const isDefaultBot = assistantConfigId != null && defaultContactId != null
-    && String(assistantConfigId) === String(defaultContactId);
-  const skillsConfig = assistantConfig?.skills && typeof assistantConfig.skills === "object" ? assistantConfig.skills : {};
-  /** Non-default bots: builtins are gated by skills_json (registry listEnabled uses allowedBuiltinIds). */
-  const A2A_DEFAULT_READ_BUILTINS = ["knowledge_search", "web_fetch"];
-  let enabledSkillIds;
-  if (isDefaultBot) {
-    enabledSkillIds = undefined;
-  } else {
-    enabledSkillIds = new Set(Object.keys(skillsConfig).filter((id) => skillsConfig[id] !== false));
-    // 小程序 / A2A 访客会话：不加载磁盘 skill 目录（skillsOverride 清空），仅靠 customTools。
-    // 若本地 skills_json 为空或漏配，会导致 knowledge_search 从未注册；访客端无法检索已同步到网关的知识库。
-    if (isA2aSession) {
-      for (const id of A2A_DEFAULT_READ_BUILTINS) {
-        if (skillsConfig[id] !== false) enabledSkillIds.add(id);
-      }
-    }
-  }
-
-  const additionalSkillPath = path.join(cwd, ".creez", "skills");
+  const botSkillPath = botDir ? path.join(botDir, "skills") : null;
+  const globalSkillPath = path.join(resolvedAgentDir, "skills");
   const builtinSkillPath = path.join(APP_ROOT_DIR, "skills", "builtin", "skills");
   const replyInstructions = loadBuiltinReplyInstructions(builtinSkillPath, BUILTIN_SKILL_IDS);
   const builtinRegistry = createBuiltinSkillRegistry();
@@ -270,7 +258,6 @@ export async function createAndSubscribe(sender, config) {
       chatId: chatId || null,
       workDir: cwd,
       channelSend: config.channelSend,
-      ...(isDefaultBot ? {} : { allowedBuiltinIds: enabledSkillIds }),
     },
     onEvent: (builtinEv) => {
       const resolved =
@@ -281,17 +268,17 @@ export async function createAndSubscribe(sender, config) {
     },
     replyInstructions,
   });
-  const A2A_ALLOWED_TOOLS = new Set(["knowledge_search", "web_fetch"]);
   const allCustomTools = builtinExecutor.listEnabledToolDefinitions();
-  const customTools = isA2aSession
-    ? allCustomTools.filter((t) => A2A_ALLOWED_TOOLS.has(t.name))
+  const EXTERNAL_ALLOWED_TOOLS = new Set(["knowledge_search", "web_fetch"]);
+  const customTools = isExternalUser
+    ? allCustomTools.filter((t) => EXTERNAL_ALLOWED_TOOLS.has(t.name))
     : allCustomTools;
-  if (isA2aSession && allCustomTools.length !== customTools.length) {
-    console.log(`[agent-runner] A2A session: filtered tools from ${allCustomTools.length} to ${customTools.length} (read-only)`);
+  if (isExternalUser && allCustomTools.length !== customTools.length) {
+    console.log(`[agent-runner] external user session: filtered tools from ${allCustomTools.length} to ${customTools.length}`);
   }
-  if (isA2aSession && customTools.length === 0) {
+  if (isExternalUser && customTools.length === 0) {
     console.warn(
-      "[agent-runner] A2A session has no custom tools (check skills_json / knowledge_search not false). Miniapp KB search will be unavailable.",
+      "[agent-runner] external user session: no knowledge_search/web_fetch after whitelist. KB search unavailable.",
     );
   }
 
@@ -315,21 +302,23 @@ export async function createAndSubscribe(sender, config) {
     log("system_prompt:custom_agent", { length: systemPrompt.length });
   }
 
-  const skillsOverrideFn = isA2aSession
+  const skillsOverrideFn = isExternalUser
     ? (base) => ({ ...base, skills: [] })
-    : isDefaultBot
-      ? (base) => base
-      : (base) => ({
-          ...base,
-          skills: base.skills.filter((s) => enabledSkillIds.has(s.name)),
-        });
+    : (base) => base;
 
+  const isNonDefaultBot = !isDefaultBot;
+  const additionalSkillPaths = isExternalUser
+    ? []
+    : isNonDefaultBot
+      ? [botSkillPath, builtinSkillPath].filter(Boolean)
+      : [globalSkillPath, builtinSkillPath].filter(Boolean);
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir: resolvedAgentDir,
     settingsManager,
     noExtensions: true,
-    additionalSkillPaths: isA2aSession ? [] : [additionalSkillPath, builtinSkillPath],
+    noSkills: isNonDefaultBot,
+    additionalSkillPaths,
     systemPrompt: systemPrompt || undefined,
     skillsOverride: skillsOverrideFn,
   });
@@ -365,8 +354,8 @@ export async function createAndSubscribe(sender, config) {
     resourceLoader,
     customTools,
     ...(initialThinkingLevel ? { thinkingLevel: initialThinkingLevel } : {}),
-    // A2A: only allow read (filesystem browsing); bash/edit/write are destructive and must be blocked.
-    ...(isA2aSession ? { tools: ["read"] } : {}),
+    // External user sessions: only allow read (filesystem browsing); bash/edit/write must be blocked.
+    ...(isExternalUser ? { tools: [readTool] } : {}),
   });
   if (isCreezVerboseDebug()) {
     console.log(`[agent-runner] createAndSubscribe: createAgentSession done (${Date.now() - t0}ms)`);
@@ -418,13 +407,50 @@ export async function createAndSubscribe(sender, config) {
         turnHadSuccessfulReply = false;
       }
       if (ev.type !== "message_update") {
-        log("event", { type: ev.type, role, toolName, textLen, botKey });
+        console.log("[creez:diag:event]", ev.type, {
+          role, toolName, textLen, botKey,
+          ...(ev.type === "tool_result" || ev.type === "tool_call_result"
+            ? { isError: ev.isError, resultPreview: String(ev.result || ev.partialResult || "").slice(0, 200) }
+            : {}),
+          ...(ev.type.startsWith("tool") ? { toolCallId: ev.toolCallId || null } : {}),
+          ...(ev.isError != null ? { isError: ev.isError } : {}),
+          ...(ev.message?.errorMessage ? { errorMessage: String(ev.message.errorMessage).slice(0, 200) } : {}),
+        });
       }
-      if (ev.type === "message_end" && ev.message?.role === "assistant" && contentStr) {
-        if (isCreezVerboseDebug()) {
-          console.log("[creez:agent] LLM reply:\n", contentStr);
+      if (ev.type === "message_end" && ev.message?.role === "assistant") {
+        console.log("[creez:diag] message_end assistant", {
+          botKey,
+          chatId: chatId ?? null,
+          contentType: typeof ev.message?.content,
+          contentIsArray: Array.isArray(ev.message?.content),
+          contentStr: contentStr.slice(0, 200),
+          contentLen: contentStr.length,
+          rawContentPreview: JSON.stringify(ev.message?.content)?.slice(0, 300),
+        });
+        if (!contentStr) {
+          const history = session.state?.messages;
+          const historyLen = Array.isArray(history) ? history.length : -1;
+          const lastFew = Array.isArray(history) ? history.slice(-6).map((m, i) => ({
+            i: historyLen - 6 + i,
+            role: m.role,
+            hasContent: m.content != null,
+            contentType: typeof m.content,
+            isArray: Array.isArray(m.content),
+            contentPreview: typeof m.content === "string"
+              ? m.content.slice(0, 80)
+              : Array.isArray(m.content)
+                ? JSON.stringify(m.content.map(c => ({ type: c.type, len: (c.text || c.thinking || "").length }))).slice(0, 200)
+                : String(m.content).slice(0, 80),
+            toolCallId: m.toolCallId || undefined,
+            toolName: m.toolName || undefined,
+          })) : [];
+          console.log("[creez:diag] EMPTY assistant response — session history dump", {
+            historyLen,
+            lastMessages: lastFew,
+          });
+        } else {
+          turnHadSuccessfulReply = true;
         }
-        turnHadSuccessfulReply = true;
       }
       if (ev.type === "agent_end") {
         log("reply_done", { botKey, chatId: chatId ?? undefined });
@@ -437,8 +463,14 @@ export async function createAndSubscribe(sender, config) {
         }
       }
       if (ev.type === "agent_end") {
-        if (pendingErrorMsg && !turnHadSuccessfulReply) {
-          broadcast("agent:eventError", pendingErrorMsg);
+        if (!turnHadSuccessfulReply) {
+          console.warn("[agent-runner] empty assistant response detected — invalidating session fingerprint for rebuild on next init", { botKey });
+          sessionEntry.configFingerprint = "__invalidated__";
+          if (pendingErrorMsg) {
+            broadcast("agent:eventError", pendingErrorMsg);
+          } else {
+            broadcast("agent:eventError", "Agent returned an empty response. Please resend your message.");
+          }
         }
         pendingErrorMsg = null;
         turnHadSuccessfulReply = false;

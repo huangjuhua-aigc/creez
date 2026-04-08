@@ -60,35 +60,38 @@ function ensureCreezDirs(homeOrCreezDir) {
 }
 
 /**
- * Per-bot isolated workplace: ~/.creez/.#<botId>_workplace/
- * Contains knowledge/, skills/, data/ subdirs for the bot's runtime.
+ * Per-bot directory: ~/.creez/bots/<botId>/
+ * Contains skills/, sessions/, knowledge/, data/ for the bot's runtime.
  * @param {string} creezHome - Resolved ~/.creez path
  * @param {string} botId
  * @returns {string}
  */
-function getBotWorkplace(creezHome, botId) {
-  return path.join(creezHome, `.#${botId}_workplace`);
+function getBotDir(creezHome, botId) {
+  return path.join(creezHome, "bots", botId);
 }
 
+const BOT_SUBDIRS = ["skills", "sessions", "knowledge", "data"];
+
 /**
- * Create the bot workplace directory and its subdirs. Idempotent.
+ * Create the bot directory and its subdirs. Idempotent.
  * @param {string} creezHome
  * @param {string} botId
- * @returns {string} The workplace root path
+ * @returns {string} The bot dir root path
  */
-function ensureBotWorkplace(creezHome, botId) {
-  const wp = getBotWorkplace(creezHome, botId);
-  for (const sub of ["knowledge", "skills", "data"]) {
-    fs.mkdirSync(path.join(wp, sub), { recursive: true });
+function ensureBotDir(creezHome, botId) {
+  const bd = getBotDir(creezHome, botId);
+  for (const sub of BOT_SUBDIRS) {
+    fs.mkdirSync(path.join(bd, sub), { recursive: true });
   }
-  return wp;
+  return bd;
 }
 
 module.exports = {
   getCreezDir,
   resolveCreezHome,
   ensureCreezDirs,
-  getBotWorkplace,
-  ensureBotWorkplace,
+  getBotDir,
+  ensureBotDir,
+  BOT_SUBDIRS,
   CREEZ_SUBDIRS,
 };
