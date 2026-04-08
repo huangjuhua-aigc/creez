@@ -6,18 +6,7 @@
 const path = require("node:path");
 const os = require("node:os");
 const { randomUUID } = require("node:crypto");
-
-const DEFAULT_WORKSPACE_ROOT = path.join(os.homedir(), ".creez", "workplace");
-
-function resolveWorkDir(raw) {
-  if (raw == null || String(raw).trim() === "") return null;
-  const s = String(raw).trim();
-  const home = os.homedir();
-  if (s === "~" || s.startsWith("~/") || s.startsWith("~\\")) {
-    return path.join(home, s.slice(1).replace(/\//g, path.sep));
-  }
-  return path.resolve(s);
-}
+const { AgentConfigBuilder } = require("../AgentConfigBuilder.cjs");
 
 /**
  * Run default-assistant Pi session once: full transcript + Chinese structured-summary instructions.
@@ -46,32 +35,23 @@ async function summarizeTranscriptWithDefaultPiAssistant(deps, opts) {
     summarySessionKeyPrefix,
   } = opts;
 
-  const { getEngineForContact } = require("../conversation/engineRegistry.cjs");
   const { getRunner } = require("../conversation/PiConversationEngine.cjs");
 
   const defaultContactId = contactRepository.getDefaultAssistantConfigId();
-  const { rawConfig, assistantConfigId } = getEngineForContact(defaultContactId, {
-    contactRepository,
-    assistantConfigRepository,
-  });
-
-  const models = Array.isArray(rawConfig?.models) ? rawConfig.models : [];
-  const activeModel = models.find((m) => m && m.active) || models[0];
-  if (!activeModel?.provider || !activeModel?.model) {
-    throw new Error("no active model for summary generation");
-  }
-  let apiKey = (activeModel.apiKey && String(activeModel.apiKey).trim()) || "";
-  if (!apiKey && assistantConfigRepository?.getModelApiKeyFromConfig) {
-    apiKey = assistantConfigRepository.getModelApiKeyFromConfig(assistantConfigId, activeModel.id) || "";
-  }
-  if (!apiKey) throw new Error("no API key for summary generation");
-
   const summarySessionKey = `${summarySessionKeyPrefix}:${Date.now()}`;
-  const agentDir = path.join(os.homedir(), ".creez");
 
-  const appState = appStateStore ? await appStateStore.getState() : {};
-  const rawRoot = appState?.workspaceRoot ?? null;
-  const workDir = resolveWorkDir(rawRoot) || DEFAULT_WORKSPACE_ROOT;
+  const config = await new AgentConfigBuilder()
+    .setContactId(defaultContactId)
+    .setScenario("summary")
+    .setDeps({ contactRepository, assistantConfigRepository, appStateStore })
+    .setChatId(summarySessionKey)
+    .setSessionKey(summarySessionKey)
+    .setSystemPromptOverride("你是一个专业的对话摘要助手。请简洁、准确地总结对话内容，输出 Markdown 格式。")
+    .build();
+
+  if (!config.provider || !config.modelId || !config.apiKey) {
+    throw new Error("no active model/apiKey for summary generation");
+  }
 
   const summaryPromptText = [
     scenarioDescription,
@@ -107,26 +87,8 @@ async function summarizeTranscriptWithDefaultPiAssistant(deps, opts) {
     },
   };
 
-  const summaryConfig = {
-    ...rawConfig,
-    systemPrompt: "你是一个专业的对话摘要助手。请简洁、准确地总结对话内容，输出 Markdown 格式。",
-  };
-
   const runner = await getRunner();
-  await runner.createAndSubscribe(collector, {
-    provider: activeModel.provider,
-    modelId: activeModel.model,
-    apiKey,
-    contactId: summarySessionKey,
-    assistantConfigId,
-    defaultContactId,
-    workDir,
-    agentDir,
-    assistantConfig: summaryConfig,
-    memoryContent: "",
-    memoryPath: "",
-    chatId: summarySessionKey,
-  });
+  await runner.createAndSubscribe(collector, config);
 
   await runner.prompt({ chatId: summarySessionKey, text: summaryPromptText, images: [] });
 
@@ -180,6 +142,4 @@ function appendToDefaultAssistantMainChat(deps, opts) {
 module.exports = {
   summarizeTranscriptWithDefaultPiAssistant,
   appendToDefaultAssistantMainChat,
-  resolveWorkDir,
-  DEFAULT_WORKSPACE_ROOT,
 };

@@ -23,6 +23,7 @@ type AgentDetail = {
   system_prompt: string;
   greeting_message: string;
   knowledge: string;
+  /** Legacy API field; not exposed as skill toggles in UI. Desktop Pi ignores it for tool gating (see ARCHITECTURE §9.2). */
   skills_json: Record<string, boolean>;
   status: string;
   agent_card_json: AgentCardData | null;

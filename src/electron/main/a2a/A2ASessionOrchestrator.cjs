@@ -506,10 +506,13 @@ class A2ASessionOrchestrator {
     try {
       const sessionKey = `a2a:${sessionId}`;
       const isAutoDiscovery = session.sessionOrigin === "auto_discovery";
+      const senderType = message.senderType || "agent";
+      const isRemoteUser = senderType === "remote_user";
       await this._ensureBotSession(sessionKey, localAgentId, {
         conversationGoal: isAutoDiscovery ? session.conversationGoal : null,
         sessionOrigin: session.sessionOrigin,
         remoteAgentId: session.remoteAgentId,
+        isRemoteUser,
       });
       const reply = await this._getAgentReply(sessionKey, content);
 
@@ -821,7 +824,7 @@ class A2ASessionOrchestrator {
       sessionId,
       content,
       contentType: "text/plain",
-      senderType: "agent",
+      senderType: "remote_user",
       senderId,
     });
 
@@ -939,122 +942,103 @@ class A2ASessionOrchestrator {
    * @param {string|null} [a2aOpts.remoteAgentId]
    */
   async _ensureBotSession(sessionKey, contactId, a2aOpts = {}) {
-    const { getEngineForContact } = require("../conversation/engineRegistry.cjs");
     const { getRunner } = require("../conversation/PiConversationEngine.cjs");
     const runner = await getRunner();
 
     if (runner.hasSession(sessionKey)) return;
 
-    const { engine, rawConfig, assistantConfigId, defaultContactId } = getEngineForContact(
-      contactId,
-      { contactRepository: this.contactRepo, assistantConfigRepository: this.assistantConfigRepo },
-    );
-
-    console.log(TAG, `_ensureBotSession config:`, {
-      contactId,
-      assistantConfigId,
-      hasSystemPrompt: !!(rawConfig?.systemPrompt),
-      systemPromptLength: (rawConfig?.systemPrompt || "").length,
-      systemPromptPreview: (rawConfig?.systemPrompt || "").slice(0, 200),
-      skills: rawConfig?.skills ? Object.keys(rawConfig.skills) : [],
-    });
-
-    const models = Array.isArray(rawConfig?.models) ? rawConfig.models : [];
-    const activeModel = models.find((m) => m && m.active) || models[0];
-    if (!activeModel?.provider || !activeModel?.model) {
-      throw new Error(`No model configured for contact ${contactId}`);
-    }
-
-    let apiKey = (activeModel.apiKey && String(activeModel.apiKey).trim()) || "";
-    if (!apiKey && this.assistantConfigRepo?.getModelApiKeyFromConfig) {
-      apiKey = this.assistantConfigRepo.getModelApiKeyFromConfig(assistantConfigId, activeModel.id) || "";
-    }
-    if (!apiKey && assistantConfigId !== defaultContactId && this.assistantConfigRepo?.getModelApiKeyFromConfig) {
-      apiKey = this.assistantConfigRepo.getModelApiKeyFromConfig(defaultContactId, activeModel.id) || "";
-    }
-    if (!apiKey) {
-      throw new Error(`No API key for contact ${contactId}`);
-    }
-
-    const { ensureBotWorkplace } = require("../creezPaths.cjs");
-    const workDir = ensureBotWorkplace(this.creezHome, contactId);
-    const agentDir = this.creezHome;
-
-    const memory = this.memoryStore ? await this.memoryStore.read() : { content: "", path: "" };
-
     const {
       conversationGoal = null,
       sessionOrigin = null,
       remoteAgentId = null,
+      isRemoteUser = false,
     } = a2aOpts && typeof a2aOpts === "object" ? a2aOpts : {};
 
-    const localDisplayName = this._resolveLocalBotDisplayName(contactId);
-    let peerDisplayName = "Unknown peer";
-    let peerCardSummary = "";
-    if (remoteAgentId) {
-      const peer = await this._resolvePeerDisplayForPrompt(remoteAgentId);
-      peerDisplayName = peer.displayName;
-      peerCardSummary = peer.cardSummary;
+    // Determine scenario: remote_user (human via miniapp/Creez UI), a2a_agent (bot-to-bot), auto_discovery
+    let scenario;
+    if (sessionOrigin === "auto_discovery") {
+      scenario = "auto_discovery";
+    } else if (isRemoteUser) {
+      scenario = "remote_user";
+    } else {
+      scenario = "a2a_agent";
     }
 
-    // 1. Creator's system prompt is the primary identity / personality
-    const creatorPrompt = (rawConfig?.systemPrompt && String(rawConfig.systemPrompt).trim()) || "";
+    // A2A prompt stacking: only for agent-to-agent, NOT for remote human users
+    let systemPromptOverride = null;
+    if (scenario === "a2a_agent" || scenario === "auto_discovery") {
+      const { getEngineForContact } = require("../conversation/engineRegistry.cjs");
+      const { rawConfig } = getEngineForContact(contactId, {
+        contactRepository: this.contactRepo,
+        assistantConfigRepository: this.assistantConfigRepo,
+      });
+      const creatorPrompt = (rawConfig?.systemPrompt && String(rawConfig.systemPrompt).trim()) || "";
 
-    // 2. A2A session context (who you are, who you're talking to)
-    const sessionContext =
-      sessionOrigin === "inbound" || sessionOrigin === "auto_discovery"
-        ? buildA2aRoleContextPrompt(sessionOrigin, localDisplayName, peerDisplayName, peerCardSummary)
+      const localDisplayName = this._resolveLocalBotDisplayName(contactId);
+      let peerDisplayName = "Unknown peer";
+      let peerCardSummary = "";
+      if (remoteAgentId) {
+        const peer = await this._resolvePeerDisplayForPrompt(remoteAgentId);
+        peerDisplayName = peer.displayName;
+        peerCardSummary = peer.cardSummary;
+      }
+
+      const sessionContext =
+        sessionOrigin === "inbound" || sessionOrigin === "auto_discovery"
+          ? buildA2aRoleContextPrompt(sessionOrigin, localDisplayName, peerDisplayName, peerCardSummary)
+          : "";
+
+      let a2aRules = "";
+      if (sessionOrigin === "auto_discovery") {
+        a2aRules = A2A_INITIATOR_AGENT_PROMPT;
+      } else if (sessionOrigin === "inbound") {
+        a2aRules = A2A_RESPONDER_AGENT_PROMPT;
+      }
+
+      const goalBlock = conversationGoal
+        ? GOAL_PROMPT_SUFFIX.replace("{GOAL}", String(conversationGoal))
         : "";
 
-    // 3. A2A rules (behavioral guidelines for the network interaction)
-    let a2aRules = "";
-    if (sessionOrigin === "auto_discovery") {
-      a2aRules = A2A_INITIATOR_AGENT_PROMPT;
-    } else if (sessionOrigin === "inbound") {
-      a2aRules = A2A_RESPONDER_AGENT_PROMPT;
+      const finalPrompt = [creatorPrompt, sessionContext, a2aRules, goalBlock]
+        .filter(Boolean)
+        .join("\n");
+
+      console.log(TAG, `_ensureBotSession prompt composition (${scenario}):`, {
+        creatorPromptLength: creatorPrompt.length,
+        hasSessionContext: !!sessionContext,
+        hasA2aRules: !!a2aRules,
+        hasGoal: !!goalBlock,
+        finalPromptLength: finalPrompt.length,
+      });
+
+      systemPromptOverride = finalPrompt;
     }
 
-    // 4. Auto-discovery conversation goal (if applicable)
-    const goalBlock = conversationGoal
-      ? GOAL_PROMPT_SUFFIX.replace("{GOAL}", String(conversationGoal))
-      : "";
+    const { AgentConfigBuilder } = require("../AgentConfigBuilder.cjs");
 
-    // Compose: creator prompt → context → rules → goal
-    const finalPrompt = [creatorPrompt, sessionContext, a2aRules, goalBlock]
-      .filter(Boolean)
-      .join("\n");
+    const builder = new AgentConfigBuilder()
+      .setContactId(contactId)
+      .setScenario(scenario)
+      .setDeps({
+        contactRepository: this.contactRepo,
+        assistantConfigRepository: this.assistantConfigRepo,
+        memoryStore: this.memoryStore,
+      })
+      .setChatId(sessionKey)
+      .setSessionKey(sessionKey)
+      .setCreezHome(this.creezHome);
 
-    console.log(TAG, `_ensureBotSession prompt composition:`, {
-      creatorPromptLength: creatorPrompt.length,
-      creatorPromptPreview: creatorPrompt.slice(0, 300),
-      hasSessionContext: !!sessionContext,
-      hasA2aRules: !!a2aRules,
-      hasGoal: !!goalBlock,
-      finalPromptLength: finalPrompt.length,
-    });
-
-    let effectiveConfig = rawConfig;
-    if (sessionContext || a2aRules || goalBlock) {
-      effectiveConfig = { ...rawConfig, systemPrompt: finalPrompt };
+    if (systemPromptOverride != null) {
+      builder.setSystemPromptOverride(systemPromptOverride);
     }
 
-    await engine.init({
-      chatId: sessionKey,
-      sessionKey,
-      contactId,
-      assistantConfigId,
-      defaultContactId,
-      assistantConfig: effectiveConfig,
-      provider: activeModel.provider,
-      modelId: activeModel.model,
-      apiKey,
-      workDir,
-      agentDir,
-      memoryContent: memory.content || "",
-      memoryPath: memory.path || "",
-      sendEvent: () => {},
-      sendError: () => {},
-    });
+    const config = await builder.build();
+
+    if (!config.provider || !config.modelId || !config.apiKey) {
+      throw new Error(`No model/apiKey configured for contact ${contactId}`);
+    }
+
+    await config.engine.init(config);
   }
 
   /**

@@ -37,8 +37,9 @@ function isScheduledTaskEnabled(runtimeContext = {}) {
   return isDefaultBot(runtimeContext);
 }
 
+/** web_fetch / image_generator / video_generator / channel_send — default and non-default bots (not gated by skills_json). */
 function isDefaultBotToolEnabled(runtimeContext = {}) {
-  return isDefaultBot(runtimeContext);
+  return isDefaultBot(runtimeContext) || isNonDefaultBot(runtimeContext);
 }
 
 function createBuiltinSkillRegistry() {

@@ -1,36 +1,9 @@
-const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { resolveCreezHome } = require("./creezPaths.cjs");
 const { CHANNELS } = require("./channels.cjs");
-const { getEngineForContact, getPiEngine } = require("./conversation/engineRegistry.cjs");
-
-let _remoteAgentHelpers = null;
-async function getRemoteHelpers() {
-  if (!_remoteAgentHelpers) {
-    const { pathToFileURL } = require("node:url");
-    const mod = await import(pathToFileURL(path.join(__dirname, "remoteAgentConfig.mjs")).href);
-    _remoteAgentHelpers = {
-      fetchRemoteAgentConfig: mod.fetchRemoteAgentConfig,
-      checkRemoteAgentById: mod.checkRemoteAgentById,
-    };
-  }
-  return _remoteAgentHelpers;
-}
-
-/** Expand ~ to homedir; leave other paths unchanged. */
-function resolveWorkDir(raw) {
-  if (raw == null || String(raw).trim() === "") return null;
-  const s = String(raw).trim();
-  const home = os.homedir();
-  if (s === "~" || s.startsWith("~/") || s.startsWith("~\\")) {
-    return path.join(home, s.slice(1).replace(/\//g, path.sep));
-  }
-  return path.resolve(s);
-}
-
-/** Default workspace when user has not chosen one in Settings. */
-const DEFAULT_WORKSPACE_ROOT = path.join(os.homedir(), ".creez", "workplace");
+const { getPiEngine } = require("./conversation/engineRegistry.cjs");
+const { AgentConfigBuilder } = require("./AgentConfigBuilder.cjs");
 
 /** Engine used for the current session (set on init, used for prompt/setModel/abort). */
 let currentEngine = null;
@@ -45,15 +18,6 @@ function log(scope, details) {
   } catch {
     // no-op
   }
-}
-
-function pickActiveModel(models, preferredId) {
-  const list = Array.isArray(models) ? models : [];
-  if (preferredId) {
-    const preferred = list.find((item) => String(item.id) === String(preferredId));
-    if (preferred) return preferred;
-  }
-  return list.find((item) => item && item.active) || list[0] || null;
 }
 
 function normalizeProvider(raw) {
@@ -86,126 +50,10 @@ function registerAgentIpc(ipcMain, deps = {}) {
   ipcMain.on(CHANNELS.AGENT_INIT, async (event, payload) => {
     log("agent:init:recv", {
       contactId: payload?.contactId ?? null,
-      modelConfigId: payload?.modelConfigId || null,
-      provider: payload?.provider || null,
-      modelId: payload?.modelId || null,
       chatId: payload?.chatId || null,
       hasApiKey: Boolean(payload?.apiKey),
     });
     try {
-      let { engine, rawConfig, assistantConfigId, defaultContactId } = getEngineForContact(payload?.contactId, {
-        contactRepository,
-        assistantConfigRepository,
-      });
-      currentEngine = engine;
-      log("agent:init:engine", {
-        assistantConfigId,
-        defaultContactId,
-        rawConfigId: rawConfig?.id ?? null,
-        modelsCount: rawConfig?.models?.length ?? 0,
-        hasSystemPrompt: Boolean(rawConfig?.systemPrompt),
-      });
-
-      const contact = contactRepository ? contactRepository.getById(payload?.contactId) : null;
-      const remoteAgentId = contact?.remoteAgentId || null;
-      log("agent:init:contact", {
-        contactId: payload?.contactId ?? null,
-        contactFound: Boolean(contact),
-        remoteAgentId,
-      });
-      if (remoteAgentId) {
-        try {
-          const { checkRemoteAgentById, fetchRemoteAgentConfig } = await getRemoteHelpers();
-          const checked = await checkRemoteAgentById(remoteAgentId);
-          if (!checked.exists && checked.reason === "not_found") {
-            const message = "This bot has been deleted by the author.";
-            console.warn("[agentIpc] AGENT_INIT:remoteConfig:deleted", { remoteAgentId });
-            event.sender.send(CHANNELS.AGENT_EVENT_ERROR, message);
-            return;
-          }
-          const remoteConfig = checked.config || await fetchRemoteAgentConfig(remoteAgentId);
-          log("agent:init:remoteConfig", {
-            remoteAgentId,
-            fetched: Boolean(remoteConfig),
-            name: remoteConfig?.name ?? null,
-          });
-          if (!remoteConfig) {
-            const message = `Remote agent config not found or backend unavailable (agentId=${remoteAgentId}).`;
-            console.warn("[agentIpc] AGENT_INIT:remoteConfig:notFound", message);
-            log("agent:init:remoteConfig:error", message);
-            event.sender.send(CHANNELS.AGENT_EVENT_ERROR, message);
-            return;
-          }
-          // Remote bots must use backend config; do NOT fall back to local assistant_config.
-          rawConfig = {
-            id: remoteConfig.id,
-            name: remoteConfig.name,
-            systemPrompt: remoteConfig.systemPrompt,
-            skills: remoteConfig.skills,
-            engineType: remoteConfig.engineType || "pi",
-            // model selection still follows existing local model storage behavior
-            models: rawConfig?.models || [],
-          };
-          log("agent:init:remoteConfig", { remoteAgentId, name: remoteConfig.name });
-        } catch (e) {
-          const message = `Failed to load remote agent config (agentId=${remoteAgentId}): ${e?.message || String(e)}`;
-          console.error("[agentIpc] AGENT_INIT:remoteConfig:exception", message);
-          log("agent:init:remoteConfig:error", message);
-          event.sender.send(CHANNELS.AGENT_EVENT_ERROR, message);
-          return;
-        }
-      }
-
-      const appState = appStateStore ? await appStateStore.getState() : {};
-      const activeModel = pickActiveModel(rawConfig?.models, payload?.modelConfigId);
-
-      const provider = payload?.provider
-        ? normalizeProvider(payload.provider)
-        : normalizeProvider(activeModel?.provider);
-      const modelId = payload?.modelId || activeModel?.model;
-      let apiKey = payload?.apiKey || "";
-      let apiKeySource = "none";
-      if (apiKey) apiKeySource = "payload";
-      else if (activeModel?.id) {
-        apiKey = (activeModel.apiKey && String(activeModel.apiKey).trim()) || "";
-        if (apiKey) apiKeySource = "rawConfig.model";
-        else if (assistantConfigRepository?.getModelApiKeyFromConfig) {
-          apiKey = assistantConfigRepository.getModelApiKeyFromConfig(assistantConfigId, activeModel.id);
-          if (apiKey) apiKeySource = "getModelApiKeyFromConfig";
-        }
-      }
-      if (!apiKey && payload?.modelConfigId && defaultContactId && assistantConfigRepository?.getModelApiKey) {
-        apiKey = assistantConfigRepository.getModelApiKey(payload.modelConfigId, defaultContactId);
-        if (apiKey) apiKeySource = "getModelApiKey(default)";
-      }
-      // New/non-default agent may have config without apiKey (e.g. created before key was saved); always try default config
-      if (!apiKey && assistantConfigId !== defaultContactId && activeModel?.id && assistantConfigRepository?.getModelApiKeyFromConfig) {
-        apiKey = assistantConfigRepository.getModelApiKeyFromConfig(defaultContactId, activeModel.id);
-        if (apiKey) apiKeySource = "getModelApiKeyFromConfig(default)";
-      }
-
-      log("agent:init:resolved", {
-        assistantConfigId,
-        provider,
-        modelId,
-        hasApiKey: Boolean(apiKey),
-        apiKeySource,
-      });
-      log("agent:init:apiKey", {
-        source: apiKeySource,
-        hasApiKey: Boolean(apiKey),
-        activeModelId: activeModel?.id ?? null,
-        rawConfigModelCount: rawConfig?.models?.length ?? 0,
-      });
-      const rawRoot = payload?.workDir || appState?.workspaceRoot || null;
-      const workDir = resolveWorkDir(rawRoot) || DEFAULT_WORKSPACE_ROOT;
-      try {
-        await fs.mkdir(workDir, { recursive: true });
-      } catch (e) {
-        console.warn("[creez:agent] workspace dir create failed:", e?.message || String(e));
-      }
-      const memory = memoryStore ? await memoryStore.read(payload?.memoryPath) : { content: "", path: "" };
-
       let chatHistory = "";
       if (chatRepository && payload?.chatId) {
         try {
@@ -215,42 +63,6 @@ function registerAgentIpc(ipcMain, deps = {}) {
             .join("\n");
         } catch { /* ignore */ }
       }
-      log("agent:init:resolved", {
-        provider,
-        modelId,
-        workDir,
-        agentDir,
-        engineType: rawConfig?.engineType ?? "pi",
-        assistantConfigId,
-        memoryPath: memory?.path || "",
-        memoryLen: memory?.content?.length || 0,
-        activeModelId: activeModel?.id || null,
-      });
-
-      log("agent:init:resolvedSummary", {
-        provider: provider || "(empty)",
-        modelId: modelId || "(empty)",
-        hasApiKey: Boolean(apiKey),
-        apiKeySource,
-        activeModelId: activeModel?.id ?? null,
-        activeModelProvider: activeModel?.provider ?? null,
-      });
-      if (!provider || !modelId || !apiKey) {
-        console.warn("[agentIpc] AGENT_INIT:missingCredentials", {
-          hasProvider: Boolean(provider),
-          hasModelId: Boolean(modelId),
-          hasApiKey: Boolean(apiKey),
-          apiKeySource,
-        });
-        log("agent:init:invalid", {
-          hasProvider: Boolean(provider),
-          hasModelId: Boolean(modelId),
-          hasApiKey: Boolean(apiKey),
-          apiKeySource,
-        });
-        event.sender.send(CHANNELS.AGENT_EVENT_ERROR, "Agent init requires provider/model/apiKey.");
-        return;
-      }
 
       const initSender = event.sender;
       const cm = deps.channelManager;
@@ -258,34 +70,46 @@ function registerAgentIpc(ipcMain, deps = {}) {
         cm && typeof cm.sendMessage === "function"
           ? (channelType, opts) => cm.sendMessage(channelType, opts)
           : undefined;
-      const context = {
-        chatId: payload?.chatId ?? null,
-        contactId: payload?.contactId ?? null,
-        assistantConfigId,
-        defaultContactId: defaultContactId ?? null,
-        assistantConfig: rawConfig,
-        workDir,
-        agentDir,
-        memoryContent: [memory.content || "", chatHistory].filter(Boolean).join("\n"),
-        memoryPath: memory.path || "",
-        provider,
-        modelId,
-        apiKey,
-        channelSend,
-        sendEvent: (data) => {
+
+      const config = await new AgentConfigBuilder()
+        .setContactId(payload?.contactId)
+        .setScenario("desktop_chat")
+        .setDeps({ contactRepository, assistantConfigRepository, memoryStore, appStateStore, chatRepository })
+        .setChatId(payload?.chatId ?? null)
+        .setModelOverride({
+          provider: payload?.provider,
+          modelId: payload?.modelId,
+          apiKey: payload?.apiKey,
+          modelConfigId: payload?.modelConfigId,
+        })
+        .setWorkDirOverride(payload?.workDir)
+        .setMemoryPath(payload?.memoryPath)
+        .setChatHistory(chatHistory)
+        .setChannelSend(channelSend)
+        .setCreezHome(agentDir)
+        .setSendEvent((data) => {
           if (initSender && typeof initSender.isDestroyed === "function" && !initSender.isDestroyed()) {
             initSender.send(CHANNELS.AGENT_EVENT, data);
           }
-        },
-        sendError: (message) => {
+        })
+        .setSendError((message) => {
           if (initSender && typeof initSender.isDestroyed === "function" && !initSender.isDestroyed()) {
             initSender.send(CHANNELS.AGENT_EVENT_ERROR, message);
           }
-        },
-      };
-      log("agent:init:callingEngine", { provider, modelId, chatId: context.chatId ?? null, contactId: context.contactId ?? null });
-      await currentEngine.init(context);
-      log("agent:init:ok", { provider, modelId, chatId: context.chatId ?? null });
+        })
+        .build();
+
+      currentEngine = config.engine;
+
+      if (!config.provider || !config.modelId || !config.apiKey) {
+        console.warn("[agentIpc] AGENT_INIT:missingCredentials");
+        event.sender.send(CHANNELS.AGENT_EVENT_ERROR, "Agent init requires provider/model/apiKey.");
+        return;
+      }
+
+      log("agent:init:callingEngine", { provider: config.provider, modelId: config.modelId, chatId: config.chatId, contactId: config.contactId });
+      await currentEngine.init(config);
+      log("agent:init:ok", { provider: config.provider, modelId: config.modelId, chatId: config.chatId });
     } catch (error) {
       const message = error?.message || String(error);
       console.error("[creezv2] agent:init error:", message);

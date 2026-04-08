@@ -42,8 +42,6 @@ class PiConversationEngine {
     }
     const runner = await getRunner();
     const sender = createSenderAdapter(context);
-    const workDir = context.workDir != null ? context.workDir : process.cwd();
-    const agentDir = context.agentDir || path.join(process.env.HOME || process.env.USERPROFILE || "", ".creez");
     const config = {
       provider: context.provider,
       modelId: context.modelId,
@@ -51,14 +49,15 @@ class PiConversationEngine {
       contactId: context.contactId || null,
       assistantConfigId: context.assistantConfigId || null,
       defaultContactId: context.defaultContactId || null,
-      workDir,
-      agentDir,
+      workDir: context.workDir != null ? context.workDir : process.cwd(),
+      agentDir: context.agentDir || path.join(process.env.HOME || process.env.USERPROFILE || "", ".creez"),
       assistantConfig: context.assistantConfig || {},
       memoryContent: context.memoryContent || "",
       memoryPath: context.memoryPath || "",
       chatId: context.chatId || null,
       sessionKey: context.sessionKey || null,
       channelSend: context.channelSend,
+      isExternalUser: Boolean(context.isExternalUser),
     };
     await runner.createAndSubscribe(sender, config);
   }
