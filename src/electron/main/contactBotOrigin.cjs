@@ -1,6 +1,7 @@
 /**
  * Resolves contacts.bot_origin for UI: assistant | author | remote | template.
  * Fetches /agents/mine once to backfill author rows where bot_origin is still NULL.
+ * Does not overwrite explicit `remote` (see ContactRepository.backfillAuthorBotOrigin).
  */
 
 const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");

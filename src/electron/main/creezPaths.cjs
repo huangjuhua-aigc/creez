@@ -1,6 +1,6 @@
 /**
  * Creez path conventions:
- * - System config (app config, agent state, skills, avatars, logs, memory, device_id, DB):
+ * - System config (app config, agent state, skills, avatars, logs, memory; device id only in app.db — see creezDeviceId.cjs):
  *   always under ~/.creez (passed as homeDir → path.join(homeDir, ".creez")).
  * - User work data (workspace files): user-defined directory from app state (workspaceRoot),
  *   not under ~/.creez.

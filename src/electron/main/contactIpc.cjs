@@ -1,5 +1,16 @@
+const { BrowserWindow } = require("electron");
 const { CHANNELS } = require("./channels.cjs");
 const { syncContactBotOrigins } = require("./contactBotOrigin.cjs");
+
+function broadcastContactListChanged() {
+  for (const win of BrowserWindow.getAllWindows()) {
+    try {
+      if (!win.isDestroyed()) win.webContents.send(CHANNELS.CONTACT_LIST_CHANGED, {});
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 function ok(data) {
   return { ok: true, data };
@@ -77,6 +88,7 @@ function registerContactIpc(ipcMain, contactRepository, deps = {}) {
         avatarUrl: payload?.avatarUrl || null,
         greetingMessage: payload?.greetingMessage || "",
       });
+      broadcastContactListChanged();
       return ok(result);
     } catch (error) {
       return err("DB_ERROR", "Failed to add remote agent", error?.message || String(error));
