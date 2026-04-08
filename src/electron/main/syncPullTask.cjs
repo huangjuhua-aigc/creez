@@ -3,46 +3,17 @@
  * call backend GET /sync/pull?device_id=xxx and forward items to renderer via IPC.
  */
 
-const path = require("node:path");
-const fs = require("node:fs");
-const { app, BrowserWindow } = require("electron");
-const { randomUUID } = require("node:crypto");
+const { BrowserWindow } = require("electron");
 const { CHANNELS } = require("./channels.cjs");
 const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
-const { resolveCreezHome } = require("./creezPaths.cjs");
+const { ensureDeviceId } = require("./creezDeviceId.cjs");
 
 const INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const REQUEST_TIMEOUT_MS = 15000;
 
 let intervalId = null;
-
-function getDeviceIdPath() {
-  const homeDir = app.getPath("home");
-  return path.join(resolveCreezHome(homeDir), "device_id");
-}
-
-/**
- * Read or create and persist device_id. Returns a non-empty string.
- */
-function getOrCreateDeviceId() {
-  const filePath = getDeviceIdPath();
-  try {
-    if (fs.existsSync(filePath)) {
-      const content = fs.readFileSync(filePath, "utf8").trim();
-      if (content) return content;
-    }
-  } catch (err) {
-    console.warn("[creezv2 syncPull] read device_id failed", err?.message);
-  }
-  const deviceId = randomUUID();
-  try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, deviceId, "utf8");
-  } catch (err) {
-    console.warn("[creezv2 syncPull] write device_id failed", err?.message);
-  }
-  return deviceId;
-}
+/** @type {{ appStateStore: object } | null} */
+let syncPullDeviceDeps = null;
 
 /**
  * Returns true if there is at least one non-default bot contact.
@@ -105,7 +76,9 @@ function sendToAllWindows(channel, payload) {
  */
 async function runSyncTick(contactRepository) {
   if (!hasNonDefaultBots(contactRepository)) return;
-  const deviceId = getOrCreateDeviceId();
+  const { appStateStore } = syncPullDeviceDeps || {};
+  const deviceId = appStateStore ? await ensureDeviceId("", appStateStore) : "";
+  if (!deviceId) return;
   const result = await pullPendingMessages(deviceId);
   if (!result.ok) {
     console.log("[creezv2 syncPull] pull failed", result.error);
@@ -121,8 +94,9 @@ async function runSyncTick(contactRepository) {
  * Start the 5-minute sync pull task. Call once after app is ready.
  * Only runs the request when there are non-default bots.
  */
-function startSyncPullTask(contactRepository) {
+function startSyncPullTask(contactRepository, deps = {}) {
   if (intervalId != null) return;
+  syncPullDeviceDeps = deps.appStateStore ? { appStateStore: deps.appStateStore } : null;
   intervalId = setInterval(() => {
     runSyncTick(contactRepository).catch((err) => {
       console.warn("[creezv2 syncPull] tick error", err?.message);
@@ -144,10 +118,10 @@ function stopSyncPullTask() {
     clearInterval(intervalId);
     intervalId = null;
   }
+  syncPullDeviceDeps = null;
 }
 
 module.exports = {
-  getOrCreateDeviceId,
   hasNonDefaultBots,
   startSyncPullTask,
   stopSyncPullTask,

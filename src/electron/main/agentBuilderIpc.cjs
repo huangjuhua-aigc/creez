@@ -1,12 +1,21 @@
 const { BrowserWindow } = require("electron");
 const { CHANNELS } = require("./channels.cjs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { randomUUID } = require("node:crypto");
 const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
 const { isCreezVerboseDebug } = require("./creezDebug.cjs");
-const { ensureBotDir } = require("./creezPaths.cjs");
+const { ensureBotDir, resolveCreezHome } = require("./creezPaths.cjs");
+const { ensureDeviceId } = require("./creezDeviceId.cjs");
 
 function vlog(...args) {
   if (isCreezVerboseDebug()) console.log(...args);
+}
+
+/** Agent search/recent gateway calls: set CREEZ_DEBUG_AGENT_SEARCH=1 or CREEZ_DEBUG_VERBOSE=1 */
+function isAgentSearchDebug() {
+  const v = process.env.CREEZ_DEBUG_AGENT_SEARCH;
+  return v === "1" || String(v).toLowerCase() === "true" || isCreezVerboseDebug();
 }
 
 function ok(data) {
@@ -33,7 +42,7 @@ async function gatewayFetch(path, options = {}) {
   try {
     const res = await fetch(url, { ...options, signal: controller.signal });
     const body = await res.json().catch(() => null);
-    return { status: res.status, body };
+    return { status: res.status, body, url };
   } finally {
     clearTimeout(timeout);
   }
@@ -126,23 +135,38 @@ function configToAgentDetail(config) {
   };
 }
 
+/** Map A2A discover row → contact search row (renderer expects id / avatar_url snake_case). */
+function mapDiscoverRowToSearchItem(it) {
+  const id = String(it?.agentId || it?.id || "").trim();
+  if (!id) return null;
+  const av =
+    (typeof it.avatarUrl === "string" && it.avatarUrl.trim()) ||
+    (typeof it.avatar_url === "string" && it.avatar_url.trim()) ||
+    null;
+  return {
+    id,
+    name: it.name || "Unnamed",
+    avatar_url: av,
+    description: typeof it.description === "string" ? it.description : "",
+  };
+}
+
 function registerAgentBuilderIpc(ipcMain, deps = {}) {
-  const { appStateStore, contactRepository, assistantConfigRepository } = deps;
+  const { appStateStore, contactRepository, assistantConfigRepository, getA2aOrchestrator } = deps;
   let _creezHome = "";
 
   async function getDeviceId() {
-    if (!appStateStore) return randomUUID();
-    const state = await appStateStore.getState();
-    if (state?.deviceId) return state.deviceId;
-    const id = randomUUID();
-    await appStateStore.setState({ deviceId: id });
-    return id;
+    const home = getCreezHome();
+    if (home && appStateStore) {
+      return ensureDeviceId(home, appStateStore);
+    }
+    if (home) return ensureDeviceId(home, null);
+    return randomUUID();
   }
 
   function getCreezHome() {
     if (_creezHome) return _creezHome;
     try {
-      const { resolveCreezHome } = require("./creezPaths.cjs");
       _creezHome = resolveCreezHome();
     } catch {
       _creezHome = "";
@@ -189,14 +213,56 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
     }
   });
 
-  // ── GET: pure local ──
+  // ── GET: local assistant config, or gateway row for remote contacts (discover / 他人 bot 无本地 config 行) ──
   ipcMain.handle(CHANNELS.AGENT_BUILDER_GET, async (_event, payload) => {
     const id = String(payload?.id || "").trim();
     if (!id) return err("VALIDATION_ERROR", "id is required.");
     if (!assistantConfigRepository) return err("INTERNAL_ERROR", "config repository not ready");
     const raw = assistantConfigRepository.getRawConfigById(id);
-    if (!raw) return err("NOT_FOUND", "Agent not found locally.");
-    return ok(configToAgentDetail(raw));
+    if (raw) return ok(configToAgentDetail(raw));
+
+    const c = contactRepository?.getById?.(id);
+    const isRemoteContact =
+      c &&
+      c.type === "bot" &&
+      !c.isDefault &&
+      (c.botOrigin === "remote" ||
+        (c.remoteAgentId && String(c.remoteAgentId).trim() === id));
+    if (!isRemoteContact) {
+      return err("NOT_FOUND", "Agent not found locally.");
+    }
+
+    try {
+      const { checkRemoteAgentById } = await import(
+        pathToFileURL(path.join(__dirname, "remoteAgentConfig.mjs")).href,
+      );
+      const checked = await checkRemoteAgentById(id);
+      if (!checked.exists || !checked.config) {
+        const msg =
+          checked.reason === "not_found"
+            ? "Agent not found."
+            : "Agent temporarily unavailable.";
+        return err("NOT_FOUND", msg);
+      }
+      const cfg = checked.config;
+      return ok(
+        configToAgentDetail({
+          id: cfg.id,
+          name: cfg.name,
+          avatar: cfg.avatar,
+          systemPrompt: cfg.systemPrompt,
+          greetingMessage: cfg.greetingMessage,
+          knowledge: "",
+          skills: cfg.skills || {},
+          agentCardJson: null,
+          a2aStrategyJson: null,
+          visibility: "public",
+          status: "published",
+        }),
+      );
+    } catch (e) {
+      return err("NETWORK_ERROR", e?.message || String(e));
+    }
   });
 
   // ── CREATE: local first, async push gateway ──
@@ -379,25 +445,114 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
     }
   });
 
-  // ── SEARCH / RECENT: gateway-only (other users' bots) ──
+  // ── SEARCH: same as mini-app GET /a2a/agents/discover (public + a2a active; q = semantic or name/prompt ILIKE)
+  // ── RECENT: still GET /agents/recent (published list)
+  const DISCOVER_SEARCH_LIMIT = 40;
+
   ipcMain.handle(CHANNELS.AGENT_BUILDER_SEARCH, async (_event, payload) => {
     const q = String(payload?.q || "").trim();
     if (!q) return ok({ items: [] });
+    const dbg = isAgentSearchDebug();
+    const backendBase = resolveCreezBackendBase();
+    if (dbg) {
+      console.log("[creez][AgentBuilder] search:request", {
+        backendBase,
+        q,
+        path: "/a2a/agents/discover",
+        hint: "Same as WeChat mini-app discover: visibility=public, a2a_status=active; excludes own ownerId; q matches name/system_prompt (or vector when configured).",
+      });
+    }
     try {
-      const { body } = await gatewayFetch(`/agents/search?q=${encodeURIComponent(q)}`);
-      if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || "Search failed");
-      return ok(body.data);
+      let data;
+      const orch = typeof getA2aOrchestrator === "function" ? getA2aOrchestrator() : null;
+      if (orch && typeof orch.discoverAgents === "function") {
+        data = await orch.discoverAgents({
+          q,
+          limit: DISCOVER_SEARCH_LIMIT,
+          offset: 0,
+        });
+      } else {
+        const ownerId = await getDeviceId();
+        const baseUrl = backendBase.replace(/\/+$/, "");
+        const p = new URLSearchParams();
+        p.set("ownerId", ownerId);
+        p.set("q", q);
+        p.set("limit", String(DISCOVER_SEARCH_LIMIT));
+        p.set("offset", "0");
+        const url = `${baseUrl}/a2a/agents/discover?${p.toString()}`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        try {
+          const res = await fetch(url, { signal: controller.signal });
+          const body = await res.json().catch(() => null);
+          if (!res.ok || !body?.ok) {
+            const msg = body?.error?.message || `HTTP ${res.status}`;
+            const ex = new Error(msg);
+            ex.status = res.status;
+            throw ex;
+          }
+          data = body.data || { items: [], total: 0 };
+        } finally {
+          clearTimeout(timeout);
+        }
+        if (dbg) {
+          console.log("[creez][AgentBuilder] search:fetch_fallback", {
+            url: `${baseUrl}/a2a/agents/discover?...`,
+            reason: "A2A orchestrator not ready yet",
+          });
+        }
+      }
+
+      const rawItems = Array.isArray(data?.items) ? data.items : [];
+      const items = rawItems.map(mapDiscoverRowToSearchItem).filter(Boolean);
+      if (dbg) {
+        console.log("[creez][AgentBuilder] search:response", {
+          source: orch ? "orchestrator.discoverAgents" : "fetch /a2a/agents/discover",
+          itemCount: items.length,
+          total: data?.total,
+          firstNames: items.slice(0, 3).map((it) => it?.name || it?.id).filter(Boolean),
+        });
+      }
+      return ok({ items, total: typeof data?.total === "number" ? data.total : items.length });
     } catch (e) {
-      return err("NETWORK_ERROR", e?.message || String(e));
+      if (dbg) {
+        console.warn("[creez][AgentBuilder] search:error", {
+          backendBase,
+          q,
+          message: e?.message || String(e),
+          name: e?.name,
+        });
+      }
+      const isAbort = e?.name === "AbortError";
+      return err(isAbort ? "NETWORK_ERROR" : "BACKEND_ERROR", e?.message || String(e));
     }
   });
 
   ipcMain.handle(CHANNELS.AGENT_BUILDER_RECENT, async () => {
+    const dbg = isAgentSearchDebug();
+    const backendBase = resolveCreezBackendBase();
+    if (dbg) console.log("[creez][AgentBuilder] recent:request", { backendBase });
     try {
-      const { body } = await gatewayFetch("/agents/recent?limit=5");
+      const { status, body, url } = await gatewayFetch("/agents/recent?limit=5");
+      const items = Array.isArray(body?.data?.items) ? body.data.items : [];
+      if (dbg) {
+        console.log("[creez][AgentBuilder] recent:response", {
+          url,
+          httpStatus: status,
+          gatewayOk: Boolean(body?.ok),
+          itemCount: items.length,
+          rawBodyPreview: body == null ? "(non-JSON or empty)" : JSON.stringify(body).slice(0, 600),
+        });
+      }
       if (!body?.ok) return err("BACKEND_ERROR", body?.error?.message || "Failed");
       return ok(body.data);
     } catch (e) {
+      if (dbg) {
+        console.warn("[creez][AgentBuilder] recent:network_error", {
+          backendBase,
+          message: e?.message || String(e),
+        });
+      }
       return err("NETWORK_ERROR", e?.message || String(e));
     }
   });

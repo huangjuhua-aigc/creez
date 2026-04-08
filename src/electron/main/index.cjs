@@ -392,6 +392,9 @@ app.whenReady().then(async () => {
     }
 
     const appStateStore = new AppStateStore({ repository: appStateRepository, creezHome });
+    const { ensureDeviceId } = require("./creezDeviceId.cjs");
+    await ensureDeviceId(creezHome, appStateStore);
+    startupLog("device_id ready (app.db; legacy file migrated if present)");
     registerAppStateIpc(ipcMain, appStateStore);
     registerShellIpc(ipcMain);
     registerChatIpc(ipcMain, chatRepository, { contactRepository, appStateStore });
@@ -418,7 +421,12 @@ app.whenReady().then(async () => {
     registerWorkspaceIpc(ipcMain, appStateStore);
     registerStoryboardIpc(ipcMain, { appStateStore, skillManager });
     registerAttachmentIpc(ipcMain);
-    registerAgentBuilderIpc(ipcMain, { appStateStore, contactRepository, assistantConfigRepository });
+    registerAgentBuilderIpc(ipcMain, {
+      appStateStore,
+      contactRepository,
+      assistantConfigRepository,
+      getA2aOrchestrator: () => a2aOrchestrator,
+    });
     registerAgentIpc(ipcMain, {
       assistantConfigRepository,
       appStateStore,
@@ -462,7 +470,7 @@ app.whenReady().then(async () => {
       });
     }
     startupLog("after loadMainAppInto");
-    startSyncPullTask(contactRepository);
+    startSyncPullTask(contactRepository, { appStateStore });
     sessionTracker.start();
     startupLog("SessionTracker started");
 
@@ -479,10 +487,9 @@ app.whenReady().then(async () => {
     (async () => {
       try {
         const state = appStateStore ? await appStateStore.getState() : {};
-        let ownerId = state?.deviceId;
+        let ownerId = String(state?.deviceId || "").trim();
         if (!ownerId) {
-          ownerId = require("node:crypto").randomUUID();
-          if (appStateStore) await appStateStore.setState({ deviceId: ownerId });
+          ownerId = await ensureDeviceId(creezHome, appStateStore);
         }
         const gatewayUrl = resolveCreezBackendBase();
         startupLog("Creez backend base (CREEZ_BACKEND_URL): " + gatewayUrl);

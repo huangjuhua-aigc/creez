@@ -1140,6 +1140,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       }
 
       setIsStreaming(false);
+      activeAssistantMessageIdRef.current = null;
       const replyPreview = replyContent.slice(0, CHAT_LIST_PREVIEW_LEN).replace(/\n/g, " ").trim() || " ";
       setChatList((prev) =>
         prev.map((c) =>
@@ -1302,6 +1303,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
     if (!selectedChatId || !selectedModelId || chatList.length === 0) return;
     const currentChat = chatList.find((c) => c.id === selectedChatId);
     if (!currentChat?.contactId) return;
+    if (currentChat.contactBotOrigin === "remote") return;
     if (agentReadyRef.current) return;
     if (initInFlightRef.current) return;
     void ensureAgentInitialized();
@@ -1978,6 +1980,24 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const stopStreaming = () => {
     const currentChatId = selectedChatIdRef.current;
     const streamingChatId = activeStreamChatIdRef.current;
+    const a2aWaitingId = a2aWaitingMsgIdRef.current;
+    if (a2aWaitingId && isStreamingRef.current) {
+      setMessages((prev) =>
+        prev.filter((m) => m.id !== a2aWaitingId).concat({
+          id: `${Date.now()}-system-a2a-stop`,
+          sender: "system",
+          name: "System",
+          avatar: "",
+          content: "已停止等待远程回复。",
+          timestamp: formatNowTime(),
+          type: "system",
+        })
+      );
+      a2aWaitingMsgIdRef.current = null;
+      activeAssistantMessageIdRef.current = null;
+      setIsStreaming(false);
+      return;
+    }
     if (!streamingChatId || streamingChatId !== currentChatId) {
       setIsStreaming(false);
       return;
@@ -2073,6 +2093,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
         },
       ]);
       a2aWaitingMsgIdRef.current = waitingId;
+      activeAssistantMessageIdRef.current = waitingId;
 
       try {
         const result = await sendToRemoteBot({
@@ -2083,6 +2104,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
         if (!result) {
           setIsStreaming(false);
           a2aWaitingMsgIdRef.current = null;
+          activeAssistantMessageIdRef.current = null;
           setMessages((prev) => prev.filter((m) => m.id !== waitingId).concat({
             id: `${Date.now()}-system-a2a-fail`,
             sender: "system",
@@ -2097,6 +2119,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       } catch (e) {
         setIsStreaming(false);
         a2aWaitingMsgIdRef.current = null;
+        activeAssistantMessageIdRef.current = null;
         setMessages((prev) => prev.filter((m) => m.id !== waitingId).concat({
           id: `${Date.now()}-system-a2a-error`,
           sender: "system",

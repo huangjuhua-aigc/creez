@@ -41,7 +41,8 @@ class ContactRepository {
 
   /**
    * Mark contacts that belong to this device as author-created (Agent Builder).
-   * Also corrects contacts seeded as 'remote' that are actually owned by this device.
+   * Only fills NULL/empty bot_origin — never overwrites explicit `remote` (e.g. same device
+   * testing subscriber flow via discover for an agent this device also created).
    * @param {Set<string> | string[]} ownedAgentIds
    */
   backfillAuthorBotOrigin(ownedAgentIds) {
@@ -55,7 +56,7 @@ class ContactRepository {
       WHERE id = ?
         AND type = 'bot'
         AND is_default = 0
-        AND (bot_origin IS NULL OR TRIM(bot_origin) = '' OR bot_origin = 'remote')
+        AND (bot_origin IS NULL OR TRIM(bot_origin) = '')
     `);
     for (const id of ids) {
       const sid = String(id || "").trim();
@@ -364,16 +365,51 @@ class ContactRepository {
   /**
    * Add a remote (published) agent as a local contact.
    * Uses the agent's backend UUID as the local contact id so botId / assistantConfigId stays consistent.
-   */
-  /**
-   * Add a remote (published) agent as a local contact.
-   * Uses the agent's backend UUID as the local contact id so botId / assistantConfigId stays consistent.
+   * If the contact already exists (e.g. author row from Agent Builder), mark it `remote` so chat routes via A2A.
    */
   addRemoteAgent({ agentId, name, avatarUrl, greetingMessage }) {
     if (!agentId) throw new Error("agentId is required");
     const existing = this.getById(agentId);
     if (existing) {
-      return { contactId: existing.id, chatId: null, alreadyExists: true };
+      if (existing.type === "bot" && !existing.isDefault) {
+        const ts = nowTs();
+        const nameFinal = String(name || existing.name || "Agent").trim() || "Agent";
+        let avatarFinal = existing.avatarPath || null;
+        if (avatarUrl != null && String(avatarUrl).trim() !== "") {
+          avatarFinal = String(avatarUrl).trim();
+        }
+        this.db
+          .prepare(
+            `
+          UPDATE contacts
+          SET bot_origin = 'remote',
+              remote_agent_id = @remoteAgentId,
+              name = @name,
+              avatar_path = @avatarPath,
+              updated_at = @updatedAt
+          WHERE id = @id AND type = 'bot' AND is_default = 0
+        `
+          )
+          .run({
+            id: agentId,
+            remoteAgentId: agentId,
+            name: nameFinal,
+            avatarPath: avatarFinal,
+            updatedAt: ts,
+          });
+      }
+      const chatRow = this.db
+        .prepare(
+          `
+        SELECT id FROM chats
+        WHERE contact_id = ?
+          AND channel_type = 'creez_app'
+          AND (channel_chat_id IS NULL OR channel_chat_id = '')
+        LIMIT 1
+      `
+        )
+        .get(agentId);
+      return { contactId: existing.id, chatId: chatRow?.id || null, alreadyExists: true };
     }
 
     const ts = nowTs();
