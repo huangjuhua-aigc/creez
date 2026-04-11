@@ -194,7 +194,8 @@ async function executeTask(task, deps) {
       },
     };
 
-    await config.engine.init({
+    const engine = config.engine;
+    await engine.init({
       ...config,
       sendEvent: (data) => headlessSender.send("agent:event", data),
       sendError: (msg) => headlessSender.send("agent:event", { type: "agent_end", isError: msg }),

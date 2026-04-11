@@ -840,6 +840,18 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
     });
   }, []);
 
+  /** Clears local streaming UI when agent_end was skipped or IPC stream state is inconsistent (e.g. headless tasks only send chat:message_appended). */
+  const releaseUiStreamingState = useCallback((streamLookupKey: string) => {
+    chatStreamsRef.current.delete(streamLookupKey);
+    activeAssistantMessageIdRef.current = null;
+    activeToolMessageIdRef.current = null;
+    activeToolCallsRef.current = [];
+    streamedTextRef.current = "";
+    activeStreamChatIdRef.current = null;
+    activeStreamBotIdRef.current = null;
+    setIsStreaming(false);
+  }, []);
+
   const loadA2aPresence = useCallback(async () => {
     try {
       const result = await discoverAgents({ limit: 200 });
@@ -1067,6 +1079,9 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
         const currentChat = chatList.find((c) => c.id === selectedChatId);
         if (currentChat) {
           fetchChatMessages(selectedChatId, currentChat.name, currentChat.avatar).then((items) => {
+            if (!chatStreamsRef.current.get(selectedChatId) && isStreamingRef.current) {
+              releaseUiStreamingState(selectedChatId);
+            }
             const streamAfter = chatStreamsRef.current.get(selectedChatId);
             if (streamAfter?.assistantMessageId) {
               console.log("[creez:stream-debug] onChatMessageAppended: setMessages merged with stream", {
@@ -1094,7 +1109,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       }
     });
     return () => unsub();
-  }, [selectedChatId, chatList]);
+  }, [selectedChatId, chatList, releaseUiStreamingState]);
 
   useEffect(() => {
     const unsub = onA2ASessionEvent((event) => {
@@ -1696,7 +1711,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
             activeAssistantMessageIdRef: activeAssistantMessageIdRef.current,
           });
           console.log("[creez:chat] agent_end IGNORED (stale, stream belongs to previous prompt)");
-          chatStreamsRef.current.delete(streamLookupKey);
+          releaseUiStreamingState(streamLookupKey);
           return;
         }
         if (isForCurrentChat && !aeStream && activeAssistantMessageIdRef.current && isStreamingRef.current) {
@@ -1708,6 +1723,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
             mapKeys: Array.from(chatStreamsRef.current.keys()),
           });
           console.log("[creez:chat] agent_end IGNORED (stale, no matching stream but new stream is active)");
+          releaseUiStreamingState(streamLookupKey);
           return;
         }
 
