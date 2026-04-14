@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import { cn } from "../../utils/cn";
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { SearchBar } from "./ui/SearchBar";
 import { ChannelMessageSourceBadge } from "./ChannelPlatformIcon";
 import { ToolCallGroup, type ToolCall } from "./ToolCallPanel";
@@ -815,6 +815,8 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const isStreamingRef = useRef(false);
   const selectedChatIdRef = useRef(selectedChatId);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
+  /** 用户未上滑离开底部时为 true；等待回复时 waitingDots 动画不应触发滚底 */
+  const messagesStickToBottomRef = useRef(true);
   const activeToolCallsRef = useRef<ToolCall[]>([]);
   /** Per-chat stream tracking — background bots persist to DB even when user switches away. */
   const chatStreamsRef = useRef<Map<string, ChatStreamState>>(new Map());
@@ -828,9 +830,17 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
     if (el) el.scrollTop = el.scrollHeight;
   };
 
-  useEffect(() => {
+  const onMessagesScroll = () => {
+    const el = messagesScrollRef.current;
+    if (!el) return;
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    messagesStickToBottomRef.current = gap < 80;
+  };
+
+  useLayoutEffect(() => {
+    if (!messagesStickToBottomRef.current) return;
     scrollMessagesToBottom();
-  }, [messages, waitingDots]);
+  }, [messages]);
 
   const updateMessageQueue = useCallback((updater: (prev: QueuedMessage[]) => QueuedMessage[]) => {
     setMessageQueue((prev) => {
@@ -1026,6 +1036,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       setMessages([]);
       return;
     }
+    messagesStickToBottomRef.current = true;
     const chatId = selectedChatId;
     const currentChat = chatList.find((c) => c.id === chatId);
     const isActiveTarget = activeChatId && String(activeChatId) === chatId;
@@ -2061,6 +2072,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const doSendMessage = async (contentWithPaths: string, images: { type: "image"; data: string; mimeType: string }[]) => {
     if (!activeChat?.contactId) return;
 
+    messagesStickToBottomRef.current = true;
     const isRemoteBot = activeChat.contactBotOrigin === "remote";
 
     const nowTs = Math.floor(Date.now() / 1000);
@@ -2425,7 +2437,11 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
           ) : null}
         </div>
 
-        <div ref={messagesScrollRef} className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar">
+        <div
+          ref={messagesScrollRef}
+          className="flex-1 overflow-y-auto p-8 space-y-6 custom-scrollbar"
+          onScroll={onMessagesScroll}
+        >
           {isLoadingMessages ? (
             <div className="flex-1 flex items-center justify-center text-gray-400 text-sm h-full">Loading messages...</div>
           ) : messages.length > 0 ? (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowLeft, Send, X, Loader2, Bot } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -58,26 +58,34 @@ export function A2AChatView({ sessionId, agentName, localAgentId, onBack }: A2AC
   const [closing, setClosing] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const stickToBottomRef = useRef(true);
 
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottomIfStuck = useCallback(() => {
+    if (!stickToBottomRef.current) return;
     requestAnimationFrame(() => {
-      if (scrollRef.current) {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-      }
+      const el = scrollRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
     });
+  }, []);
+
+  const onMessagesScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = gap < 64;
   }, []);
 
   useEffect(() => {
     let cancelled = false;
+    stickToBottomRef.current = true;
     async function load() {
       const items = await fetchA2AMessages(sessionId);
       if (cancelled) return;
       setMessages(items.map((m) => apiMessageToChat(m, localAgentId)));
-      scrollToBottom();
     }
     load();
     return () => { cancelled = true; };
-  }, [sessionId, localAgentId, scrollToBottom]);
+  }, [sessionId, localAgentId]);
 
   useEffect(() => {
     const unsub = onA2ASessionEvent((event: A2ASessionEvent) => {
@@ -99,7 +107,6 @@ export function A2AChatView({ sessionId, agentName, localAgentId, onBack }: A2AC
             },
           ];
         });
-        scrollToBottom();
       } else if (event.type === "message_out" && event.senderId !== localAgentId) {
         setMessages((prev) => [
           ...prev,
@@ -110,13 +117,12 @@ export function A2AChatView({ sessionId, agentName, localAgentId, onBack }: A2AC
             timestamp: nowTime(),
           },
         ]);
-        scrollToBottom();
       } else if (event.type === "session_closed") {
         setSessionClosed(true);
       }
     });
     return unsub;
-  }, [sessionId, localAgentId, scrollToBottom]);
+  }, [sessionId, localAgentId]);
 
   const handleSend = async () => {
     const text = inputText.trim();
@@ -128,9 +134,9 @@ export function A2AChatView({ sessionId, agentName, localAgentId, onBack }: A2AC
       content: text,
       timestamp: nowTime(),
     };
+    stickToBottomRef.current = true;
     setMessages((prev) => [...prev, userMsg]);
     setInputText("");
-    scrollToBottom();
 
     setSending(true);
     try {
@@ -158,9 +164,9 @@ export function A2AChatView({ sessionId, agentName, localAgentId, onBack }: A2AC
     }
   };
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages.length, scrollToBottom]);
+  useLayoutEffect(() => {
+    scrollToBottomIfStuck();
+  }, [messages, scrollToBottomIfStuck]);
 
   return (
     <div className="flex flex-col h-full bg-[#F5F5F5]">
@@ -194,7 +200,11 @@ export function A2AChatView({ sessionId, agentName, localAgentId, onBack }: A2AC
       </div>
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-6 py-4 space-y-4"
+        onScroll={onMessagesScroll}
+      >
         {messages.length === 0 && (
           <div className="h-full flex items-center justify-center text-sm text-gray-400">
             发送消息开始对话
