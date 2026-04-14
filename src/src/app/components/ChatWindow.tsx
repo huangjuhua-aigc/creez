@@ -116,6 +116,32 @@ function isHttpUrl(s: string): boolean {
   return t.startsWith("http://") || t.startsWith("https://");
 }
 
+function flattenChildrenToString(children: React.ReactNode): string {
+  if (children == null || children === false) return "";
+  if (typeof children === "string" || typeof children === "number") return String(children);
+  if (Array.isArray(children)) return children.map(flattenChildrenToString).join("");
+  if (React.isValidElement(children)) {
+    return flattenChildrenToString((children.props as { children?: React.ReactNode }).children);
+  }
+  return "";
+}
+
+/**
+ * Whether the string looks like an absolute local path / file URL we may pass to shell.openPath
+ * (main process still enforces absolute-only).
+ */
+function isAbsoluteLocalPathForOpen(s: string): boolean {
+  const t = String(s || "").trim();
+  if (!t || t.length < 2) return false;
+  if (/^https?:\/\//i.test(t) || /^mailto:/i.test(t)) return false;
+  if (/^file:\/\//i.test(t)) return true;
+  if (/^[A-Za-z]:[\\/]/.test(t)) return true;
+  if (t.startsWith("\\\\")) return true;
+  if (t.startsWith("/Users/") || t.startsWith("/home/")) return true;
+  if (t.startsWith("/") && !t.startsWith("//") && /\/[^/]+\/[^/]+/.test(t)) return true;
+  return false;
+}
+
 /** Open http(s)/mailto in browser, or absolute path / file:// in system default app (Electron main process). */
 async function openLinkOrPath(target: string) {
   const t = String(target || "").trim();
@@ -175,6 +201,15 @@ function collectLinkMatches(segment: string): LinkMatch[] {
     /\b[A-Za-z]:\/[^\s<>\[\]"']+/g,
     (slice) => `file:///${slice}`,
     (m) => ({ start: m.index, end: m.index + m[0].length, text: m[0] }),
+  );
+  addRe(
+    /(^|[\s"'(<])(\\\\[^\s<>\[\]"']+)/g,
+    (slice) => slice,
+    (m) => {
+      const unc = m[2] || "";
+      const start = m.index + (m[1]?.length ?? 0);
+      return { start, end: start + unc.length, text: unc };
+    },
   );
   addRe(
     /(?:^|[\s(/'"])(\/Users\/[^\s<>\[\]"']+)/g,
@@ -681,10 +716,7 @@ function MessageContentMarkdown({
           );
         }
         const h = href?.trim() || "";
-        if (
-          h &&
-          (/^https?:\/\//i.test(h) || /^mailto:/i.test(h) || /^file:\/\//i.test(h))
-        ) {
+        if (h && (/^https?:\/\//i.test(h) || /^mailto:/i.test(h) || /^file:\/\//i.test(h))) {
           return (
             <a
               href={h}
@@ -696,6 +728,17 @@ function MessageContentMarkdown({
             >
               {children}
             </a>
+          );
+        }
+        if (h && isAbsoluteLocalPathForOpen(h)) {
+          return (
+            <button
+              type="button"
+              className="text-[#07C160] underline cursor-pointer break-all bg-transparent border-0 p-0 font-inherit text-left inline"
+              onClick={() => void openLinkOrPath(h)}
+            >
+              {children}
+            </button>
           );
         }
         return (
@@ -712,12 +755,32 @@ function MessageContentMarkdown({
       ul: ({ children }: { children?: React.ReactNode }) => <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>,
       ol: ({ children }: { children?: React.ReactNode }) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
       li: ({ children }: { children?: React.ReactNode }) => <li className="leading-relaxed whitespace-pre-wrap">{children}</li>,
-      code: ({ className: codeClassName, children }: { className?: string; children?: React.ReactNode }) =>
-        codeClassName ? (
-          <code className={cn("rounded px-1 py-0.5 bg-gray-100 text-[13px]", codeClassName)}>{children}</code>
-        ) : (
-          <code className="rounded px-1 py-0.5 bg-gray-100 text-[13px] font-mono">{children}</code>
-        ),
+      code: ({ className: codeClassName, children }: { className?: string; children?: React.ReactNode }) => {
+        if (codeClassName) {
+          return (
+            <code className={cn("rounded px-1 py-0.5 bg-gray-100 text-[13px]", codeClassName)}>{children}</code>
+          );
+        }
+        const inlineText = flattenChildrenToString(children).trim();
+        if (
+          inlineText &&
+          !inlineText.includes("\n") &&
+          inlineText.length <= 2048 &&
+          isAbsoluteLocalPathForOpen(inlineText)
+        ) {
+          return (
+            <button
+              type="button"
+              className="rounded px-1 py-0.5 bg-gray-100 text-[13px] font-mono text-[#07C160] underline cursor-pointer hover:bg-gray-200 border-0 align-baseline text-left"
+              title="使用系统默认应用打开此文件"
+              onClick={() => void openLinkOrPath(inlineText)}
+            >
+              {children}
+            </button>
+          );
+        }
+        return <code className="rounded px-1 py-0.5 bg-gray-100 text-[13px] font-mono">{children}</code>;
+      },
       pre: ({ children }: { children?: React.ReactNode }) => (
         <pre className="overflow-x-auto rounded-lg bg-gray-50 p-3 text-[13px] my-2 border border-gray-100 min-h-0">
           {children}
