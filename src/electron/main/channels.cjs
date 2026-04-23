@@ -69,6 +69,8 @@ const CHANNELS = Object.freeze({
   AGENT_BUILDER_DELETE: "agentBuilder:delete",
   AGENT_BUILDER_SEARCH: "agentBuilder:search",
   AGENT_BUILDER_RECENT: "agentBuilder:recent",
+  AGENT_BUILDER_GENERATE_QRCODE: "agentBuilder:generateQrcode",
+  AGENT_BUILDER_GET_QRCODE: "agentBuilder:getQrcode",
   APP_GET_DEVICE_ID: "app:getDeviceId",
   WEIXIN_QR_START: "weixin:qrStart",
   WEIXIN_QR_WAIT: "weixin:qrWait",

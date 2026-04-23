@@ -559,6 +559,13 @@ const MIGRATIONS = [
       ALTER TABLE assistant_config ADD COLUMN status TEXT DEFAULT 'draft';
     `,
   },
+  {
+    version: 21,
+    name: "add_assistant_config_qrcode",
+    sql: `
+      ALTER TABLE assistant_config ADD COLUMN qrcode_data_uri TEXT;
+    `,
+  },
 ];
 
 module.exports = {

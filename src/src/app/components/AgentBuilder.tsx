@@ -1,9 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
-import { Bot, Plus, X, Sparkles, Camera, Database, ChevronDown, ChevronUp, Save, Globe, Trash2, Network, Zap, RefreshCw } from "lucide-react";
+import { Bot, Plus, X, Sparkles, Camera, Database, ChevronDown, ChevronUp, Save, Globe, Trash2, Network, Zap, RefreshCw, QrCode, Download, Loader2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { cn } from "../../utils/cn";
 import { toast } from "sonner";
-import { BotChannelConfigPanel } from "./BotChannelConfigPanel";
 import { AgentCardEditor, type AgentCardData } from "./AgentCardEditor";
 import { A2AStrategyPanel, DEFAULT_A2A_STRATEGY, type A2AStrategyData } from "./A2AStrategyPanel";
 import { refreshA2ARegistration, triggerAutoDiscoveryNow } from "../services/a2a";
@@ -86,6 +85,9 @@ export function AgentBuilder() {
   const [isKnowledgeOpen, setIsKnowledgeOpen] = useState(false);
   const [isA2AOpen, setIsA2AOpen] = useState(false);
   const [discoveryBusy, setDiscoveryBusy] = useState(false);
+  const [qrcodeImage, setQrcodeImage] = useState<string>("");
+  const [qrcodeLoading, setQrcodeLoading] = useState(false);
+  const [isQrcodeOpen, setIsQrcodeOpen] = useState(false);
 
   const api = window.electron?.agentBuilder;
 
@@ -126,6 +128,12 @@ export function AgentBuilder() {
       setIsNew(false);
       setIsKnowledgeOpen(!!d.knowledge || !!d.system_prompt);
       setIsA2AOpen(!!d.agent_card_json || !!d.a2a_strategy_json);
+      if (d.qrcode_data_uri) {
+        setQrcodeImage(d.qrcode_data_uri);
+        setIsQrcodeOpen(true);
+      } else {
+        setQrcodeImage("");
+      }
     }
   }, [api]);
 
@@ -142,6 +150,8 @@ export function AgentBuilder() {
     setIsNew(true);
     setIsKnowledgeOpen(true);
     setIsA2AOpen(false);
+    setQrcodeImage("");
+    setIsQrcodeOpen(false);
   };
 
   const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -232,6 +242,36 @@ export function AgentBuilder() {
       }
       await loadList();
     }
+  };
+
+  const handleGenerateQrcode = async () => {
+    if (!api || !form.id) return;
+    setQrcodeLoading(true);
+    setQrcodeImage("");
+    try {
+      const result = await api.generateQrcode({
+        agentId: form.id,
+        avatarUrl: form.avatar_url || undefined,
+      });
+      if (result.ok) {
+        setQrcodeImage(result.data.image);
+        toast.success("QR code generated!");
+      } else {
+        toast.error(result.error?.message || "Failed to generate QR code");
+      }
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "QR code generation failed");
+    } finally {
+      setQrcodeLoading(false);
+    }
+  };
+
+  const handleDownloadQrcode = () => {
+    if (!qrcodeImage) return;
+    const link = document.createElement("a");
+    link.href = qrcodeImage;
+    link.download = `${form.name || "agent"}-qrcode.png`;
+    link.click();
   };
 
   const showForm = isNew || selectedId !== null;
@@ -454,9 +494,79 @@ export function AgentBuilder() {
               )}
             </div>
 
-            {/* Channel Access — deploy this bot to Feishu / WeCom */}
+            {/* WeChat QR Code */}
             {form.id && !isNew && (
-              <BotChannelConfigPanel botId={form.id} />
+              <div className="border border-gray-200 rounded-xl overflow-hidden shadow-sm bg-white transition-all hover:shadow-md group">
+                <div
+                  className="flex items-center justify-between p-4 bg-white cursor-pointer select-none group-hover:bg-gray-50/50 transition-colors"
+                  onClick={() => setIsQrcodeOpen(!isQrcodeOpen)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded bg-green-50 flex items-center justify-center text-green-600">
+                      <QrCode size={16} />
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold text-gray-400 uppercase tracking-widest leading-none">WeChat</span>
+                      <span className="text-sm font-semibold text-gray-700 mt-1">Mini Program QR Code</span>
+                    </div>
+                  </div>
+                  <button className="flex items-center justify-center w-8 h-8 text-gray-400 hover:text-gray-600 transition-all">
+                    {isQrcodeOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                  </button>
+                </div>
+
+                {isQrcodeOpen && (
+                  <div className="p-6 pt-2 space-y-4 bg-white border-t border-gray-50 animate-in slide-in-from-top-2 duration-200">
+                    <div className="bg-green-50 border border-green-100 p-4 rounded-xl flex items-start gap-3 shadow-sm">
+                      <div className="p-2 bg-[#07C160] rounded-lg text-white flex-shrink-0">
+                        <QrCode size={20} />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-green-900">WeChat Mini Program QR Code</h4>
+                        <p className="text-xs text-green-700/80 mt-1 leading-relaxed">
+                          Generate a QR code that users can scan to open this agent in the WeChat Mini Program.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-center gap-4">
+                      {qrcodeImage ? (
+                        <div className="flex flex-col items-center gap-3 p-6 bg-gray-50 rounded-xl border border-gray-100">
+                          <img
+                            src={qrcodeImage}
+                            alt="WeChat Mini Program QR Code"
+                            className="w-56 h-56 rounded-lg shadow-md"
+                          />
+                          <p className="text-xs text-gray-500 text-center max-w-[14rem]">
+                            Scan with WeChat to open <strong>{form.name}</strong>
+                          </p>
+                          <Button
+                            onClick={handleDownloadQrcode}
+                            variant="outline"
+                            className="flex items-center gap-2 text-sm h-auto py-1.5 px-4"
+                          >
+                            <Download size={14} />
+                            Download
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          onClick={handleGenerateQrcode}
+                          disabled={qrcodeLoading}
+                          className="bg-[#07C160] hover:bg-[#06ad56] text-white px-6 py-2.5 rounded-lg font-semibold transition-all shadow-sm flex items-center gap-2 h-auto"
+                        >
+                          {qrcodeLoading ? (
+                            <Loader2 size={16} className="animate-spin" />
+                          ) : (
+                            <QrCode size={16} />
+                          )}
+                          {qrcodeLoading ? "Generating..." : "Generate QR Code"}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* A2A Configuration — Agent Card + Strategy */}
