@@ -129,6 +129,7 @@ function configToAgentDetail(config) {
     agent_card_json: config.agentCardJson || null,
     a2a_strategy_json: config.a2aStrategyJson || null,
     visibility: config.visibility || "public",
+    qrcode_data_uri: config.qrcodeDataUri || null,
     updated_at: config.updatedAt
       ? new Date(config.updatedAt * 1000).toISOString()
       : new Date().toISOString(),
@@ -525,6 +526,61 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
       }
       const isAbort = e?.name === "AbortError";
       return err(isAbort ? "NETWORK_ERROR" : "BACKEND_ERROR", e?.message || String(e));
+    }
+  });
+
+  ipcMain.handle(CHANNELS.AGENT_BUILDER_GET_QRCODE, async (_event, payload) => {
+    const agentId = String(payload?.agentId || "").trim();
+    if (!agentId) return err("VALIDATION_ERROR", "agentId is required.");
+    if (!assistantConfigRepository) return err("INTERNAL_ERROR", "config repository not ready");
+    const raw = assistantConfigRepository.getRawConfigById(agentId);
+    return ok({ image: raw?.qrcodeDataUri || null });
+  });
+
+  ipcMain.handle(CHANNELS.AGENT_BUILDER_GENERATE_QRCODE, async (_event, payload) => {
+    const agentId = String(payload?.agentId || "").trim();
+    if (!agentId) return err("VALIDATION_ERROR", "agentId is required.");
+    if (!assistantConfigRepository) return err("INTERNAL_ERROR", "config repository not ready");
+
+    const raw = assistantConfigRepository.getRawConfigById(agentId);
+    if (raw?.qrcodeDataUri) {
+      return err("ALREADY_EXISTS", "QR code already generated for this agent.");
+    }
+
+    try {
+      const baseUrl = resolveCreezBackendBase().replace(/\/+$/, "");
+      const body = {
+        agentId,
+        avatarUrl: payload?.avatarUrl || null,
+        page: payload?.page || "",
+        envVersion: payload?.envVersion || "release",
+      };
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      let image;
+      try {
+        const res = await fetch(`${baseUrl}/wechat/qrcode`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        const json = await res.json().catch(() => null);
+        if (!res.ok || !json?.ok) {
+          return err("BACKEND_ERROR", json?.error?.message || `HTTP ${res.status}`);
+        }
+        image = json.data.image;
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      if (image) {
+        assistantConfigRepository.saveConfigById(agentId, { qrcodeDataUri: image });
+      }
+
+      return ok({ image });
+    } catch (e) {
+      return err("NETWORK_ERROR", e?.message || String(e));
     }
   });
 

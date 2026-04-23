@@ -90,6 +90,30 @@ function resolveSessionKey(key) {
 }
 
 /**
+ * Headless cron uses createAndSubscribe({ sessionKey: "headless:…", chatId }).
+ * That registers keyToContactId.set(chatId, headlessBotKey) so prompt({ chatId }) hits the task session.
+ * When the task ends, removeListener alone does not remove that map entry — the next user prompt
+ * still resolves to the headless session (often with no UI listener), so agent:event never reaches
+ * the renderer and the chat stays on "···". Clear the headless mapping and restore chatId → contactId
+ * when the desktop session for that bot is still alive.
+ *
+ * @param {string} chatId
+ * @param {string} headlessBotKey - e.g. "headless:<taskId>"
+ * @param {string|null|undefined} contactId
+ */
+export function releaseChatRoutingFromHeadless(chatId, headlessBotKey, contactId) {
+  const cChat = String(chatId || "").trim();
+  const hKey = String(headlessBotKey || "").trim();
+  if (!cChat || !hKey) return;
+  if (keyToContactId.get(cChat) !== hKey) return;
+  keyToContactId.delete(cChat);
+  const cContact = String(contactId || "").trim();
+  if (cContact && cContact !== cChat && sessionsByBot.has(cContact)) {
+    keyToContactId.set(cChat, cContact);
+  }
+}
+
+/**
  * Add event listener to a bot session.
  * @param {string} contactId - bot id (session key)
  * @param {string} listenerId - unique id for this listener (e.g. "ui", "feishu:abc")

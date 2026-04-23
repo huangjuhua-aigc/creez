@@ -117,6 +117,8 @@ contextBridge.exposeInMainWorld("electron", {
     delete: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_DELETE, payload),
     search: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_SEARCH, payload),
     recent: () => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_RECENT),
+    generateQrcode: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_GENERATE_QRCODE, payload),
+    getQrcode: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_GET_QRCODE, payload),
     getDeviceId: () => ipcRenderer.invoke(CHANNELS.APP_GET_DEVICE_ID),
   },
   a2a: {

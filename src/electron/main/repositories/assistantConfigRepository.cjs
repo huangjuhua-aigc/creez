@@ -11,6 +11,7 @@ const DEFAULT_CONFIG = Object.freeze({
   a2aStrategyJson: null,
   visibility: "public",
   status: "draft",
+  qrcodeDataUri: null,
 });
 
 function safeJsonParse(value, fallback) {
@@ -42,7 +43,8 @@ function normalizeModel(model) {
 const ALL_COLUMNS = [
   "id", "name", "avatar_path", "system_prompt", "greeting_message",
   "knowledge", "skills_json", "models_json", "engine_type",
-  "agent_card_json", "a2a_strategy_json", "visibility", "status", "updated_at",
+  "agent_card_json", "a2a_strategy_json", "visibility", "status",
+  "qrcode_data_uri", "updated_at",
 ];
 
 const UPSERT_SQL = `
@@ -78,6 +80,7 @@ class AssistantConfigRepository {
       a2aStrategyJson: safeJsonParse(row.a2a_strategy_json, null),
       visibility: row.visibility || "public",
       status: row.status || "draft",
+      qrcodeDataUri: row.qrcode_data_uri || null,
       updatedAt: row.updated_at || null,
     };
   }
@@ -153,6 +156,7 @@ class AssistantConfigRepository {
       a2aStrategyJson: p.a2aStrategyJson !== undefined ? p.a2aStrategyJson : current.a2aStrategyJson,
       visibility: p.visibility || current.visibility || "public",
       status: p.status || current.status || "draft",
+      qrcodeDataUri: p.qrcodeDataUri !== undefined ? p.qrcodeDataUri : current.qrcodeDataUri,
     };
 
     this.upsertStmt.run({
@@ -169,6 +173,7 @@ class AssistantConfigRepository {
       a2a_strategy_json: merged.a2aStrategyJson ? JSON.stringify(merged.a2aStrategyJson) : null,
       visibility: merged.visibility,
       status: merged.status,
+      qrcode_data_uri: merged.qrcodeDataUri || null,
       updated_at: Math.floor(Date.now() / 1000),
     });
 

@@ -314,6 +314,7 @@ declare global {
             config: Record<string, string>;
           }>;
           status: string;
+          qrcode_data_uri: string | null;
           created_at: string;
           updated_at: string;
         }>>;
@@ -338,6 +339,13 @@ declare global {
         delete: (payload: { id: string }) => Promise<IpcResult<Record<string, never>>>;
         search: (payload: { q: string }) => Promise<IpcResult<{ items: Array<{ id: string; name: string; avatar_url: string | null; description: string; updated_at: string }> }>>;
         recent: () => Promise<IpcResult<{ items: Array<{ id: string; name: string; avatar_url: string | null; description: string; created_at: string }> }>>;
+        generateQrcode: (payload: {
+          agentId: string;
+          avatarUrl?: string | null;
+          page?: string;
+          envVersion?: "release" | "trial" | "develop";
+        }) => Promise<IpcResult<{ image: string }>>;
+        getQrcode: (payload: { agentId: string }) => Promise<IpcResult<{ image: string | null }>>;
         getDeviceId: () => Promise<IpcResult<{ deviceId: string }>>;
       };
       storyboard: {

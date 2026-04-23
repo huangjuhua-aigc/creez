@@ -8,7 +8,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { resolveCreezHome } = require("../creezPaths.cjs");
 const { CHANNELS } = require("../channels.cjs");
-const { addListener, removeListener } = require("../agent-runner.mjs");
+const { removeListener, releaseChatRoutingFromHeadless } = require("../agent-runner.mjs");
 const { AgentConfigBuilder } = require("../AgentConfigBuilder.cjs");
 
 /**
@@ -32,6 +32,7 @@ async function executeTask(task, deps) {
   const contactId = task.contact_id;
   const chatId = task.chat_id;
   const taskPrompt = String(task.task_prompt || "").trim();
+  const headlessSessionKey = `headless:${taskId}`;
 
   console.log("[creez:task] headlessRunner.executeTask start", { taskId, chatId, promptLen: taskPrompt.length });
 
@@ -56,7 +57,7 @@ async function executeTask(task, deps) {
       .setScenario("headless")
       .setDeps({ contactRepository, assistantConfigRepository, appStateStore, memoryStore })
       .setChatId(chatId)
-      .setSessionKey("headless:" + taskId)
+      .setSessionKey(headlessSessionKey)
       .setCreezHome(agentDir)
       .build();
 
@@ -103,7 +104,6 @@ async function executeTask(task, deps) {
     console.log("[creez:task] headlessRunner appended placeholder assistant message", { chatId, assistantMsgId });
 
     // Dedicated session key so this run has no prior conversation context (only task_prompt).
-    const sessionKey = "headless:" + taskId;
     let lastPersistedContent = "";
     const headlessSender = {
       send(channel, data) {
@@ -185,7 +185,8 @@ async function executeTask(task, deps) {
           } catch (e) {
             console.warn("[creez:scheduler] updateMessage on agent_end failed", e?.message || e);
           } finally {
-            removeListener(sessionKey, "ui:" + chatId);
+            removeListener(headlessSessionKey, "ui:" + chatId);
+            releaseChatRoutingFromHeadless(chatId, headlessSessionKey, contactId);
           }
         }
       },
@@ -211,12 +212,19 @@ async function executeTask(task, deps) {
       });
       console.log("[creez:task] headlessRunner engine.prompt returned (may be queued)");
     } catch (promptErr) {
-      removeListener(sessionKey, "ui:" + chatId);
+      removeListener(headlessSessionKey, "ui:" + chatId);
+      releaseChatRoutingFromHeadless(chatId, headlessSessionKey, contactId);
       throw promptErr;
     }
   } catch (error) {
     const message = error?.message || String(error);
     console.error("[creez:scheduler] executeTask error", { taskId, chatId, message });
+    try {
+      removeListener(headlessSessionKey, "ui:" + chatId);
+      releaseChatRoutingFromHeadless(chatId, headlessSessionKey, contactId);
+    } catch (e) {
+      console.warn("[creez:scheduler] headless routing cleanup after error", e?.message || e);
+    }
     taskRepository.insertLog({ task_id: taskId, status: "failed", error_message: message });
     if (assistantMessageId && chatRepository) {
       try {
