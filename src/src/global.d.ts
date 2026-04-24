@@ -29,6 +29,7 @@ declare global {
       };
       shell?: {
         open: (payload: { target: string }) => Promise<IpcResult<{ kind: string }>>;
+        showItemInFolder: (payload: { path: string }) => Promise<IpcResult<{ revealed: boolean }>>;
       };
       chat: {
         list: (payload?: { limit?: number; offset?: number; keyword?: string }) => Promise<

@@ -165,6 +165,24 @@ async function openLinkOrPath(target: string) {
   }
 }
 
+/** Reveal a local file in the system file manager (Finder / Explorer / etc.). */
+async function showImageInFileExplorer(localPath: string) {
+  const t = String(localPath || "").trim();
+  if (!t || !isAbsoluteLocalPathForOpen(t)) return;
+  const api = typeof window !== "undefined" ? window.electron?.shell?.showItemInFolder : undefined;
+  if (!api) return;
+  try {
+    const res = await api({ path: t });
+    if (!res?.ok) {
+      // eslint-disable-next-line no-console
+      console.warn("[ChatWindow] shell.showItemInFolder failed:", res?.error?.message || res);
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn("[ChatWindow] shell.showItemInFolder error:", e);
+  }
+}
+
 type LinkMatch = { start: number; end: number; href: string };
 
 /** Collect non-overlapping URL / file path spans for linkification (plain text segments only). */
@@ -316,11 +334,13 @@ function ImageContextMenu({
   x,
   y,
   onCopy,
+  onOpenLocation,
   onClose,
 }: {
   x: number;
   y: number;
   onCopy: () => void;
+  onOpenLocation?: (() => void) | null;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -341,7 +361,7 @@ function ImageContextMenu({
   };
 
   return (
-    <div ref={ref} style={menuStyle} className="bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[100px]">
+    <div ref={ref} style={menuStyle} className="bg-white rounded-lg shadow-lg border border-gray-200 py-1 min-w-[140px]">
       <button
         type="button"
         className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
@@ -349,6 +369,18 @@ function ImageContextMenu({
       >
         复制图片
       </button>
+      {onOpenLocation ? (
+        <button
+          type="button"
+          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
+          onClick={() => {
+            onOpenLocation();
+            onClose();
+          }}
+        >
+          在文件管理器中显示
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -425,6 +457,13 @@ function ImageChipFromPath({ path: rawPath, className = "" }: { path: string; cl
     }
   }, [dataUrl]);
 
+  const canRevealInFolder = !isUrl && isAbsoluteLocalPathForOpen(resolvedPath);
+
+  const handleOpenLocation = useCallback(() => {
+    if (!canRevealInFolder) return;
+    void showImageInFileExplorer(resolvedPath);
+  }, [canRevealInFolder, resolvedPath]);
+
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -467,6 +506,7 @@ function ImageChipFromPath({ path: rawPath, className = "" }: { path: string; cl
           x={ctxMenu.x}
           y={ctxMenu.y}
           onCopy={handleCopy}
+          onOpenLocation={canRevealInFolder ? handleOpenLocation : null}
           onClose={() => setCtxMenu(null)}
         />
       )}

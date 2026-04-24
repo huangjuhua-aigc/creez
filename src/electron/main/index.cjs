@@ -289,6 +289,14 @@ function createWindow(loadSplash = false) {
   });
 
   mainWindow.webContents.on("did-fail-load", (event, errorCode, errorDescription, validatedURL) => {
+    const url = String(validatedURL || "");
+    // Splash is loaded as data:text/html; when loadMainAppInto runs, Chromium aborts that navigation (ERR_ABORTED = -3). Not a real failure.
+    const isSplashAbort =
+      errorCode === -3 && /^data:text\/html/i.test(url);
+    if (isSplashAbort) {
+      startupLog("did-fail-load: ignored (splash navigation aborted, ERR_ABORTED) url=" + url.slice(0, 80) + "…");
+      return;
+    }
     const msg = `did-fail-load: code=${errorCode} desc=${errorDescription} url=${validatedURL}`;
     startupLog(msg);
     if (app.isPackaged && dialog && dialog.showMessageBoxSync) {
