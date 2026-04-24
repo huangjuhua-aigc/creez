@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("electron", {
   },
   shell: {
     open: (payload) => ipcRenderer.invoke(CHANNELS.SHELL_OPEN, payload),
+    showItemInFolder: (payload) => ipcRenderer.invoke(CHANNELS.SHELL_SHOW_ITEM_IN_FOLDER, payload),
   },
   chat: {
     list: (payload) => ipcRenderer.invoke(CHANNELS.CHAT_LIST, payload),

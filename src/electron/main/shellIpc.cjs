@@ -51,6 +51,42 @@ function registerShellIpc(ipcMain) {
       };
     }
   });
+
+  ipcMain.handle(CHANNELS.SHELL_SHOW_ITEM_IN_FOLDER, async (_event, payload) => {
+    const raw = String(payload?.path ?? "").trim();
+    if (!raw) {
+      return { ok: false, error: { code: "BAD_REQUEST", message: "path is required" } };
+    }
+    try {
+      let filePath = raw;
+      if (raw.startsWith("file://")) {
+        try {
+          filePath = fileURLToPath(raw);
+        } catch {
+          return { ok: false, error: { code: "BAD_REQUEST", message: "invalid file:// URL" } };
+        }
+      }
+
+      const normalized = path.normalize(filePath);
+      if (!path.isAbsolute(normalized)) {
+        return {
+          ok: false,
+          error: {
+            code: "BAD_REQUEST",
+            message: "Only absolute file paths or file:// URLs can be revealed in folder",
+          },
+        };
+      }
+
+      shell.showItemInFolder(normalized);
+      return { ok: true, data: { revealed: true } };
+    } catch (e) {
+      return {
+        ok: false,
+        error: { code: "SHOW_FAILED", message: e?.message || String(e) },
+      };
+    }
+  });
 }
 
 module.exports = {
