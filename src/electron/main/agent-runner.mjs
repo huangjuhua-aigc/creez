@@ -139,6 +139,7 @@ function configFingerprint(assistantConfig, assistantConfigId, defaultContactId,
     sandboxToolingVersion: SANDBOX_TOOLING_VERSION,
     scenario: execution.scenario || "unknown",
     isExternalUser: Boolean(execution.isExternalUser),
+    sandboxPermissionMode: execution.sandboxPermissionMode === "full_access" ? "full_access" : "default",
   });
 }
 
@@ -225,6 +226,7 @@ export async function createAndSubscribe(sender, config) {
   const botKey = explicitSessionKey || contactId || chatId || "";
   /** External user sessions (remote_user / a2a_agent / auto_discovery): restrict Pi tools + builtin whitelist. */
   const isExternalUser = Boolean(config.isExternalUser);
+  const sandboxPermissionMode = config.sandboxPermissionMode === "full_access" ? "full_access" : "default";
   const listenerId = chatId ? `ui:${chatId}` : "ui";
 
   if (chatId && chatId !== botKey) {
@@ -243,6 +245,7 @@ export async function createAndSubscribe(sender, config) {
   const fingerprint = configFingerprint(assistantConfig, assistantConfigId, defaultContactId, {
     scenario: config.scenario,
     isExternalUser,
+    sandboxPermissionMode,
   });
   console.log("[creez:sandbox] session check", {
     botKey,
@@ -345,6 +348,9 @@ export async function createAndSubscribe(sender, config) {
   const settingsManager = SettingsManager.create(cwd, resolvedAgentDir);
   let sessionEntryForEvents = null;
   const requestApproval = (approvalRequest) => {
+    if (sandboxPermissionMode === "full_access") {
+      return Promise.resolve({ allowed: true, reason: "Allowed by full access mode." });
+    }
     const resolved =
       sessionEntryForEvents?.lastPromptChatId != null && String(sessionEntryForEvents.lastPromptChatId).trim() !== ""
         ? String(sessionEntryForEvents.lastPromptChatId).trim()
@@ -441,6 +447,7 @@ export async function createAndSubscribe(sender, config) {
       chatId,
       builtinSkills: builtinExecutor.listEnabledSkillIds(),
       sandbox: sandboxPolicy,
+      sandboxPermissionMode,
       toolNames: sandboxTools.map((tool) => tool.name),
     });
   } else {

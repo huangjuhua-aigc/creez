@@ -85,6 +85,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
           apiKey: payload?.apiKey,
           modelConfigId: payload?.modelConfigId,
         })
+        .setSandboxPermissionMode(payload?.sandboxPermissionMode)
         .setWorkDirOverride(payload?.workDir)
         .setMemoryPath(payload?.memoryPath)
         .setChatHistory(chatHistory)

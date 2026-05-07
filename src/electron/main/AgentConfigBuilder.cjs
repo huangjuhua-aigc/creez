@@ -69,6 +69,7 @@ class AgentConfigBuilder {
     this._chatId = null;
     this._sessionKey = null;
     this._modelOverride = {};
+    this._sandboxPermissionMode = "default";
     this._workDirOverride = null;
     this._channelSend = undefined;
     this._sendEvent = () => {};
@@ -90,6 +91,10 @@ class AgentConfigBuilder {
   setChatId(id) { this._chatId = id; return this; }
   setSessionKey(key) { this._sessionKey = key; return this; }
   setModelOverride(o) { this._modelOverride = o || {}; return this; }
+  setSandboxPermissionMode(mode) {
+    this._sandboxPermissionMode = mode === "full_access" ? "full_access" : "default";
+    return this;
+  }
   setWorkDirOverride(dir) { this._workDirOverride = dir; return this; }
   setChannelSend(fn) { this._channelSend = fn; return this; }
   setSendEvent(fn) { this._sendEvent = fn; return this; }
@@ -177,6 +182,7 @@ class AgentConfigBuilder {
       provider,
       modelId,
       apiKey,
+      sandboxPermissionMode: this._sandboxPermissionMode,
       workDir,
       agentDir,
       memoryContent,

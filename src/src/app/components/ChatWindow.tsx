@@ -931,6 +931,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
   const [showModelDropdown, setShowModelDropdown] = useState(false);
+  const [showPermissionDropdown, setShowPermissionDropdown] = useState(false);
   const [showEmojiPanel, setShowEmojiPanel] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOverInput, setIsDragOverInput] = useState(false);
@@ -940,6 +941,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   /** Bumped when contact:listChanged fires so message list re-resolves name/avatar from refreshed chatList. */
   const [contactsRevision, setContactsRevision] = useState(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const permissionDropdownRef = useRef<HTMLDivElement>(null);
   const emojiRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -968,6 +970,13 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const [waitingDots, setWaitingDots] = useState("·");
   const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
   const [sandboxApprovals, setSandboxApprovals] = useState<SandboxApprovalRequest[]>([]);
+  const [sandboxPermissionMode, setSandboxPermissionMode] = useState<"default" | "full_access">(() => {
+    try {
+      return window.localStorage?.getItem("creez:sandboxPermissionMode") === "full_access" ? "full_access" : "default";
+    } catch {
+      return "default";
+    }
+  });
   const [chatContextMenu, setChatContextMenu] = useState<{ chatId: string; x: number; y: number } | null>(null);
   const isStreamingRef = useRef(false);
   const selectedChatIdRef = useRef(selectedChatId);
@@ -1061,6 +1070,17 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       setSelectedModelId(nextModelId);
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage?.setItem("creez:sandboxPermissionMode", sandboxPermissionMode);
+    } catch {
+      /* ignore */
+    }
+    if (sandboxPermissionMode === "full_access") {
+      setSandboxApprovals([]);
+    }
+  }, [sandboxPermissionMode]);
 
   const reloadChats = async (preferredChatId?: string | null) => {
     setIsLoadingChats(true);
@@ -1338,6 +1358,9 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setShowModelDropdown(false);
+      }
+      if (permissionDropdownRef.current && !permissionDropdownRef.current.contains(event.target as Node)) {
+        setShowPermissionDropdown(false);
       }
       if (emojiRef.current && !emojiRef.current.contains(event.target as Node)) {
         setShowEmojiPanel(false);
@@ -2099,16 +2122,17 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
     const appState = await (window as any).electron?.app?.getState?.();
     const workDir = appState?.ok ? appState.data.workspaceRoot : null;
     const scopeSignature = `${contactId || ""}:${selectedChatId || ""}:${workDir || ""}`;
+    const sessionScopeSignature = `${scopeSignature}:${sandboxPermissionMode}`;
     const modelSignature = `${targetModel.id}:${targetModel.provider}:${targetModel.model}`;
     if (
-      initializedScopeRef.current === scopeSignature &&
+      initializedScopeRef.current === sessionScopeSignature &&
       initializedModelRef.current === modelSignature &&
       agentReadyRef.current
     ) {
       return true;
     }
     if (
-      initializedScopeRef.current === scopeSignature &&
+      initializedScopeRef.current === sessionScopeSignature &&
       initializedModelRef.current === modelSignature &&
       initInFlightRef.current
     ) {
@@ -2117,7 +2141,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
 
     if (
       agentReadyRef.current &&
-      initializedScopeRef.current === scopeSignature &&
+      initializedScopeRef.current === sessionScopeSignature &&
       initializedModelRef.current &&
       initializedModelRef.current !== modelSignature
     ) {
@@ -2136,7 +2160,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
         chatLog("agent:setModel:failed", `${String(targetModel.provider)}/${String(targetModel.model)}`);
         return false;
       }
-      initializedScopeRef.current = scopeSignature;
+      initializedScopeRef.current = sessionScopeSignature;
       initializedModelRef.current = modelSignature;
       return true;
     }
@@ -2152,6 +2176,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       workDir: workDir || null,
       chatId: selectedChatId || null,
       hasApiKey: Boolean(apiKey),
+      sandboxPermissionMode,
     });
     agentReadyRef.current = false;
     pendingInitChatIdRef.current = selectedChatId ?? null;
@@ -2163,8 +2188,9 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       workDir,
       chatId: selectedChatId || null,
       contactId,
+      sandboxPermissionMode,
     });
-    initializedScopeRef.current = scopeSignature;
+    initializedScopeRef.current = sessionScopeSignature;
     initializedModelRef.current = modelSignature;
 
     const initStartMs = Date.now();
@@ -2982,7 +3008,53 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
             />
           </div>
 
-          <div className="h-12 px-6 flex items-center justify-end gap-2 pb-4">
+          <div className="h-12 px-6 flex items-center justify-between gap-3 pb-4">
+            <div
+              className="relative"
+              ref={permissionDropdownRef}
+            >
+              <button
+                type="button"
+                className="flex items-center gap-1.5 px-2 py-1 hover:bg-gray-200 rounded text-xs font-medium text-gray-600 transition-colors"
+                onClick={() => setShowPermissionDropdown((prev) => !prev)}
+                title="Permission mode"
+              >
+                <span>{sandboxPermissionMode === "full_access" ? "Full access" : "Default permission"}</span>
+                <ChevronDown size={12} />
+              </button>
+
+              {showPermissionDropdown && (
+                <div className="absolute bottom-full left-0 mb-1 w-44 bg-white rounded-lg shadow-lg border border-gray-100 py-1 overflow-hidden z-20">
+                  <button
+                    type="button"
+                    className={cn(
+                      "w-full text-left px-3 py-2 text-xs hover:bg-gray-50 transition-colors",
+                      sandboxPermissionMode === "default" ? "text-green-600 font-medium bg-green-50" : "text-gray-700"
+                    )}
+                    onClick={() => {
+                      setSandboxPermissionMode("default");
+                      setShowPermissionDropdown(false);
+                    }}
+                  >
+                    Default permission
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(
+                      "w-full text-left px-3 py-2 text-xs hover:bg-gray-50 transition-colors",
+                      sandboxPermissionMode === "full_access" ? "text-green-600 font-medium bg-green-50" : "text-gray-700"
+                    )}
+                    onClick={() => {
+                      setSandboxPermissionMode("full_access");
+                      setShowPermissionDropdown(false);
+                    }}
+                  >
+                    Full access
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2">
             {isStreaming && (
               <button
                 onClick={() => stopStreaming()}
@@ -3006,6 +3078,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
               >
                 发送 (S)
               </button>
+            </div>
             </div>
           </div>
         </div>
