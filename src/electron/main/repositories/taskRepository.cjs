@@ -139,6 +139,16 @@ class TaskRepository {
     return info.changes > 0;
   }
 
+  updateChatId(id, chatId) {
+    const taskId = String(id || "").trim();
+    const nextChatId = String(chatId || "").trim();
+    if (!taskId || !nextChatId) return false;
+    const info = this.db
+      .prepare("UPDATE scheduled_tasks SET chat_id = @chat_id, updated_at = @updated_at WHERE id = @id")
+      .run({ id: taskId, chat_id: nextChatId, updated_at: nowTs() });
+    return info.changes > 0;
+  }
+
   /**
    * Update task fields: cron_expression, task_prompt, status. Only provided fields are updated.
    * @param {string} id

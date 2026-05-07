@@ -1,0 +1,5 @@
+{
+  "backend": "macos-seatbelt",
+  "status": "policy-layer",
+  "description": "Creez macOS sandbox policy layer. Seatbelt profile runner can be added here."
+}

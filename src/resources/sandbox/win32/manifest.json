@@ -1,0 +1,5 @@
+{
+  "backend": "windows-native",
+  "status": "policy-layer",
+  "description": "Creez Windows sandbox policy layer. Native restricted-token runner can be added here."
+}

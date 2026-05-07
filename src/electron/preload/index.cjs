@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("electron", {
     getOrCreateByContact: (payload) => ipcRenderer.invoke(CHANNELS.CHAT_GET_OR_CREATE_BY_CONTACT, payload),
     appendMessage: (payload) => ipcRenderer.invoke(CHANNELS.CHAT_APPEND_MESSAGE, payload),
     updateMessage: (payload) => ipcRenderer.invoke(CHANNELS.CHAT_UPDATE_MESSAGE, payload),
+    delete: (payload) => ipcRenderer.invoke(CHANNELS.CHAT_DELETE, payload),
     onMessageAppended: (listener) => {
       const wrapped = (_event, payload) => listener(payload);
       ipcRenderer.on(CHANNELS.CHAT_MESSAGE_APPENDED, wrapped);
@@ -108,6 +109,10 @@ contextBridge.exposeInMainWorld("electron", {
       ipcRenderer.on(CHANNELS.AGENT_EVENT_ERROR, wrapped);
       return () => ipcRenderer.removeListener(CHANNELS.AGENT_EVENT_ERROR, wrapped);
     },
+  },
+  sandbox: {
+    getStatus: () => ipcRenderer.invoke(CHANNELS.SANDBOX_GET_STATUS),
+    decideApproval: (payload) => ipcRenderer.invoke(CHANNELS.SANDBOX_APPROVAL_DECIDE, payload),
   },
   agentBuilder: {
     list: () => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_LIST),

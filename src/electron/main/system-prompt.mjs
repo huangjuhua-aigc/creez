@@ -41,6 +41,8 @@ export async function buildSystemPrompt({
   memoryPath,
   chatId,
   builtinSkills,
+  sandbox,
+  toolNames,
 } = {}) {
   const baseDir = agentDir || process.cwd();
   const soulMd = await readFileSafe(path.join(baseDir, "SOUL.md"));
@@ -54,6 +56,8 @@ export async function buildSystemPrompt({
   const systemPrompt = assistantConfig?.systemPrompt ? String(assistantConfig.systemPrompt).trim() : "";
   const enabledSkills = skillListText(assistantConfig?.skills);
   const enabledBuiltinSkills = builtinSkillListText(builtinSkills);
+  const enabledToolNames = Array.isArray(toolNames) && toolNames.length > 0 ? toolNames.join(", ") : "read-only tools";
+  const sandboxMode = sandbox?.mode || "unknown";
 
   const memoryFilePath = memoryPath || "~/.creez/memory/memory.md";
 
@@ -83,10 +87,15 @@ export async function buildSystemPrompt({
     `- Chat ID: ${chatId || "(unknown)"}`,
     "",
     "## Directory Rules",
-    `- Your bash/read/write/edit tools run in the Workspace directory: ${workDir || "(not set)"}`,
+    `- Sandbox mode: ${sandboxMode}`,
+    `- Available local tools in this session: ${enabledToolNames}`,
+    `- Your local tools run in the Workspace directory: ${workDir || "(not set)"}`,
     `- Always use the Workspace as your working directory for user tasks. Do NOT use the Electron app launch path.`,
     `- Creez system config, skills, memory, and environment files live under: ${baseDir}`,
     `- When accessing .env, memory, or skill configs, use the Creez config directory (${baseDir}), not the Workspace.`,
+    sandboxMode === "read-only"
+      ? "- This session is read-only: do not claim you can modify, delete, or execute shell commands."
+      : "- File writes and shell commands may be blocked or require user confirmation by the Creez sandbox.",
     "",
     "## Assistant Identity",
     `- Name: ${name} (use this name when asked who you are or when introducing yourself; do not use "Pi" or other names)`,

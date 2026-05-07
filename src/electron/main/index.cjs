@@ -40,6 +40,7 @@ const { registerContactIpc } = require("./contactIpc.cjs");
 const { registerSettingsIpc } = require("./settingsIpc.cjs");
 const { registerWorkspaceIpc } = require("./workspaceIpc.cjs");
 const { registerAgentIpc } = require("./agentIpc.cjs");
+const { registerSandboxIpc } = require("./sandbox/sandboxIpc.cjs");
 const { registerAgentBuilderIpc } = require("./agentBuilderIpc.cjs");
 const { registerAttachmentIpc } = require("./attachmentIpc.cjs");
 const { startSyncPullTask, stopSyncPullTask } = require("./syncPullTask.cjs");
@@ -428,6 +429,7 @@ app.whenReady().then(async () => {
     registerTaskIpc(ipcMain);
     registerWorkspaceIpc(ipcMain, appStateStore);
     registerStoryboardIpc(ipcMain, { appStateStore, skillManager });
+    registerSandboxIpc(ipcMain, { creezHome });
     registerAttachmentIpc(ipcMain);
     registerAgentBuilderIpc(ipcMain, {
       appStateStore,
