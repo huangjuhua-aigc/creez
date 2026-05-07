@@ -272,6 +272,7 @@ declare global {
           chatId?: string | null;
           contactId?: string | null;
           memoryPath?: string;
+          sandboxPermissionMode?: "default" | "full_access";
         }) => void;
         setModel: (payload: { provider: string; modelId: string; apiKey: string }) => Promise<{
           ok: boolean;

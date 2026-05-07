@@ -42,6 +42,7 @@ export async function buildSystemPrompt({
   chatId,
   builtinSkills,
   sandbox,
+  sandboxPermissionMode,
   toolNames,
 } = {}) {
   const baseDir = agentDir || process.cwd();
@@ -58,6 +59,7 @@ export async function buildSystemPrompt({
   const enabledBuiltinSkills = builtinSkillListText(builtinSkills);
   const enabledToolNames = Array.isArray(toolNames) && toolNames.length > 0 ? toolNames.join(", ") : "read-only tools";
   const sandboxMode = sandbox?.mode || "unknown";
+  const permissionMode = sandboxPermissionMode === "full_access" ? "full_access" : "default";
 
   const memoryFilePath = memoryPath || "~/.creez/memory/memory.md";
 
@@ -68,7 +70,9 @@ export async function buildSystemPrompt({
     "- You do not have independent goals.",
     "- Follow explicit user intent and current task scope.",
     "- Do not fabricate facts, file contents, command outputs, or tool results.",
-    "- Ask for confirmation before potentially risky or destructive actions.",
+    permissionMode === "full_access"
+      ? "- The user selected full access for this session; protected local tool operations are automatically approved by Creez."
+      : "- Ask for confirmation before potentially risky or destructive actions.",
     "- Protect user privacy, local files, and secrets.",
     "",
     "## Memory Recall",
@@ -88,6 +92,7 @@ export async function buildSystemPrompt({
     "",
     "## Directory Rules",
     `- Sandbox mode: ${sandboxMode}`,
+    `- Permission mode: ${permissionMode}`,
     `- Available local tools in this session: ${enabledToolNames}`,
     `- Your local tools run in the Workspace directory: ${workDir || "(not set)"}`,
     `- Always use the Workspace as your working directory for user tasks. Do NOT use the Electron app launch path.`,

@@ -185,6 +185,7 @@ export function initAgent(payload: {
   chatId?: string | null;
   contactId?: string | null;
   memoryPath?: string;
+  sandboxPermissionMode?: "default" | "full_access";
 }) {
   if (typeof console?.log === "function") {
     console.log("[creezv2 renderer] initAgent", {
