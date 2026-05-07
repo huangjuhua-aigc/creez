@@ -2,3 +2,29 @@
 @source '../**/*.{js,ts,jsx,tsx}';
 
 @import 'tw-animate-css';
+
+@keyframes migration-breathe {
+  0%, 100% {
+    transform: scale(0.85);
+    opacity: 0.55;
+    box-shadow: 0 0 0 3px rgba(7, 193, 96, 0.12);
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+    box-shadow: 0 0 0 7px rgba(7, 193, 96, 0.08);
+  }
+}
+
+@keyframes migration-scan {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(760%); }
+}
+
+.migration-breathe {
+  animation: migration-breathe 1.15s ease-in-out infinite;
+}
+
+.migration-scan {
+  animation: migration-scan 1.4s ease-in-out infinite;
+}

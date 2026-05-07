@@ -451,7 +451,11 @@ export async function createAndSubscribe(sender, config) {
       toolNames: sandboxTools.map((tool) => tool.name),
     });
   } else {
-    systemPrompt = (assistantConfig?.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
+    const basePrompt = (assistantConfig?.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
+    const botMemory = memoryContent && String(memoryContent).trim()
+      ? `\n\n## Memory\n${String(memoryContent).trim()}`
+      : "";
+    systemPrompt = `${basePrompt}${botMemory}`.trim();
     log("system_prompt:custom_agent", { length: systemPrompt.length });
   }
 
