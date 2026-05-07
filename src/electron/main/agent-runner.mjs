@@ -74,7 +74,58 @@ function serializeEvent(ev) {
 }
 
 function resolveModel(provider, modelId) {
-  return getModel(provider, modelId) || null;
+  const builtIn = getModel(provider, modelId);
+  if (builtIn) return builtIn;
+
+  const normalizedProvider = String(provider || "").trim().toLowerCase();
+  const id = String(modelId || "").trim();
+  if (!id) return null;
+
+  if (normalizedProvider === "deepseek") {
+    const isReasoningModel = /(^|[-_/])(reasoner|r1|pro)($|[-_/])|deepseek-v4/i.test(id);
+    return {
+      id,
+      name: `DeepSeek ${id}`,
+      api: "openai-completions",
+      provider: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      reasoning: isReasoningModel,
+      input: ["text"],
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      contextWindow: 1048576,
+      maxTokens: 262144,
+      compat: {
+        supportsDeveloperRole: false,
+      },
+    };
+  }
+
+  if (normalizedProvider === "doubao") {
+    return {
+      id,
+      name: `Doubao ${id}`,
+      api: "openai-responses",
+      provider: "doubao",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      reasoning: false,
+      input: ["text", "image"],
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      contextWindow: 262144,
+      maxTokens: 32768,
+    };
+  }
+
+  return null;
 }
 
 const SANDBOX_TOOLING_VERSION = "creez-sandbox-tools-v3";

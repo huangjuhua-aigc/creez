@@ -28,6 +28,9 @@ function normalizeProvider(raw) {
     OpenAI: "openai",
     Anthropic: "anthropic",
     Google: "google",
+    DeepSeek: "deepseek",
+    Doubao: "doubao",
+    "豆包": "doubao",
   };
   return alias[value] || value.toLowerCase();
 }

@@ -57,7 +57,7 @@ function pickActiveModel(models, preferredId) {
 function normalizeProvider(raw) {
   const value = String(raw || "").trim();
   if (!value) return "";
-  const alias = { OpenRouter: "openrouter", OpenAI: "openai", Anthropic: "anthropic", Google: "google" };
+  const alias = { OpenRouter: "openrouter", OpenAI: "openai", Anthropic: "anthropic", Google: "google", DeepSeek: "deepseek", Doubao: "doubao", "豆包": "doubao" };
   return alias[value] || value.toLowerCase();
 }
 
