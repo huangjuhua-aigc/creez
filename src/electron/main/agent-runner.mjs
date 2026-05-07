@@ -1,4 +1,5 @@
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   AuthStorage,
@@ -7,18 +8,22 @@ import {
   SessionManager,
   SettingsManager,
   createAgentSession,
-  readTool,
 } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
 import { createRequire } from "node:module";
 import { createBuiltinSkillRegistry } from "./agent-tools/builtin/registry.mjs";
 import { createBuiltinSkillExecutor } from "./agent-tools/builtin/executor.mjs";
 import { loadBuiltinReplyInstructions } from "./agent-tools/builtin/loadReplyInstructions.mjs";
+import { createCreezSandboxTools } from "./sandbox/sandboxTools.mjs";
+import sandboxPolicyModule from "./sandbox/sandboxPolicy.cjs";
+import sandboxApprovalModule from "./sandbox/sandboxApproval.cjs";
 import { buildSystemPrompt } from "./system-prompt.mjs";
 
 const require = createRequire(import.meta.url);
 const { BUILTIN_SKILL_IDS } = require("./builtinSkillIds.cjs");
 const { isCreezVerboseDebug } = require("./creezDebug.cjs");
+const { createSandboxPolicy, explainPolicy } = sandboxPolicyModule;
+const { requestSandboxApproval } = sandboxApprovalModule;
 
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT_DIR = path.join(RUNNER_DIR, "..", "..");
@@ -72,11 +77,18 @@ function resolveModel(provider, modelId) {
   return getModel(provider, modelId) || null;
 }
 
-/** Fingerprint of assistant config that affects session. Default bot: systemPrompt only (skills toggles do not rebuild). Non-default: systemPrompt only (skills_json does not gate runner). */
-function configFingerprint(assistantConfig, assistantConfigId, defaultContactId) {
+const SANDBOX_TOOLING_VERSION = "creez-sandbox-tools-v3";
+
+/** Fingerprint of assistant config and execution policy that affects session tools/prompt. */
+function configFingerprint(assistantConfig, assistantConfigId, defaultContactId, execution = {}) {
   if (!assistantConfig) return "";
   const systemPrompt = (assistantConfig.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
-  return systemPrompt;
+  return JSON.stringify({
+    systemPrompt,
+    sandboxToolingVersion: SANDBOX_TOOLING_VERSION,
+    scenario: execution.scenario || "unknown",
+    isExternalUser: Boolean(execution.isExternalUser),
+  });
 }
 
 /**
@@ -177,7 +189,17 @@ export async function createAndSubscribe(sender, config) {
   }
   if (!cwd) cwd = process.cwd();
   const existing = sessionsByBot.get(botKey);
-  const fingerprint = configFingerprint(assistantConfig, assistantConfigId, defaultContactId);
+  const fingerprint = configFingerprint(assistantConfig, assistantConfigId, defaultContactId, {
+    scenario: config.scenario,
+    isExternalUser,
+  });
+  console.log("[creez:sandbox] session check", {
+    botKey,
+    scenario: config.scenario || "unknown",
+    isExternalUser,
+    hasExistingSession: Boolean(existing?.session),
+    fingerprintChanged: Boolean(existing?.session && existing.configFingerprint !== fingerprint),
+  });
   // Reuse only if workDir and assistant config (skills, systemPrompt) match
   if (
     existing?.session &&
@@ -208,6 +230,11 @@ export async function createAndSubscribe(sender, config) {
   }
 
   if (existing?.unsubscribe) {
+    console.log("[creez:sandbox] rebuilding session for sandbox policy", {
+      botKey,
+      scenario: config.scenario || "unknown",
+      previousFingerprint: existing.configFingerprint || "",
+    });
     existing.unsubscribe();
   }
   sessionsByBot.delete(botKey);
@@ -265,6 +292,49 @@ export async function createAndSubscribe(sender, config) {
   }
   const sessionManager = SessionManager.continueRecent(cwd, sessionDir);
   const settingsManager = SettingsManager.create(cwd, resolvedAgentDir);
+  let sessionEntryForEvents = null;
+  const requestApproval = (approvalRequest) => {
+    const resolved =
+      sessionEntryForEvents?.lastPromptChatId != null && String(sessionEntryForEvents.lastPromptChatId).trim() !== ""
+        ? String(sessionEntryForEvents.lastPromptChatId).trim()
+        : (chatId ?? undefined);
+    return requestSandboxApproval({
+      request: {
+        ...approvalRequest,
+        chatId: resolved ?? null,
+        scenario: config.scenario,
+        sandboxMode: sandboxPolicy?.mode,
+        sandboxBackend: sandboxPolicy?.backend,
+      },
+      sendRequest: (payload) => {
+        broadcast("agent:event", {
+          type: "sandbox_approval_request",
+          chatId: resolved,
+          request: payload,
+        });
+      },
+    });
+  };
+  const sandboxPolicy = createSandboxPolicy({
+    scenario: config.scenario,
+    isExternalUser,
+    workDir: cwd,
+    agentDir: resolvedAgentDir,
+    requestApproval,
+  });
+  const sandboxTools = createCreezSandboxTools({ cwd, policy: sandboxPolicy });
+  log("sandbox_policy", {
+    botKey,
+    mode: sandboxPolicy.mode,
+    backend: sandboxPolicy.backend,
+    tools: sandboxTools.map((t) => t.name),
+  });
+  console.log("[creez:sandbox] enabled", {
+    botKey,
+    scenario: config.scenario,
+    policy: explainPolicy(sandboxPolicy),
+    tools: sandboxTools.map((t) => t.name).join(","),
+  });
 
   const botSkillPath = botDir ? path.join(botDir, "skills") : null;
   const globalSkillPath = path.join(resolvedAgentDir, "skills");
@@ -272,7 +342,6 @@ export async function createAndSubscribe(sender, config) {
   const replyInstructions = loadBuiltinReplyInstructions(builtinSkillPath, BUILTIN_SKILL_IDS);
   const builtinRegistry = createBuiltinSkillRegistry();
   /** Set after sessionEntry is created; used so tool/builtin events use the chatId of the active prompt turn (not only init-time chatId). */
-  let sessionEntryForEvents = null;
   const builtinExecutor = createBuiltinSkillExecutor({
     registry: builtinRegistry,
     runtimeContext: {
@@ -320,6 +389,8 @@ export async function createAndSubscribe(sender, config) {
       memoryPath,
       chatId,
       builtinSkills: builtinExecutor.listEnabledSkillIds(),
+      sandbox: sandboxPolicy,
+      toolNames: sandboxTools.map((tool) => tool.name),
     });
   } else {
     systemPrompt = (assistantConfig?.systemPrompt && String(assistantConfig.systemPrompt).trim()) || "";
@@ -377,10 +448,25 @@ export async function createAndSubscribe(sender, config) {
     settingsManager,
     resourceLoader,
     customTools,
+    tools: sandboxTools,
     ...(initialThinkingLevel ? { thinkingLevel: initialThinkingLevel } : {}),
-    // External user sessions: only allow read (filesystem browsing); bash/edit/write must be blocked.
-    ...(isExternalUser ? { tools: [readTool] } : {}),
   });
+  const sandboxToolNames = sandboxTools.map((tool) => tool.name);
+  const sandboxToolOverride = Object.fromEntries(sandboxTools.map((tool) => [tool.name, tool]));
+  if (typeof session._buildRuntime === "function") {
+    session._baseToolsOverride = sandboxToolOverride;
+    session._buildRuntime({
+      activeToolNames: sandboxToolNames,
+      includeAllExtensionTools: true,
+    });
+    console.log("[creez:sandbox] base tools overridden", {
+      botKey,
+      tools: sandboxToolNames.join(","),
+      activeTools: session.getActiveToolNames ? session.getActiveToolNames().join(",") : "",
+    });
+  } else {
+    console.warn("[creez:sandbox] unable to override pi base tools; sandbox enforcement may be incomplete", { botKey });
+  }
   if (isCreezVerboseDebug()) {
     console.log(`[agent-runner] createAndSubscribe: createAgentSession done (${Date.now() - t0}ms)`);
   }
@@ -391,6 +477,7 @@ export async function createAndSubscribe(sender, config) {
     authStorage,
     listeners,
     workDir: cwd,
+    sessionDir,
     configFingerprint: fingerprint,
     resourceLoader,
     /** Creez chatId for the in-flight prompt(); events must use this when session is reused across chats. */
@@ -639,6 +726,43 @@ export function abort(chatId) {
     log("abort", { botKey });
     entry.session.agent.abort();
   }
+}
+
+export function forgetSession(key, options = {}) {
+  const rawKey = key != null && String(key).trim() !== "" ? String(key).trim() : "";
+  if (!rawKey) return false;
+  const botKey = resolveSessionKey(rawKey);
+  const entry = sessionsByBot.get(botKey);
+  if (entry?.session?.agent) {
+    try {
+      entry.session.agent.abort();
+    } catch {
+      // ignore abort failures during cleanup
+    }
+  }
+  if (entry?.unsubscribe) {
+    try {
+      entry.unsubscribe();
+    } catch {
+      // ignore unsubscribe failures during cleanup
+    }
+    entry.unsubscribe = null;
+  }
+  sessionsByBot.delete(botKey);
+  for (const [mappedKey, mappedBotKey] of Array.from(keyToContactId.entries())) {
+    if (mappedKey === rawKey || mappedKey === botKey || mappedBotKey === botKey || mappedBotKey === rawKey) {
+      keyToContactId.delete(mappedKey);
+    }
+  }
+  if (options?.deletePersisted && entry?.sessionDir) {
+    try {
+      fs.rmSync(entry.sessionDir, { recursive: true, force: true });
+      console.log("[agent-runner] forgot persisted session", { key: rawKey, botKey, sessionDir: entry.sessionDir });
+    } catch (e) {
+      console.warn("[agent-runner] failed to delete persisted session", { key: rawKey, botKey, message: e?.message || String(e) });
+    }
+  }
+  return Boolean(entry);
 }
 
 export function hasSession(chatId) {

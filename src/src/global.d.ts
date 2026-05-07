@@ -95,6 +95,12 @@ declare global {
           errorMessage?: string | null;
           updatedAt?: number;
         }) => Promise<IpcResult<{ updated: boolean; id?: string }>>;
+        delete: (payload: { chatId: string }) => Promise<IpcResult<{
+          deleted: boolean;
+          chatId: string;
+          contactId?: string | null;
+          messagesDeleted: number;
+        }>>;
         onMessageAppended: (listener: (payload: { type?: string; chatId?: string; message?: unknown }) => void) => () => void;
       };
       contact: {
@@ -296,6 +302,20 @@ declare global {
           }) => void
         ) => () => void;
         onError: (listener: (message: string) => void) => () => void;
+      };
+      sandbox?: {
+        getStatus: () => Promise<IpcResult<{
+          available: boolean;
+          mode: string;
+          backend: string;
+          summary: string;
+          note?: string;
+        }>>;
+        decideApproval: (payload: {
+          id: string;
+          allowed: boolean;
+          reason?: string;
+        }) => Promise<IpcResult<{ resolved: boolean }>>;
       };
       agentBuilder: {
         list: () => Promise<IpcResult<{ items: Array<{ id: string; name: string; avatar_url: string | null; status: string; updated_at: string }> }>>;

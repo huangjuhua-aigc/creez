@@ -160,6 +160,20 @@ export type AgentEventPayload = {
   result?: unknown;
   partialResult?: unknown;
   isError?: unknown;
+  request?: {
+    id: string;
+    kind?: string;
+    action?: string;
+    risk?: string;
+    title?: string;
+    message?: string;
+    path?: string;
+    command?: string;
+    sandboxMode?: string;
+    sandboxBackend?: string;
+    timeoutMs?: number;
+    createdAt?: number;
+  };
 };
 
 export function initAgent(payload: {
@@ -291,4 +305,15 @@ export async function updateChatMessage(payload: {
   if (!api || typeof api.updateMessage !== "function") return false;
   const result = await api.updateMessage(payload);
   return Boolean(result.ok);
+}
+
+export async function deleteChat(chatId: string): Promise<boolean> {
+  const api = window.electron?.chat;
+  if (!api || typeof api.delete !== "function") return false;
+  const result = await api.delete({ chatId });
+  if (!result.ok) {
+    console.warn("[creezv2] chat:delete failed:", result.error.message);
+    return false;
+  }
+  return Boolean(result.data?.deleted);
 }

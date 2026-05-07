@@ -1,6 +1,7 @@
 const { CHANNELS } = require("./channels.cjs");
 const { syncContactBotOrigins } = require("./contactBotOrigin.cjs");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const { randomUUID } = require("node:crypto");
 
 function ok(data) {
@@ -15,6 +16,7 @@ function err(code, message, details) {
 }
 
 let _fetchRemoteAgentConfig = null;
+let _agentRunner = null;
 async function getFetchRemote() {
   if (!_fetchRemoteAgentConfig) {
     const { pathToFileURL } = require("node:url");
@@ -22,6 +24,22 @@ async function getFetchRemote() {
     _fetchRemoteAgentConfig = mod.fetchRemoteAgentConfig;
   }
   return _fetchRemoteAgentConfig;
+}
+
+async function forgetDeletedChatAgentSession(result) {
+  if (!result?.deleted) return;
+  try {
+    if (!_agentRunner) {
+      _agentRunner = await import(pathToFileURL(path.join(__dirname, "agent-runner.mjs")).href);
+    }
+    if (typeof _agentRunner.forgetSession !== "function") return;
+    _agentRunner.forgetSession(result.chatId, { deletePersisted: true });
+    if (result.contactId) {
+      _agentRunner.forgetSession(result.contactId, { deletePersisted: true });
+    }
+  } catch (e) {
+    console.warn("[chatIpc] forget deleted chat session failed:", e?.message || String(e));
+  }
 }
 
 function registerChatIpc(ipcMain, chatRepository, deps = {}) {
@@ -117,6 +135,19 @@ function registerChatIpc(ipcMain, chatRepository, deps = {}) {
       return ok(result);
     } catch (error) {
       return err("DB_ERROR", "Failed to update message", error?.message || String(error));
+    }
+  });
+
+  ipcMain.handle(CHANNELS.CHAT_DELETE, async (_event, payload) => {
+    if (!payload || typeof payload !== "object" || !payload.chatId || String(payload.chatId).trim() === "") {
+      return err("VALIDATION_ERROR", "chatId is required.");
+    }
+    try {
+      const result = chatRepository.deleteChat(payload);
+      await forgetDeletedChatAgentSession(result);
+      return ok(result);
+    } catch (error) {
+      return err("DB_ERROR", "Failed to delete chat", error?.message || String(error));
     }
   });
 }

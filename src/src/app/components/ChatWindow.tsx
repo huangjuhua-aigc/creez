@@ -1,4 +1,4 @@
-import { Plus, ChevronDown, Folder, Laugh, X, Square } from "lucide-react";
+import { Plus, ChevronDown, Folder, Laugh, X, Square, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -11,6 +11,7 @@ import { ToolCallGroup, type ToolCall } from "./ToolCallPanel";
 import {
   abortAgentPrompt,
   appendChatMessage,
+  deleteChat,
   fetchChatList,
   fetchChatMessages,
   initAgent,
@@ -69,6 +70,8 @@ type ChatStreamState = {
   toolCalls: ToolCall[];
   toolMessageId: string | null;
 };
+
+type SandboxApprovalRequest = NonNullable<AgentEventPayload["request"]>;
 
 function parseAssistantText(content: unknown): string {
   if (typeof content === "string") return content;
@@ -381,6 +384,55 @@ function ImageContextMenu({
           在文件管理器中显示
         </button>
       ) : null}
+    </div>
+  );
+}
+
+function ChatListContextMenu({
+  x,
+  y,
+  onDelete,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  onDelete: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const closeOnPointer = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const closeOnEscape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("mousedown", closeOnPointer);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("mousedown", closeOnPointer);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      style={{ position: "fixed", left: x, top: y, zIndex: 10000 }}
+      className="bg-white rounded-md shadow-lg border border-gray-200 py-1 min-w-[132px]"
+    >
+      <button
+        type="button"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px] text-red-600 hover:bg-red-50 cursor-pointer"
+        onClick={() => {
+          onDelete();
+          onClose();
+        }}
+      >
+        <Trash2 size={14} />
+        删除对话
+      </button>
     </div>
   );
 }
@@ -915,6 +967,8 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const [isStreaming, setIsStreaming] = useState(false);
   const [waitingDots, setWaitingDots] = useState("·");
   const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
+  const [sandboxApprovals, setSandboxApprovals] = useState<SandboxApprovalRequest[]>([]);
+  const [chatContextMenu, setChatContextMenu] = useState<{ chatId: string; x: number; y: number } | null>(null);
   const isStreamingRef = useRef(false);
   const selectedChatIdRef = useRef(selectedChatId);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
@@ -1391,6 +1445,34 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const activeChat = chatList.find((c) => c.id === selectedChatId) || null;
   const selectedModel = modelOptions.find((item) => item.id === selectedModelId) || modelOptions[0] || null;
 
+  const handleDeleteChat = useCallback(async (chatId: string) => {
+    const targetId = String(chatId || "").trim();
+    if (!targetId) return;
+
+    const previousChatList = chatList;
+    const deleted = await deleteChat(targetId);
+    if (!deleted) return;
+
+    const nextList = previousChatList.filter((chat) => chat.id !== targetId);
+    const deletingSelectedChat = selectedChatId === targetId;
+    const nextSelectedId = deletingSelectedChat ? (nextList[0]?.id || "") : selectedChatId;
+
+    setChatList(nextList);
+    chatStreamsRef.current.delete(targetId);
+    if (activeStreamChatIdRef.current === targetId) {
+      abortAgentPrompt(targetId);
+      releaseUiStreamingState(targetId);
+    }
+
+    if (deletingSelectedChat) {
+      updateMessageQueue(() => []);
+      setMessages([]);
+      setSelectedChatId(nextSelectedId);
+      selectedChatIdRef.current = nextSelectedId;
+      onSelectChat?.(nextSelectedId);
+    }
+  }, [chatList, onSelectChat, releaseUiStreamingState, selectedChatId, updateMessageQueue]);
+
   useEffect(() => {
     initializedModelRef.current = "";
     initializedScopeRef.current = "";
@@ -1689,6 +1771,14 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
         forCurrentChat: isForCurrentChat,
       });
     }
+    if (event.type === "sandbox_approval_request" && event.request?.id) {
+      if (!isForCurrentChat) return;
+      setSandboxApprovals((prev) => {
+        if (prev.some((item) => item.id === event.request?.id)) return prev;
+        return [...prev, event.request as SandboxApprovalRequest];
+      });
+      return;
+    }
     if (event.type === "agent_end" || event.type === "message_end") {
       console.log("[creez:stream-debug] incoming event (pre-handler)", {
         type: event.type,
@@ -1943,6 +2033,22 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
           upsertToolCall({ id, toolName, parameters: params, status: "running" });
         }
       }
+    }
+  };
+
+  const decideSandboxApproval = async (request: SandboxApprovalRequest, allowed: boolean) => {
+    setSandboxApprovals((prev) => prev.filter((item) => item.id !== request.id));
+    try {
+      const res = await window.electron?.sandbox?.decideApproval?.({
+        id: request.id,
+        allowed,
+        reason: allowed ? "Allowed by user" : "Denied by user",
+      });
+      if (!res?.ok) {
+        console.warn("[ChatWindow] sandbox approval failed:", res?.error?.message || res);
+      }
+    } catch (error) {
+      console.warn("[ChatWindow] sandbox approval error:", error);
     }
   };
 
@@ -2465,6 +2571,53 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const canSend = (serializeComposer().trim().length > 0 || pendingAttachments.length > 0) && Boolean(activeChat);
   return (
     <div className="flex h-full w-full bg-[#F5F5F5]">
+      {sandboxApprovals[0] && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-[520px] rounded-lg bg-white shadow-xl border border-gray-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <div className="text-[15px] font-semibold text-gray-900">
+                {sandboxApprovals[0].title || "Allow sandbox action?"}
+              </div>
+              <div className="mt-1 text-[12px] text-gray-500">
+                {sandboxApprovals[0].message || "The agent is requesting permission for a protected operation."}
+              </div>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div className="grid grid-cols-[88px_1fr] gap-y-2 text-[12px]">
+                <div className="text-gray-500">Action</div>
+                <div className="text-gray-900">{sandboxApprovals[0].action || sandboxApprovals[0].kind || "unknown"}</div>
+                <div className="text-gray-500">Risk</div>
+                <div className="text-gray-900">{sandboxApprovals[0].risk || "protected_operation"}</div>
+                <div className="text-gray-500">Sandbox</div>
+                <div className="text-gray-900">
+                  {[sandboxApprovals[0].sandboxMode, sandboxApprovals[0].sandboxBackend].filter(Boolean).join(" / ") || "Creez"}
+                </div>
+              </div>
+              {(sandboxApprovals[0].path || sandboxApprovals[0].command) && (
+                <pre className="max-h-[180px] overflow-auto rounded-md bg-gray-50 border border-gray-100 p-3 text-[12px] text-gray-700 whitespace-pre-wrap break-all">
+                  {sandboxApprovals[0].path || sandboxApprovals[0].command}
+                </pre>
+              )}
+            </div>
+            <div className="px-5 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-2">
+              <button
+                type="button"
+                className="px-3 py-2 rounded-md border border-gray-300 bg-white text-[13px] text-gray-700 hover:bg-gray-100"
+                onClick={() => void decideSandboxApproval(sandboxApprovals[0], false)}
+              >
+                拒绝
+              </button>
+              <button
+                type="button"
+                className="px-3 py-2 rounded-md bg-[#07C160] text-[13px] text-white hover:bg-[#06ad56]"
+                onClick={() => void decideSandboxApproval(sandboxApprovals[0], true)}
+              >
+                允许一次
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="w-[250px] flex flex-col border-r border-[#E7E7E7] bg-[#F7F7F7] flex-shrink-0">
         <SearchBar placeholder="搜索" rightElement={<Plus size={16} />} />
 
@@ -2474,7 +2627,13 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
             chatList.map((chat) => (
               <div
                 key={chat.id}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setChatContextMenu({ chatId: chat.id, x: e.clientX, y: e.clientY });
+                }}
                 onClick={() => {
+                  setChatContextMenu(null);
                   setSelectedChatId(chat.id);
                   onSelectChat?.(chat.id);
                 }}
@@ -2514,6 +2673,14 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
               </div>
             ))}
         </div>
+        {chatContextMenu ? (
+          <ChatListContextMenu
+            x={chatContextMenu.x}
+            y={chatContextMenu.y}
+            onClose={() => setChatContextMenu(null)}
+            onDelete={() => void handleDeleteChat(chatContextMenu.chatId)}
+          />
+        ) : null}
       </div>
 
       <div className="flex-1 flex flex-col bg-[#F5F5F5] min-w-0">

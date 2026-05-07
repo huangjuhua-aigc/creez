@@ -1,0 +1,5 @@
+{
+  "backend": "linux-bwrap",
+  "status": "policy-layer",
+  "description": "Creez Linux sandbox policy layer. bubblewrap runner can be added here."
+}

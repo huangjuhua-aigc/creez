@@ -156,6 +156,13 @@ class ChatRepository {
     return this.getOrCreateMainChatForContact(rawPayload);
   }
 
+  exists(chatId) {
+    const id = String(chatId || "").trim();
+    if (!id) return false;
+    const row = this.db.prepare("SELECT id FROM chats WHERE id = ? LIMIT 1").get(id);
+    return Boolean(row?.id);
+  }
+
   /**
    * Get or create the single "main" chat for a contact (one conversation per bot).
    * All messages (local + Feishu etc.) go into this chat; message.channel_type marks source.
@@ -347,6 +354,25 @@ class ChatRepository {
         });
     }
     return { updated: true, id };
+  }
+
+  deleteChat(rawPayload = {}) {
+    const chatId = String(rawPayload.chatId || "").trim();
+    if (!chatId) throw new Error("chatId is required.");
+
+    const runDelete = this.db.transaction(() => {
+      const chatRow = this.db.prepare("SELECT contact_id FROM chats WHERE id = ? LIMIT 1").get(chatId);
+      const messagesResult = this.db.prepare("DELETE FROM messages WHERE chat_id = ?").run(chatId);
+      const chatResult = this.db.prepare("DELETE FROM chats WHERE id = ?").run(chatId);
+      return {
+        deleted: Number(chatResult?.changes || 0) > 0,
+        chatId,
+        contactId: chatRow?.contact_id || null,
+        messagesDeleted: Number(messagesResult?.changes || 0),
+      };
+    });
+
+    return runDelete();
   }
 }
 

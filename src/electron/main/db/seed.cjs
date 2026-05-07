@@ -64,6 +64,15 @@ function seedIfEmpty(db, options = {}) {
     INSERT OR IGNORE INTO chats (id, contact_id, created_at, updated_at, last_message_at)
     VALUES (@id, @contactId, @createdAt, @updatedAt, @lastMessageAt)
   `);
+  const getDefaultChat = db.prepare(`
+    SELECT id
+    FROM chats
+    WHERE contact_id = @contactId
+      AND channel_type = 'creez_app'
+      AND (channel_chat_id IS NULL OR channel_chat_id = '')
+    LIMIT 1
+  `);
+  const countMessagesForChat = db.prepare("SELECT COUNT(*) AS count FROM messages WHERE chat_id = ?");
   const insertContact = db.prepare(`
     INSERT OR IGNORE INTO contacts (id, type, name, avatar_path, is_default, created_at, updated_at, remote_agent_id, bot_origin)
     VALUES (@id, @type, @name, @avatarPath, @isDefault, @createdAt, @updatedAt, @remoteAgentId, @botOrigin)
@@ -141,16 +150,26 @@ function seedIfEmpty(db, options = {}) {
         updatedAt: base,
       });
     }
-    const chatInserted = insertChat.run({
-      id: BOT_CHAT_ID,
-      contactId: BOT_CONTACT_ID,
-      createdAt,
-      updatedAt: base,
-      lastMessageAt: createdAt,
-    }).changes;
-    const messageInserted = insertMessage.run({
+    let botChatId = getDefaultChat.get({ contactId: BOT_CONTACT_ID })?.id || "";
+    let chatInserted = 0;
+    if (!botChatId) {
+      chatInserted = insertChat.run({
+        id: BOT_CHAT_ID,
+        contactId: BOT_CONTACT_ID,
+        createdAt,
+        updatedAt: base,
+        lastMessageAt: createdAt,
+      }).changes;
+      botChatId = getDefaultChat.get({ contactId: BOT_CONTACT_ID })?.id || "";
+    }
+    if (!botChatId) {
+      throw new Error("seedIfEmpty: failed to create or resolve default assistant chat.");
+    }
+
+    const messageCount = Number(countMessagesForChat.get(botChatId)?.count || 0);
+    const messageInserted = messageCount === 0 ? insertMessage.run({
       id: BOT_WELCOME_MESSAGE_ID,
-      chatId: BOT_CHAT_ID,
+      chatId: botChatId,
       sender: "assistant",
       content: greeting,
       status: "done",
@@ -158,9 +177,9 @@ function seedIfEmpty(db, options = {}) {
       botId: BOT_CONTACT_ID,
       createdAt,
       updatedAt: createdAt,
-    }).changes;
+    }).changes : 0;
     updateChatMeta.run({
-      id: BOT_CHAT_ID,
+      id: botChatId,
       updatedAt: base,
     });
 
@@ -168,6 +187,7 @@ function seedIfEmpty(db, options = {}) {
       contactInserted,
       chatInserted,
       messageInserted,
+      botChatId,
     };
   });
   const result = tx();
@@ -178,7 +198,7 @@ function seedIfEmpty(db, options = {}) {
       result.messageInserted
     ),
     botContactId: BOT_CONTACT_ID,
-    botChatId: BOT_CHAT_ID,
+    botChatId: result.botChatId || BOT_CHAT_ID,
     botMessageId: BOT_WELCOME_MESSAGE_ID,
   };
 }

@@ -21,7 +21,7 @@
     "pack": "npm run build && electron-builder --win",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
-    "dist:installer": "npm run pack"
+    "dist:installer": "npm run build:win"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -140,16 +140,29 @@
       "assets/**/*",
       "skills/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "resources/sandbox",
+        "to": "sandbox"
+      }
+    ],
     "win": {
       "icon": "icons/icon_256x256.png",
       "target": [
         {
-          "target": "dir",
+          "target": "nsis",
           "arch": [
             "x64"
           ]
         }
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Creez"
     },
     "mac": {
       "icon": "icons/icon_512x512.png",

@@ -73,7 +73,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
 
       const config = await new AgentConfigBuilder()
         .setContactId(payload?.contactId)
-        .setScenario("desktop_chat")
+        .setScenario("default_assistant")
         .setDeps({ contactRepository, assistantConfigRepository, memoryStore, appStateStore, chatRepository })
         .setChatId(payload?.chatId ?? null)
         .setModelOverride({

@@ -64,6 +64,27 @@ test("seed ensures default bot contact/chat/message exist", async () => {
   dbWrapper.close();
 });
 
+test("seed reuses an existing default assistant chat when fixed chat id was deleted", async () => {
+  const homeDir = await createTempHome("creezv2-db-seed-reuse-chat-");
+  const dbWrapper = new CreezDatabase({ homeDir }).init();
+  const db = dbWrapper.db;
+
+  seedIfEmpty(db);
+  db.prepare("DELETE FROM chats WHERE id = ?").run("1f2e3d4c-5b6a-47d8-9c01-23456789abcd");
+  db.prepare(
+    "INSERT INTO chats (id, contact_id, created_at, updated_at, last_message_at, channel_type, channel_chat_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).run("chat_rebased_default", "11111111-1111-1111-1111-111111111111", 100, 100, 100, "creez_app", null);
+  db.prepare(
+    "INSERT INTO messages (id, chat_id, sender, content, status, bot_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run("m_rebased_default", "chat_rebased_default", "assistant", "kept", "done", "11111111-1111-1111-1111-111111111111", 100, 100);
+
+  const result = seedIfEmpty(db);
+  assert.equal(result.botChatId, "chat_rebased_default");
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM messages WHERE chat_id = ?").get("chat_rebased_default").count, 1);
+
+  dbWrapper.close();
+});
+
 test("appState repository reads and updates app_state table", async () => {
   const homeDir = await createTempHome("creezv2-db-appstate-");
   const dbWrapper = new CreezDatabase({ homeDir }).init();
@@ -131,6 +152,38 @@ test("chat repository lists chats and paginates messages", async () => {
   dbWrapper.close();
 });
 
+test("chat repository deletes chat history without deleting scheduled tasks", async () => {
+  const homeDir = await createTempHome("creezv2-db-chat-delete-");
+  const dbWrapper = new CreezDatabase({ homeDir }).init();
+  const db = dbWrapper.db;
+  const repo = new ChatRepository(db);
+
+  db.prepare(
+    "INSERT INTO contacts (id, type, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
+  ).run("contact_del", "bot", "Delete Bot", 50, 50);
+  db.prepare(
+    "INSERT INTO chats (id, contact_id, created_at, updated_at, last_message_at) VALUES (?, ?, ?, ?, ?)"
+  ).run("chat_del", "contact_del", 100, 300, 300);
+  db.prepare(
+    "INSERT INTO messages (id, chat_id, sender, content, status, bot_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run("m_del_1", "chat_del", "user", "remove me", "done", null, 150, 150);
+  db.prepare(
+    "INSERT INTO scheduled_tasks (id, contact_id, chat_id, cron_expression, task_prompt, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run("task_del_1", "contact_del", "chat_del", "* * * * *", "ping", "active", 200, 200);
+
+  const result = repo.deleteChat({ chatId: "chat_del" });
+  assert.equal(result.deleted, true);
+  assert.equal(result.contactId, "contact_del");
+  assert.equal(result.messagesDeleted, 1);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM chats WHERE id = ?").get("chat_del").count, 0);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM messages WHERE chat_id = ?").get("chat_del").count, 0);
+  const task = db.prepare("SELECT status, chat_id FROM scheduled_tasks WHERE id = ?").get("task_del_1");
+  assert.equal(task.status, "active");
+  assert.equal(task.chat_id, "chat_del");
+
+  dbWrapper.close();
+});
+
 test("chat IPC validates payload and returns data", async () => {
   const ipcMain = createIpcMainMock();
   const repo = {
@@ -139,6 +192,9 @@ test("chat IPC validates payload and returns data", async () => {
     },
     getMessages(payload) {
       return { items: [{ id: "1", chatId: payload.chatId }], hasMore: false, nextBefore: null };
+    },
+    deleteChat(payload) {
+      return { deleted: true, chatId: payload.chatId, contactId: "contact_x", messagesDeleted: 1 };
     },
   };
 
@@ -155,4 +211,12 @@ test("chat IPC validates payload and returns data", async () => {
   const valid = await ipcMain.handlers.get(CHANNELS.CHAT_GET_MESSAGES)(null, { chatId: "chat_x" });
   assert.equal(valid.ok, true);
   assert.equal(valid.data.items[0].chatId, "chat_x");
+
+  const invalidDelete = await ipcMain.handlers.get(CHANNELS.CHAT_DELETE)(null, {});
+  assert.equal(invalidDelete.ok, false);
+  assert.equal(invalidDelete.error.code, "VALIDATION_ERROR");
+
+  const deleted = await ipcMain.handlers.get(CHANNELS.CHAT_DELETE)(null, { chatId: "chat_x" });
+  assert.equal(deleted.ok, true);
+  assert.equal(deleted.data.deleted, true);
 });

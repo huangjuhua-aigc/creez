@@ -30,7 +30,7 @@ async function executeTask(task, deps) {
 
   const taskId = task.id;
   const contactId = task.contact_id;
-  const chatId = task.chat_id;
+  let chatId = task.chat_id;
   const taskPrompt = String(task.task_prompt || "").trim();
   const headlessSessionKey = `headless:${taskId}`;
 
@@ -52,6 +52,19 @@ async function executeTask(task, deps) {
   let assistantMessageId = null;
 
   try {
+    if (chatRepository && !chatRepository.exists(chatId)) {
+      const rebased = chatRepository.getOrCreateMainChatForContact({ contactId });
+      if (rebased?.chatId) {
+        console.log("[creez:task] rebased task to existing/new chat", { taskId, oldChatId: chatId, newChatId: rebased.chatId });
+        chatId = rebased.chatId;
+        try {
+          taskRepository.updateChatId(taskId, chatId);
+        } catch (e) {
+          console.warn("[creez:scheduler] update task chat_id failed", e?.message || e);
+        }
+      }
+    }
+
     const config = await new AgentConfigBuilder()
       .setContactId(contactId)
       .setScenario("headless")

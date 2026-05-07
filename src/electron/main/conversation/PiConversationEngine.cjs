@@ -44,6 +44,7 @@ class PiConversationEngine {
     const sender = createSenderAdapter(context);
     const config = {
       provider: context.provider,
+      scenario: context.scenario || "default",
       modelId: context.modelId,
       apiKey: context.apiKey,
       contactId: context.contactId || null,

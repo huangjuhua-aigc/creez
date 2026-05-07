@@ -9,7 +9,7 @@
  *     .setChatId(chatId)
  *     .build();
  *
- * Scenarios: desktop_chat | channel | remote_user | a2a_agent | auto_discovery | headless | summary
+ * Scenarios: default | default_assistant | trusted_desktop | desktop_chat | channel | remote_user | a2a_agent | auto_discovery | headless | summary
  */
 
 const os = require("node:os");
@@ -21,6 +21,9 @@ const { getEngineForContact } = require("./conversation/engineRegistry.cjs");
 const TAG = "[AgentConfigBuilder]";
 
 const VALID_SCENARIOS = new Set([
+  "default",
+  "default_assistant",
+  "trusted_desktop",
   "desktop_chat",
   "channel",
   "remote_user",
@@ -111,10 +114,12 @@ class AgentConfigBuilder {
     const isDefaultBot = assistantConfigId != null && defaultContactId != null
       && String(assistantConfigId) === String(defaultContactId);
 
-    // 2. Remote config overlay (desktop_chat only, when contact has remoteAgentId)
+    const effectiveScenario = this._scenario === "desktop_chat" ? "trusted_desktop" : this._scenario;
+
+    // 2. Remote config overlay (trusted desktop only, when contact has remoteAgentId)
     const contact = contactRepository ? contactRepository.getById(this._contactId) : null;
     const remoteAgentId = contact?.remoteAgentId || null;
-    if (remoteAgentId && this._scenario === "desktop_chat") {
+    if (remoteAgentId && effectiveScenario === "trusted_desktop") {
       rawConfig = await this._fetchRemoteConfig(remoteAgentId, rawConfig);
     }
 
@@ -145,9 +150,9 @@ class AgentConfigBuilder {
     const memoryContent = [memory.content || "", this._chatHistory].filter(Boolean).join("\n");
 
     // 6. Derived flags
-    const isExternalUser = this._scenario === "remote_user"
-      || this._scenario === "a2a_agent"
-      || this._scenario === "auto_discovery";
+    const isExternalUser = effectiveScenario === "remote_user"
+      || effectiveScenario === "a2a_agent"
+      || effectiveScenario === "auto_discovery";
 
     // 7. System prompt
     let assistantConfig = { ...rawConfig };
@@ -160,7 +165,7 @@ class AgentConfigBuilder {
     const sessionKey = this._sessionKey || null;
 
     const config = Object.freeze({
-      scenario: this._scenario,
+      scenario: effectiveScenario,
       chatId,
       sessionKey,
       contactId: this._contactId || null,
