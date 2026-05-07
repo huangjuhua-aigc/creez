@@ -641,6 +641,8 @@ interface ModelConfig {
 
 const COMMON_PROVIDERS = [
   { value: "openrouter", label: "OpenRouter" },
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "doubao", label: "Doubao" },
   { value: "openai", label: "OpenAI" },
   { value: "anthropic", label: "Anthropic" },
   { value: "google", label: "Google Gemini" },
@@ -670,6 +672,13 @@ const PROVIDER_MODELS: Record<string, string[]> = {
     "google/gemini-3-flash-preview",
     "minimax/minimax-m2.7",
     "minimax/minimax-m2.7-highspeed",
+  ],
+  deepseek: ["deepseek-v4-flash", "deepseek-v4-pro"],
+  doubao: [
+    "doubao-seed-2-0-pro-260215",
+    "doubao-seed-2-0-lite-260428",
+    "doubao-seed-2-0-code-preview-260215",
+    "doubao-seed-2-0-mini-260428",
   ],
   openai: [
     "gpt-5.4",
@@ -724,7 +733,9 @@ const PROVIDER_ALIAS_TO_VALUE: Record<string, string> = {
   "智谱 AI": "zai",
   "openai-codex": "openai-codex",
   "github-copilot": "github-copilot",
-  DeepSeek: "openrouter",
+  DeepSeek: "deepseek",
+  Doubao: "doubao",
+  "豆包": "doubao",
   Moonshot: "openrouter",
   "Volcengine Ark": "openrouter",
 };
@@ -905,15 +916,17 @@ function ModelSettings() {
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Model Identifier</label>
-                                    <select 
+                                    <input
+                                        list={`model-options-${config.id}`}
                                         value={config.model}
                                         onChange={(e) => updateModel(config.id, 'model', e.target.value)}
                                         className="w-full appearance-none bg-gray-50 border border-gray-200 text-gray-800 py-2.5 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#07C160]/20 focus:border-[#07C160] font-medium transition-all shadow-inner"
-                                    >
+                                    />
+                                    <datalist id={`model-options-${config.id}`}>
                                         {(PROVIDER_MODELS[config.provider] || [config.model]).map((model) => (
                                             <option key={model} value={model}>{model}</option>
                                         ))}
-                                    </select>
+                                    </datalist>
                                 </div>
                             </div>
 
