@@ -1,7 +1,7 @@
-# Build Creez Electron app (creezv2) for Windows and Mac.
+# Build Creez Electron installers for Windows and Mac.
 # Trigger: push to release branch, or manually via Actions tab ("Run workflow").
-# Artifacts: after a run, open the workflow run → Artifacts section to download
-#            "creez-electron-win" (Windows) and "creez-electron-mac" (Mac).
+# Artifacts: after a run, open the workflow run's Artifacts section to download
+#            "creez-installer-win" (Windows) and "creez-installer-mac" (Mac).
 name: Build Electron (Creez)
 
 on:
@@ -40,11 +40,14 @@ jobs:
         working-directory: src
         run: npm run build:${{ matrix.platform }}
         env:
-          # Skip code signing when no certs are configured (avoids hang/failure)
+          # Skip code signing when no certs are configured (avoids hang/failure).
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Upload artifacts
+      - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: creez-electron-${{ matrix.platform }}
-          path: src/release/
+          name: creez-installer-${{ matrix.platform }}
+          path: |
+            src/release/*.exe
+            src/release/*.dmg
+          if-no-files-found: error
