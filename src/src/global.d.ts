@@ -336,6 +336,9 @@ declare global {
             config: Record<string, string>;
           }>;
           status: string;
+          agent_card_json?: unknown;
+          a2a_strategy_json?: unknown;
+          visibility?: string;
           qrcode_data_uri: string | null;
           created_at: string;
           updated_at: string;
@@ -346,6 +349,9 @@ declare global {
           greeting_message?: string;
           knowledge?: string;
           avatar_url?: string | null;
+          agent_card_json?: unknown;
+          a2a_strategy_json?: unknown;
+          visibility?: string;
           notify_channels?: Array<{ id: string; channel_type: string; enabled: boolean; config: Record<string, string> }>;
         }) => Promise<IpcResult<{ id: string; created_at: string }>>;
         update: (payload: {
@@ -355,12 +361,45 @@ declare global {
           greeting_message?: string;
           knowledge?: string;
           avatar_url?: string | null;
+          agent_card_json?: unknown;
+          a2a_strategy_json?: unknown;
+          visibility?: string;
           notify_channels?: Array<{ id: string; channel_type: string; enabled: boolean; config: Record<string, string> }>;
         }) => Promise<IpcResult<{ id: string; updated_at: string }>>;
         publish: (payload: { id: string }) => Promise<IpcResult<{ id: string; status: string; updated_at: string }>>;
         delete: (payload: { id: string }) => Promise<IpcResult<Record<string, never>>>;
         search: (payload: { q: string }) => Promise<IpcResult<{ items: Array<{ id: string; name: string; avatar_url: string | null; description: string; updated_at: string }> }>>;
         recent: () => Promise<IpcResult<{ items: Array<{ id: string; name: string; avatar_url: string | null; description: string; created_at: string }> }>>;
+        importOpenClaw: (payload?: { configPath?: string; importId?: string }) => Promise<IpcResult<{
+          importId: string;
+          agent: {
+            id: string;
+            name: string;
+            avatar_url: string | null;
+            system_prompt: string;
+            greeting_message: string;
+            knowledge: string;
+            skills_json: Record<string, boolean>;
+            status: string;
+            agent_card_json: unknown;
+            a2a_strategy_json: unknown;
+            visibility: string;
+            qrcode_data_uri?: string | null;
+          };
+          steps: Array<{ message: string; at: string }>;
+          summary: {
+            configPath: string;
+            memoryPath: string | null;
+            copiedSkills: number;
+            skippedSkills: number;
+            generatedNameOrGreeting: boolean;
+            normalizedBy?: "pi-agent" | "rules";
+          };
+        }>>;
+        cancelOpenClawImport: (payload: { importId: string }) => Promise<IpcResult<{ cancelled: boolean }>>;
+        onOpenClawImportProgress: (
+          listener: (payload: { importId: string; message: string; at: string }) => void
+        ) => () => void;
         generateQrcode: (payload: {
           agentId: string;
           avatarUrl?: string | null;

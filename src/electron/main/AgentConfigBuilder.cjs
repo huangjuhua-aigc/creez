@@ -149,8 +149,12 @@ class AgentConfigBuilder {
     const workDir = await this._resolveWorkDir(isDefaultBot, creezHome, appStateStore);
 
     // 5. Memory
+    const defaultBotMemoryPath = !isDefaultBot && this._contactId
+      ? path.join(workDir, "data", "memory.md")
+      : undefined;
+    const memoryPath = this._memoryPath || defaultBotMemoryPath;
     const memory = memoryStore
-      ? await memoryStore.read(this._memoryPath).catch(() => ({ content: "", path: "" }))
+      ? await memoryStore.read(memoryPath).catch(() => ({ content: "", path: "" }))
       : { content: "", path: "" };
     const memoryContent = [memory.content || "", this._chatHistory].filter(Boolean).join("\n");
 

@@ -123,6 +123,13 @@ contextBridge.exposeInMainWorld("electron", {
     delete: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_DELETE, payload),
     search: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_SEARCH, payload),
     recent: () => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_RECENT),
+    importOpenClaw: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_IMPORT_OPENCLAW, payload ?? {}),
+    cancelOpenClawImport: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_CANCEL_OPENCLAW_IMPORT, payload ?? {}),
+    onOpenClawImportProgress: (listener) => {
+      const wrapped = (_event, payload) => listener(payload);
+      ipcRenderer.on(CHANNELS.AGENT_BUILDER_OPENCLAW_IMPORT_PROGRESS, wrapped);
+      return () => ipcRenderer.removeListener(CHANNELS.AGENT_BUILDER_OPENCLAW_IMPORT_PROGRESS, wrapped);
+    },
     generateQrcode: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_GENERATE_QRCODE, payload),
     getQrcode: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_GET_QRCODE, payload),
     getDeviceId: () => ipcRenderer.invoke(CHANNELS.APP_GET_DEVICE_ID),

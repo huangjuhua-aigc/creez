@@ -7,10 +7,25 @@ const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
 const { isCreezVerboseDebug } = require("./creezDebug.cjs");
 const { ensureBotDir, resolveCreezHome } = require("./creezPaths.cjs");
 const { ensureDeviceId } = require("./creezDeviceId.cjs");
+const {
+  resolveOpenClawConfigPath,
+  resolveOpenClawSource,
+  readOpenClawHomeConfig,
+  readConfigWithIncludes,
+  pickOpenClawAgent,
+  buildSystemPrompt,
+  collectSkillRefs,
+  extractMemory,
+  copySkillRefs,
+  generateNameAndGreeting,
+} = require("./openClawImport.cjs");
+const { normalizeOpenClawWithPi } = require("./openClawPiNormalizer.cjs");
 
 function vlog(...args) {
   if (isCreezVerboseDebug()) console.log(...args);
 }
+
+const openClawImportTasks = new Map();
 
 /** Agent search/recent gateway calls: set CREEZ_DEBUG_AGENT_SEARCH=1 or CREEZ_DEBUG_VERBOSE=1 */
 function isAgentSearchDebug() {
@@ -610,6 +625,211 @@ function registerAgentBuilderIpc(ipcMain, deps = {}) {
         });
       }
       return err("NETWORK_ERROR", e?.message || String(e));
+    }
+  });
+
+  ipcMain.handle(CHANNELS.AGENT_BUILDER_CANCEL_OPENCLAW_IMPORT, async (_event, payload = {}) => {
+    const importId = String(payload?.importId || "").trim();
+    const task = importId ? openClawImportTasks.get(importId) : null;
+    if (!task) return ok({ cancelled: false });
+    console.log(`[OpenClawImport:${importId}] cancel requested`);
+    task.controller.abort();
+    return ok({ cancelled: true });
+  });
+
+  ipcMain.handle(CHANNELS.AGENT_BUILDER_IMPORT_OPENCLAW, async (event, payload = {}) => {
+    if (!contactRepository || !assistantConfigRepository) {
+      return err("INTERNAL_ERROR", "repositories not ready");
+    }
+    const importId = String(payload?.importId || randomUUID()).trim();
+    const controller = new AbortController();
+    const signal = controller.signal;
+    openClawImportTasks.set(importId, { controller });
+    const steps = [];
+    const status = (message) => {
+      const text = String(message || "").trim();
+      if (!text) return;
+      const item = { message: text, at: new Date().toISOString() };
+      steps.push(item);
+      console.log(`[OpenClawImport:${importId}] ${text}`);
+      try {
+        event.sender.send(CHANNELS.AGENT_BUILDER_OPENCLAW_IMPORT_PROGRESS, {
+          importId,
+          ...item,
+        });
+      } catch { /* renderer may be gone */ }
+    };
+    const assertNotCancelled = () => {
+      if (signal.aborted) {
+        const e = new Error("OpenClaw import cancelled.");
+        e.code = "CANCELLED";
+        throw e;
+      }
+    };
+
+    try {
+      status("Starting OpenClaw import.");
+      assertNotCancelled();
+      const source = payload?.configPath
+        ? { type: "config", configPath: path.resolve(String(payload.configPath)) }
+        : await resolveOpenClawSource(status);
+      assertNotCancelled();
+      const fsSync = require("node:fs");
+      if (source.type === "missing" || (source.type === "config" && !fsSync.existsSync(source.configPath))) {
+        status("OpenClaw config file was not found.");
+        return err(
+          "OPENCLAW_NOT_FOUND",
+          `No OpenClaw data found. Install/run OpenClaw first, or set OPENCLAW_HOME/OPENCLAW_CONFIG_PATH. Checked: ${source.configPath || source.home || ""}`,
+          { steps, configPath: source.configPath || "", openClawHome: source.home || "" },
+        );
+      }
+      let config;
+      let configDir;
+      let configPath = "";
+      if (source.type === "home") {
+        status("Reading OpenClaw data directory.");
+        config = await readOpenClawHomeConfig(source.home, status, signal);
+        configDir = source.home;
+      } else {
+        configPath = source.configPath;
+        status(`OpenClaw config file found: ${configPath}`);
+        status("Reading OpenClaw JSON5 config.");
+        config = await readConfigWithIncludes(configPath, status, new Set(), signal);
+        configDir = path.dirname(path.resolve(configPath));
+      }
+      const { defaults, agent, agentCount } = pickOpenClawAgent(config);
+      if (agentCount > 1) {
+        status(`Found ${agentCount} OpenClaw agents; importing the default/first one for this run.`);
+      }
+
+      status("Extracting persona prompt.");
+      assertNotCancelled();
+      const systemPrompt = buildSystemPrompt(defaults, agent);
+      if (!systemPrompt) {
+        return err("VALIDATION_ERROR", "No OpenClaw persona/system prompt was found.", { steps, configPath });
+      }
+
+      status("Extracting memory.");
+      assertNotCancelled();
+      const memory = await extractMemory(config, defaults, agent, configDir);
+      const defaultContactId = contactRepository.getDefaultAssistantConfigId();
+      const defaultConfig = assistantConfigRepository.getRawConfigById(defaultContactId);
+
+      assertNotCancelled();
+      const agentId = randomUUID();
+      const skillRefs = collectSkillRefs(defaults, agent, configDir);
+      const skillFlags = {};
+      for (const ref of skillRefs) {
+        const key = String(ref.raw || ref.path || "").split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "");
+        if (key) skillFlags[key] = true;
+      }
+
+      let piDraft = null;
+      try {
+        piDraft = await normalizeOpenClawWithPi({
+          openClawConfig: config,
+          pickedAgent: { defaults, agent },
+          extractedSystemPrompt: systemPrompt,
+          extractedMemory: memory,
+          skillRefs,
+          defaultConfig,
+          creezHome: getCreezHome() || resolveCreezHome(),
+          botId: agentId,
+          status,
+          signal,
+        });
+      } catch (e) {
+        if (e?.code === "CANCELLED") throw e;
+        status(`Pi normalization failed; falling back to rule-based migration: ${e?.message || String(e)}`);
+      }
+
+      let generated = { name: "", greetingMessage: "", generated: false };
+      if (!piDraft) {
+        generated = await generateNameAndGreeting({
+          agent,
+          systemPrompt,
+          memory,
+          defaultConfig,
+          status,
+          signal,
+        });
+      }
+      const name = piDraft?.name || generated.name || "OpenClaw Agent";
+      const greetingMessage = piDraft?.greeting_message || generated.greetingMessage || "";
+      const finalSystemPrompt = piDraft?.system_prompt || systemPrompt;
+      const finalKnowledge = piDraft?.knowledge || memory || "";
+
+      status("Creating local Creez draft bot.");
+      assertNotCancelled();
+      contactRepository.ensureAuthorCreatedAgent({
+        id: agentId,
+        name,
+        avatar_url: agent.avatar || agent.avatarUrl || agent.avatar_url || null,
+        greeting_message: greetingMessage,
+        system_prompt: finalSystemPrompt,
+        skills_json: skillFlags,
+      });
+
+      const creezHome = getCreezHome() || resolveCreezHome();
+      const botDir = ensureBotDir(creezHome, agentId);
+      const memoryPath = path.join(botDir, "data", "memory.md");
+      if (finalKnowledge) {
+        status("Writing migrated memory markdown.");
+        assertNotCancelled();
+        const fs = require("node:fs/promises");
+        await fs.mkdir(path.dirname(memoryPath), { recursive: true });
+        await fs.writeFile(memoryPath, finalKnowledge, "utf8");
+      } else {
+        status("No OpenClaw memory found.");
+      }
+
+      let skillsResult = piDraft?.skillCopyResult || null;
+      if (skillsResult) {
+        status("OpenClaw skills were copied by Pi agent tool.");
+      } else {
+        status("Copying OpenClaw skills into the new bot skill directory.");
+        skillsResult = await copySkillRefs(skillRefs, path.join(botDir, "skills"), status, signal);
+      }
+      const promptWithMemoryHint = finalKnowledge
+        ? `${finalSystemPrompt}\n\n## Migrated Memory\nOpenClaw memory was imported to: ${memoryPath}`
+        : finalSystemPrompt;
+
+      assertNotCancelled();
+      assistantConfigRepository.saveConfigById(agentId, {
+        name,
+        avatar: agent.avatar || agent.avatarUrl || agent.avatar_url || null,
+        systemPrompt: promptWithMemoryHint,
+        greetingMessage,
+        knowledge: finalKnowledge,
+        skills: skillFlags,
+        agentCardJson: null,
+        visibility: "public",
+        status: "draft",
+      });
+
+      broadcastContactListChanged();
+      status("OpenClaw import complete. Review the draft, then save and publish when ready.");
+      const detail = configToAgentDetail(assistantConfigRepository.getRawConfigById(agentId));
+      return ok({
+        importId,
+        agent: detail,
+        steps,
+        summary: {
+          configPath: configPath || null,
+          openClawHome: source.home || null,
+          memoryPath: finalKnowledge ? memoryPath : null,
+          copiedSkills: skillsResult.copied.length,
+          skippedSkills: skillsResult.skipped.length,
+          generatedNameOrGreeting: Boolean(generated.generated || piDraft),
+          normalizedBy: piDraft ? "pi-agent" : "rules",
+        },
+      });
+    } catch (e) {
+      status(`Import failed: ${e?.message || String(e)}`);
+      const code = e?.code === "CANCELLED" ? "CANCELLED" : "OPENCLAW_IMPORT_ERROR";
+      return err(code, e?.message || String(e), { steps, importId });
+    } finally {
+      openClawImportTasks.delete(importId);
     }
   });
 }

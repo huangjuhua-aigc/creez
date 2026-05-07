@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
-import { Bot, Plus, X, Sparkles, Camera, Database, ChevronDown, ChevronUp, Save, Globe, Trash2, Network, Zap, RefreshCw, QrCode, Download, Loader2 } from "lucide-react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { Bot, Plus, X, Sparkles, Camera, Database, ChevronDown, ChevronUp, Save, Globe, Trash2, Network, Zap, RefreshCw, QrCode, Download, Loader2, Upload, CheckCircle2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { cn } from "../../utils/cn";
 import { toast } from "sonner";
@@ -29,6 +29,8 @@ type AgentDetail = {
   a2a_strategy_json: A2AStrategyData | null;
   visibility: string;
 };
+
+type ImportStep = { message: string; at?: string };
 
 const EMPTY_AGENT: AgentDetail = {
   id: "",
@@ -88,6 +90,11 @@ export function AgentBuilder() {
   const [qrcodeImage, setQrcodeImage] = useState<string>("");
   const [qrcodeLoading, setQrcodeLoading] = useState(false);
   const [isQrcodeOpen, setIsQrcodeOpen] = useState(false);
+  const [importingOpenClaw, setImportingOpenClaw] = useState(false);
+  const [importSteps, setImportSteps] = useState<ImportStep[]>([]);
+  const [importSummary, setImportSummary] = useState("");
+  const [importFailed, setImportFailed] = useState(false);
+  const importJobIdRef = useRef("");
 
   const api = window.electron?.agentBuilder;
 
@@ -104,6 +111,20 @@ export function AgentBuilder() {
   useEffect(() => {
     loadList();
   }, [loadList]);
+
+  useEffect(() => {
+    const unsubscribe = api?.onOpenClawImportProgress?.((payload: { importId?: string; message?: string; at?: string }) => {
+      if (!payload?.message) return;
+      if (payload.importId && importJobIdRef.current && payload.importId !== importJobIdRef.current) return;
+      setImportSteps((prev) => {
+        if (prev[prev.length - 1]?.message === payload.message) return prev;
+        return [...prev, { message: payload.message, at: payload.at }];
+      });
+    });
+    return () => {
+      if (typeof unsubscribe === "function") unsubscribe();
+    };
+  }, [api]);
 
   const loadAgent = useCallback(async (id: string) => {
     if (!api) return;
@@ -152,6 +173,89 @@ export function AgentBuilder() {
     setIsA2AOpen(false);
     setQrcodeImage("");
     setIsQrcodeOpen(false);
+  };
+
+  const applyAgentDetail = (d: AgentDetail & { qrcode_data_uri?: string | null }) => {
+    const vis = d.visibility || "public";
+    setForm({
+      id: d.id,
+      name: d.name,
+      avatar_url: d.avatar_url,
+      system_prompt: d.system_prompt,
+      greeting_message: d.greeting_message,
+      knowledge: d.knowledge || "",
+      skills_json: d.skills_json || { knowledge_search: true, vc_lead_capture: true },
+      status: d.status,
+      agent_card_json: normalizeAgentCardFromApi(d.agent_card_json, vis),
+      a2a_strategy_json: d.a2a_strategy_json || null,
+      visibility: vis,
+    });
+    setAvatarPreview(d.avatar_url || "");
+    setIsNew(false);
+    setIsKnowledgeOpen(true);
+    setIsA2AOpen(!!d.agent_card_json || !!d.a2a_strategy_json);
+    if (d.qrcode_data_uri) {
+      setQrcodeImage(d.qrcode_data_uri);
+      setIsQrcodeOpen(true);
+    } else {
+      setQrcodeImage("");
+      setIsQrcodeOpen(false);
+    }
+  };
+
+  const handleImportOpenClaw = async () => {
+    if (importingOpenClaw) {
+      const importId = importJobIdRef.current;
+      setImportSteps((prev) => [...prev, { message: "Stop requested. Cancelling migration..." }]);
+      await api?.cancelOpenClawImport?.({ importId });
+      return;
+    }
+    if (!api?.importOpenClaw) {
+      toast.error("OpenClaw import is not available in this build");
+      return;
+    }
+    const importId = `openclaw-${Date.now()}`;
+    importJobIdRef.current = importId;
+    setImportingOpenClaw(true);
+    setImportFailed(false);
+    setImportSummary("");
+    setImportSteps([
+      { message: "Starting OpenClaw migration..." },
+      { message: "Checking whether OpenClaw is installed and configured." },
+    ]);
+    try {
+      const result = await api.importOpenClaw({ importId });
+      if (result.ok) {
+        setImportSteps(result.data.steps || []);
+        const agent = result.data.agent as AgentDetail & { qrcode_data_uri?: string | null };
+        setSelectedId(agent.id);
+        applyAgentDetail(agent);
+        await loadList();
+        const summary = result.data.summary;
+        const normalizedBy = summary.normalizedBy === "pi-agent" ? "Pi agent" : "rules";
+        setImportSummary(
+          `Imported from ${summary.configPath}. Normalized by ${normalizedBy}. Skills copied: ${summary.copiedSkills}, skipped: ${summary.skippedSkills}.`
+        );
+        toast.success("OpenClaw agent imported as a draft");
+      } else {
+        setImportFailed(true);
+        const details = result.error?.details as { steps?: ImportStep[] } | undefined;
+        if (details?.steps?.length) setImportSteps(details.steps);
+        if (result.error?.code === "CANCELLED") {
+          toast.info("OpenClaw migration stopped");
+        } else if (result.error?.code === "OPENCLAW_NOT_FOUND") {
+          toast.error("No OpenClaw config found. Install/run OpenClaw first or set OPENCLAW_CONFIG_PATH.");
+        } else {
+          toast.error(result.error?.message || "OpenClaw import failed");
+        }
+      }
+    } catch (e: unknown) {
+      setImportFailed(true);
+      toast.error(e instanceof Error ? e.message : "OpenClaw import failed");
+    } finally {
+      setImportingOpenClaw(false);
+      importJobIdRef.current = "";
+    }
   };
 
   const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -275,6 +379,70 @@ export function AgentBuilder() {
   };
 
   const showForm = isNew || selectedId !== null;
+  const openClawImportPanel = (
+    <div className="rounded-xl border border-emerald-100 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-bold text-gray-800">OpenClaw Migration</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Import persona, memory markdown, and skill files into a new draft bot.
+          </p>
+        </div>
+        <Button
+          type="button"
+          onClick={handleImportOpenClaw}
+          className={cn(
+            "text-white px-4 py-2 rounded-lg font-semibold transition-all shadow-sm flex items-center gap-2 h-auto",
+            importingOpenClaw ? "bg-red-500 hover:bg-red-600" : "bg-[#07C160] hover:bg-[#06ad56]"
+          )}
+        >
+          {importingOpenClaw ? <X size={16} /> : <Upload size={16} />}
+          {importingOpenClaw ? "Stop Migration" : "Import OpenClaw"}
+        </Button>
+      </div>
+      {(importingOpenClaw || importSteps.length > 0) && (
+        <div className="mt-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+          <div className="flex items-center gap-2 text-xs font-semibold text-gray-700">
+            {importingOpenClaw && <Loader2 size={14} className="animate-spin text-[#07C160]" />}
+            Migration status
+          </div>
+          <div className="mt-2 max-h-36 overflow-y-auto space-y-1.5 custom-scrollbar">
+            {importSteps.map((step, idx) => {
+              const isLast = idx === importSteps.length - 1;
+              const isActive = importingOpenClaw && isLast;
+              const isFailed = importFailed && isLast;
+              const isComplete = !isActive && !isFailed;
+              return (
+                <div
+                  key={`${step.message}-${idx}`}
+                  className={cn(
+                    "relative overflow-hidden flex items-start gap-2 rounded-md px-2 py-1.5 text-xs transition-colors",
+                    isActive ? "bg-emerald-50 text-emerald-800" : "text-gray-600",
+                    isFailed ? "bg-red-50 text-red-700" : ""
+                  )}
+                >
+                  <span className="mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                    {isComplete ? (
+                      <CheckCircle2 size={14} className="text-[#07C160]" />
+                    ) : isFailed ? (
+                      <X size={12} className="text-red-500" />
+                    ) : (
+                      <span className="h-2 w-2 rounded-full bg-[#07C160] shadow-[0_0_0_4px_rgba(7,193,96,0.12)] migration-breathe" />
+                    )}
+                  </span>
+                  <span className="relative z-10 leading-5">{step.message}</span>
+                  {isActive && (
+                    <span className="migration-scan pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-transparent via-[#07C160]/20 to-transparent" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {importSummary && <p className="mt-2 text-xs text-emerald-700">{importSummary}</p>}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="flex w-full h-full bg-[#FAFAFA]">
@@ -353,6 +521,7 @@ export function AgentBuilder() {
           </div>
         ) : (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 min-h-[600px] flex flex-col space-y-8 animate-in fade-in duration-300">
+            {isNew && openClawImportPanel}
 
             {/* Header */}
             <header className="border-b border-gray-100 pb-4 flex justify-between items-center">
