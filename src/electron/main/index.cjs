@@ -66,6 +66,12 @@ const { A2AGatewayClient } = require("./a2a/A2AGatewayClient.cjs");
 const { A2ASessionOrchestrator } = require("./a2a/A2ASessionOrchestrator.cjs");
 const { registerA2AIpc } = require("./a2a/A2AIpcBridge.cjs");
 const { resolveCreezBackendBase } = require("./creezBackendBase.cjs");
+const { GmailRepository } = require("./google/gmailRepository.cjs");
+const { GmailClient } = require("./google/gmailClient.cjs");
+const { GmailGogClient } = require("./google/gmailGogClient.cjs");
+const { GmailCompositeClient } = require("./google/gmailCompositeClient.cjs");
+const { GmailOAuthService } = require("./google/gmailAuth.cjs");
+const { registerGmailIpc } = require("./google/gmailIpc.cjs");
 
 const isMac = process.platform === "darwin";
 const isDev = !app.isPackaged || Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -380,6 +386,11 @@ app.whenReady().then(async () => {
     const taskRepository = new TaskRepository(creezDb.db);
     const assistantConfigRepository = new AssistantConfigRepository(creezDb.db);
     const channelConfigRepository = new ChannelConfigRepository(creezDb.db);
+    const gmailRepository = new GmailRepository(creezDb.db);
+    const nativeGmailClient = new GmailClient({ repository: gmailRepository });
+    const gmailGogClient = new GmailGogClient({ repository: gmailRepository });
+    const gmailClient = new GmailCompositeClient({ repository: gmailRepository, nativeClient: nativeGmailClient, gogClient: gmailGogClient });
+    const gmailOAuthService = new GmailOAuthService({ repository: gmailRepository, gmailClient: nativeGmailClient });
     const memoryStore = new MemoryStore({ creezHome });
     const skillManager = new SkillManager({ creezHome });
 
@@ -430,6 +441,7 @@ app.whenReady().then(async () => {
     registerWorkspaceIpc(ipcMain, appStateStore);
     registerStoryboardIpc(ipcMain, { appStateStore, skillManager });
     registerSandboxIpc(ipcMain, { creezHome });
+    registerGmailIpc(ipcMain, { gmailOAuthService, gmailGogClient, gmailRepository });
     registerAttachmentIpc(ipcMain);
     registerAgentBuilderIpc(ipcMain, {
       appStateStore,
@@ -445,6 +457,7 @@ app.whenReady().then(async () => {
       chatRepository,
       creezHome,
       channelManager,
+      gmailClient,
     });
 
     function sendToRenderer(payload) {

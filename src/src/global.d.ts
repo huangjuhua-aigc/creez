@@ -300,6 +300,9 @@ declare global {
             result?: unknown;
             partialResult?: unknown;
             isError?: unknown;
+            action?: string;
+            title?: string;
+            chatId?: string | null;
           }) => void
         ) => () => void;
         onError: (listener: (message: string) => void) => () => void;
@@ -317,6 +320,15 @@ declare global {
           allowed: boolean;
           reason?: string;
         }) => Promise<IpcResult<{ resolved: boolean }>>;
+      };
+      gmail?: {
+        connect: () => Promise<IpcResult<{ connected: boolean; googleEmail?: string; scope?: string }>>;
+        status: () => Promise<IpcResult<{ connected: boolean; googleEmail?: string; scope?: string; expiryDate?: number }>>;
+        disconnect: () => Promise<IpcResult<{ connected: boolean }>>;
+        gogChooseExecutable: () => Promise<IpcResult<{ canceled: boolean; path: string }>>;
+        gogChooseCredentials: () => Promise<IpcResult<{ canceled: boolean; path: string }>>;
+        gogSetup: (payload: { credentialsPath: string; googleEmail: string }) => Promise<IpcResult<{ connected: boolean; provider?: string; googleEmail?: string; scope?: string }>>;
+        decideAuth: (payload: { id: string; allowed: boolean; reason?: string }) => Promise<IpcResult<{ resolved: boolean }>>;
       };
       agentBuilder: {
         list: () => Promise<IpcResult<{ items: Array<{ id: string; name: string; avatar_url: string | null; status: string; updated_at: string }> }>>;

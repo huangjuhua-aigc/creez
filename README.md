@@ -17,6 +17,14 @@ The app ships with two built-in Agents:
 - **Assistant** — Your personal assistant Agent. It can read local files and run tasks like data analysis. Before use, open the settings (gear icon in the bottom-left), then configure persona, skills, memory, and model.
 - **Roundcloser** — An Agent for investors (VCs). If you're interested in Creez and want to learn more, you can talk to Roundcloser first; it will decide whether to arrange a meeting with the founders. Investors interested in the creator 3.0 era are welcome to reach out via Roundcloser.
 
+### What's new
+
+- **OpenClaw migration**: import an existing OpenClaw agent into Creez from the Agent Builder. Creez detects the OpenClaw data directory or CLI config, imports persona, memory, and skills, then creates a draft Agent for review before publishing.
+- **Safer local execution**: Agent file and shell operations now run through the Creez sandbox policy layer. Protected actions can ask for confirmation, and chat sessions include a permission mode selector for default permission or full access.
+- **More model providers**: besides the existing providers, Creez now supports **DeepSeek** and **Doubao** model configuration.
+- **Channel deployment**: Agents can be deployed to **Feishu / Lark** or **WeCom** groups so external users can chat with them directly.
+- **Build pipeline**: GitHub Actions can build Windows and macOS installers from the `release` branch or manual workflow runs.
+
 ### Configuration
 
 In **Settings**, configure the following to use Creez:
@@ -32,12 +40,18 @@ In **Settings**, configure the following to use Creez:
    ![Skills](screenshots/skill.png)
 
 3. **Models**  
-   Add your preferred models in settings and provide each model's **API Key** so the Agent can call them.
+   Add your preferred models in settings and provide each model's **API Key** so the Agent can call them. Supported provider options include OpenAI-compatible providers, OpenRouter, Anthropic, Google, DeepSeek, and Doubao.
 
 4. **Channels (multi-platform)**  
-   Under **Channel Config**, connect messaging platforms so you can use Creez from multiple clients. **Feishu / Lark** is currently supported. Enter your Feishu Open Platform APP ID, APP SECRET, and target user/bot OPEN ID, then save and enable the channel.
+   Under **Channel Config**, connect messaging platforms so you can use Creez from multiple clients. **Feishu / Lark** and **WeCom** are currently supported. For Feishu, enter your Feishu Open Platform APP ID, APP SECRET, and target user/bot OPEN ID. For WeCom, enter the WeCom AI Bot ID. Save and enable the channel after configuration.
 
    ![Channel Config](screenshots/channel.png)
+
+5. **Agent Builder & OpenClaw migration**  
+   In **Agent Builder**, create custom Agents or use **Import OpenClaw** to migrate an existing OpenClaw agent. If Creez cannot find OpenClaw automatically, set `OPENCLAW_HOME` or `OPENCLAW_CONFIG_PATH` before launching the app.
+
+6. **Sandbox permission mode**  
+   In the chat composer, choose **Default permission** for sandboxed execution with confirmation prompts, or **Full access** when you intentionally want the Agent to operate with broader local permissions.
 
 ## Download
 
@@ -61,7 +75,7 @@ Verify with `node -v` and `npm -v`.
 ### Development
 
 ```bash
-cd creez
+cd creez/src
 npm install
 npm run dev
 ```
@@ -71,11 +85,22 @@ This starts the Vite dev server and the Electron window. Refresh the window afte
 ### Production (build then start)
 
 ```bash
+cd creez/src
 npm run build
 npm run start
 ```
 
 Or use `npm run start:prod` to build and then start in one step.
+
+### Build installers
+
+```bash
+cd creez/src
+npm run build:win
+npm run build:mac
+```
+
+Built artifacts are written to `src/release/`. The repository also includes a GitHub Actions workflow that builds Windows and macOS installers on pushes to the `release` branch or via manual dispatch.
 
 ## More
 

@@ -7,6 +7,7 @@ import { createWebFetchHandler } from "./handlers/webFetchHandler.mjs";
 import { createImageGeneratorHandler } from "./handlers/imageGeneratorHandler.mjs";
 import { createVideoGeneratorHandler } from "./handlers/videoGeneratorHandler.mjs";
 import { createChannelSendHandler } from "./handlers/channelSendHandler.mjs";
+import { createGmailHandler } from "./handlers/gmailHandler.mjs";
 
 const require = createRequire(import.meta.url);
 const { BUILTIN_SKILL_IDS } = require("../../builtinSkillIds.cjs");
@@ -40,6 +41,11 @@ function isScheduledTaskEnabled(runtimeContext = {}) {
 /** web_fetch / image_generator / video_generator / channel_send — default and non-default bots (not gated by skills_json). */
 function isDefaultBotToolEnabled(runtimeContext = {}) {
   return isDefaultBot(runtimeContext) || isNonDefaultBot(runtimeContext);
+}
+
+function isGmailEnabled(runtimeContext = {}) {
+  if (runtimeContext.isExternalUser) return false;
+  return isDefaultBotToolEnabled(runtimeContext);
 }
 
 function createBuiltinSkillRegistry() {
@@ -165,6 +171,31 @@ function createBuiltinSkillRegistry() {
     }),
     isEnabled: isDefaultBotToolEnabled,
     createHandler: createChannelSendHandler,
+  });
+
+  definitions.set("gmail", {
+    id: "gmail",
+    label: "Gmail",
+    description:
+      "Use or connect the user's Gmail account. When the user asks to connect/link Gmail, call action='connect'. Supports action='status' to check connection, action='list' to search/list messages, action='read' to read a message by id, and action='send' to send an email. Sending email requires user confirmation.",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("connect"), Type.Literal("status"), Type.Literal("list"), Type.Literal("read"), Type.Literal("send")], {
+        description: "Operation: connect, status, list, read, or send.",
+      }),
+      query: Type.Optional(Type.String({ description: "Gmail search query for action=list, e.g. from:a@example.com newer_than:7d." })),
+      maxResults: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Max messages for action=list. Default 10." })),
+      pageToken: Type.Optional(Type.String({ description: "Optional Gmail list pagination token." })),
+      id: Type.Optional(Type.String({ description: "Message id for action=read." })),
+      messageId: Type.Optional(Type.String({ description: "Alias for id when action=read." })),
+      maxChars: Type.Optional(Type.Integer({ minimum: 1000, maximum: 50000, description: "Max body characters for action=read." })),
+      to: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Recipient(s) for action=send." })),
+      cc: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Cc recipient(s) for action=send." })),
+      bcc: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Bcc recipient(s) for action=send." })),
+      subject: Type.Optional(Type.String({ description: "Email subject for action=send." })),
+      body: Type.Optional(Type.String({ description: "Plain-text email body for action=send." })),
+    }),
+    isEnabled: isGmailEnabled,
+    createHandler: createGmailHandler,
   });
 
   return {

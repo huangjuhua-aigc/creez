@@ -58,6 +58,7 @@ class PiConversationEngine {
       chatId: context.chatId || null,
       sessionKey: context.sessionKey || null,
       channelSend: context.channelSend,
+      gmailClient: context.gmailClient || null,
       isExternalUser: Boolean(context.isExternalUser),
     };
     await runner.createAndSubscribe(sender, config);
