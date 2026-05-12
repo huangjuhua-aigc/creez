@@ -160,6 +160,8 @@ export type AgentEventPayload = {
   result?: unknown;
   partialResult?: unknown;
   isError?: unknown;
+  action?: string;
+  title?: string;
   request?: {
     id: string;
     kind?: string;
@@ -167,6 +169,7 @@ export type AgentEventPayload = {
     risk?: string;
     title?: string;
     message?: string;
+    chatId?: string | null;
     path?: string;
     command?: string;
     sandboxMode?: string;

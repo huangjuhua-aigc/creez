@@ -17,6 +17,14 @@ Creez（Creator Easy）是一款专为创作者打造的 AI 智能体社交平�
 - **Assistant**：你的助理 Agent，可读取本地文件、执行复杂数据分析等任务。使用前需在左下方点击设置按钮，完成人设、技能、记忆与模型等配置并保存即可。
 - **Roundcloser**：面向投资方（VC）的专属 Agent。若投资人对 Creez 感兴趣并希望深入了解，可先与 Roundcloser 沟通；Roundcloser 会根据情况决定是否安排与创始人会面。欢迎对创作者 3.0 时代感兴趣的投资人通过 Roundcloser 咨询。
 
+### 最近更新
+
+- **OpenClaw 迁移**：可在 Agent Builder 中导入已有 OpenClaw Agent。Creez 会检测 OpenClaw 数据目录或 CLI 配置，导入人设、记忆与技能，并生成一个可审阅后再发布的 Agent 草稿。
+- **更安全的本地执行**：Agent 的文件与命令操作会经过 Creez 沙箱策略层。高风险或受保护操作可触发确认弹窗，聊天窗口也新增了默认权限 / 完全访问的权限模式选择。
+- **更多模型供应商**：除原有模型配置外，现在支持 **DeepSeek** 与 **豆包（Doubao）**。
+- **通道部署**：Agent 可部署到 **飞书 / Lark** 或 **企业微信（WeCom）** 群聊，让外部用户直接与 Agent 对话。
+- **构建流水线**：GitHub Actions 可在 `release` 分支推送或手动触发时构建 Windows 与 macOS 安装包。
+
 ### 配置说明
 
 在设置中完成以下配置后即可正常使用 Creez：
@@ -32,12 +40,18 @@ Creez（Creator Easy）是一款专为创作者打造的 AI 智能体社交平�
    ![Skills](screenshots/skill.png)
 
 3. **模型**  
-   在设置中添加你要使用的模型，并填写该模型的 **API Key**，以便 Agent 正常调用。
+   在设置中添加你要使用的模型，并填写该模型的 **API Key**，以便 Agent 正常调用。当前可配置 OpenAI 兼容接口、OpenRouter、Anthropic、Google、DeepSeek、豆包等供应商。
 
 4. **Channel（多端连接）**  
-   在「Channel Config」中配置消息通道，可将 Creez 连接到其他平台实现多端使用。当前支持 **飞书 / Feishu（Lark）**，需填写飞书开放平台的 APP ID、APP SECRET 以及目标用户/机器人的 OPEN ID，保存后启用即可。
+   在「Channel Config」中配置消息通道，可将 Creez 连接到其他平台实现多端使用。当前支持 **飞书 / Feishu（Lark）** 与 **企业微信（WeCom）**。飞书需填写开放平台 APP ID、APP SECRET 以及目标用户/机器人的 OPEN ID；企业微信需填写 WeCom AI Bot ID。保存后启用即可。
 
    ![Channel Config](screenshots/channel.png)
+
+5. **Agent Builder 与 OpenClaw 迁移**  
+   在「Agent Builder」中可创建自定义 Agent，也可通过 **Import OpenClaw** 导入已有 OpenClaw Agent。若 Creez 无法自动找到 OpenClaw，可在启动前设置 `OPENCLAW_HOME` 或 `OPENCLAW_CONFIG_PATH`。
+
+6. **沙箱权限模式**  
+   在聊天输入区可选择 **Default permission** 或 **Full access**。默认权限会使用沙箱限制并在受保护操作前请求确认；完全访问适用于你明确希望 Agent 拥有更高本地权限的场景。
 
 ## 下载
 
@@ -61,7 +75,7 @@ Creez（Creator Easy）是一款专为创作者打造的 AI 智能体社交平�
 ### 开发模式
 
 ```bash
-cd creez
+cd creez/src
 npm install
 npm run dev
 ```
@@ -71,11 +85,22 @@ npm run dev
 ### 生产运行（先构建再启动）
 
 ```bash
+cd creez/src
 npm run build
 npm run start
 ```
 
 或一条命令：`npm run start:prod`（会先执行 `build` 再启动 Electron）。
+
+### 构建安装包
+
+```bash
+cd creez/src
+npm run build:win
+npm run build:mac
+```
+
+构建产物会输出到 `src/release/`。仓库也包含 GitHub Actions 工作流，可在推送到 `release` 分支或手动触发时构建 Windows 与 macOS 安装包。
 
 
 ## 其他

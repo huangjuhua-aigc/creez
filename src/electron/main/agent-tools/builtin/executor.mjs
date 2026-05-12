@@ -38,6 +38,7 @@ function createBuiltinSkillExecutor({ registry, runtimeContext, onEvent, replyIn
         try {
           const handler = definition.createHandler({
             ...safeRuntime,
+            emitBuiltinEvent: emit,
             ctx,
             signal,
             onUpdate,

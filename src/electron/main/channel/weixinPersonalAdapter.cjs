@@ -22,6 +22,7 @@ const LONG_POLL_TIMEOUT_MS = 40_000;
 const API_TIMEOUT_MS = 15_000;
 const MAX_CONSECUTIVE_FAILURES = 5;
 const RETRY_DELAY_MS = 3_000;
+const EMPTY_POLL_DELAY_MS = 60_000;
 const SESSION_EXPIRED_ERRCODE = -14;
 
 const STATE_DIR = path.join(os.homedir(), ".creez", "weixin-personal");
@@ -474,6 +475,9 @@ class WeixinPersonalAdapter {
           if (msg.message_type === 1) {
             await this._onInboundMessage(msg);
           }
+        }
+        if (msgs.length === 0 && !signal.aborted && this.running) {
+          await new Promise((r) => setTimeout(r, EMPTY_POLL_DELAY_MS));
         }
       } catch (err) {
         consecutiveFailures++;

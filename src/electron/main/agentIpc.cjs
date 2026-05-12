@@ -47,7 +47,7 @@ function normalizeImages(images) {
 }
 
 function registerAgentIpc(ipcMain, deps = {}) {
-  const { assistantConfigRepository, appStateStore, memoryStore, contactRepository, chatRepository, creezHome } = deps;
+  const { assistantConfigRepository, appStateStore, memoryStore, contactRepository, chatRepository, creezHome, gmailClient } = deps;
   const agentDir = creezHome || resolveCreezHome(os.homedir());
 
   ipcMain.on(CHANNELS.AGENT_INIT, async (event, payload) => {
@@ -77,7 +77,7 @@ function registerAgentIpc(ipcMain, deps = {}) {
       const config = await new AgentConfigBuilder()
         .setContactId(payload?.contactId)
         .setScenario("default_assistant")
-        .setDeps({ contactRepository, assistantConfigRepository, memoryStore, appStateStore, chatRepository })
+        .setDeps({ contactRepository, assistantConfigRepository, memoryStore, appStateStore, chatRepository, gmailClient })
         .setChatId(payload?.chatId ?? null)
         .setModelOverride({
           provider: payload?.provider,

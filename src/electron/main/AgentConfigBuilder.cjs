@@ -192,6 +192,7 @@ class AgentConfigBuilder {
       memoryContent,
       memoryPath: memory.path || "",
       channelSend: this._channelSend,
+      gmailClient: this._deps.gmailClient || null,
       sendEvent: this._sendEvent,
       sendError: this._sendError,
       engine,

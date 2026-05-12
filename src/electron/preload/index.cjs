@@ -114,6 +114,15 @@ contextBridge.exposeInMainWorld("electron", {
     getStatus: () => ipcRenderer.invoke(CHANNELS.SANDBOX_GET_STATUS),
     decideApproval: (payload) => ipcRenderer.invoke(CHANNELS.SANDBOX_APPROVAL_DECIDE, payload),
   },
+  gmail: {
+    connect: () => ipcRenderer.invoke(CHANNELS.GMAIL_CONNECT),
+    status: () => ipcRenderer.invoke(CHANNELS.GMAIL_STATUS),
+    disconnect: () => ipcRenderer.invoke(CHANNELS.GMAIL_DISCONNECT),
+    gogChooseExecutable: () => ipcRenderer.invoke(CHANNELS.GMAIL_GOG_CHOOSE_EXECUTABLE),
+    gogChooseCredentials: () => ipcRenderer.invoke(CHANNELS.GMAIL_GOG_CHOOSE_CREDENTIALS),
+    gogSetup: (payload) => ipcRenderer.invoke(CHANNELS.GMAIL_GOG_SETUP, payload),
+    decideAuth: (payload) => ipcRenderer.invoke(CHANNELS.GMAIL_AUTH_DECIDE, payload),
+  },
   agentBuilder: {
     list: () => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_LIST),
     get: (payload) => ipcRenderer.invoke(CHANNELS.AGENT_BUILDER_GET, payload),

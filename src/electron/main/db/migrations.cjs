@@ -566,6 +566,37 @@ const MIGRATIONS = [
       ALTER TABLE assistant_config ADD COLUMN qrcode_data_uri TEXT;
     `,
   },
+  {
+    version: 22,
+    name: "add_gmail_accounts",
+    sql: `
+      CREATE TABLE IF NOT EXISTS gmail_accounts (
+        id TEXT PRIMARY KEY,
+        google_email TEXT,
+        access_token TEXT,
+        refresh_token TEXT,
+        scope TEXT NOT NULL DEFAULT '',
+        expiry_date INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+    `,
+  },
+  {
+    version: 23,
+    name: "add_gmail_gog_provider_fields",
+    sql: `
+      ALTER TABLE gmail_accounts ADD COLUMN provider TEXT NOT NULL DEFAULT 'native';
+      ALTER TABLE gmail_accounts ADD COLUMN gog_account TEXT;
+    `,
+  },
+  {
+    version: 24,
+    name: "add_gmail_gog_executable_path",
+    sql: `
+      ALTER TABLE gmail_accounts ADD COLUMN gog_path TEXT;
+    `,
+  },
 ];
 
 module.exports = {

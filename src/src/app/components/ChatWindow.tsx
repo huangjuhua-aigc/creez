@@ -39,7 +39,7 @@ interface ChatWindowProps {
 }
 
 const BOT_CHAT_ID = "1f2e3d4c-5b6a-47d8-9c01-23456789abcd";
-const EMOJIS = ["😀", "😄", "😁", "😂", "😊", "😉", "😍", "🤔", "😎", "👍", "👏", "🙏", "🔥", "🎉", "💡", "🧠", "🚀", "💻", "📁", "✅"];
+const EMOJIS = ["ok", "nice", "cool", "yes"];
 const DEBUG_CHAT = false;
 const CHAT_LIST_PREVIEW_LEN = 40;
 
@@ -72,12 +72,31 @@ type ChatStreamState = {
 };
 
 type SandboxApprovalRequest = NonNullable<AgentEventPayload["request"]>;
+type GmailAuthRequest = {
+  id: string;
+  title?: string;
+  message?: string;
+  action?: string;
+};
 
 function parseAssistantText(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   const textPart = content.find((part) => part && part.type === "text");
   return textPart?.text || "";
+}
+
+function toolResultNeedsGmailAuth(result: unknown): boolean {
+  const text = typeof result === "string" ? result : result != null ? JSON.stringify(result) : "";
+  return text.includes("NEED_GOOGLE_AUTH") && text.includes('"toolName": "gmail"');
+}
+
+function friendlyGmailAuthError(message: string): string {
+  const text = String(message || "").trim();
+  if (text.includes("CREEZ_GOOGLE_CLIENT_ID")) {
+    return "Google OAuth Client ID is not configured. Set CREEZ_GOOGLE_CLIENT_ID before starting Creez.";
+  }
+  return text || "Failed to connect Gmail.";
 }
 
 function formatNowTime() {
@@ -370,7 +389,7 @@ function ImageContextMenu({
         className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer"
         onClick={() => { onCopy(); onClose(); }}
       >
-        复制图片
+        Copy image
       </button>
       {onOpenLocation ? (
         <button
@@ -381,7 +400,7 @@ function ImageContextMenu({
             onClose();
           }}
         >
-          在文件管理器中显示
+          Show in file manager
         </button>
       ) : null}
     </div>
@@ -431,7 +450,7 @@ function ChatListContextMenu({
         }}
       >
         <Trash2 size={14} />
-        删除对话
+        Delete chat
       </button>
     </div>
   );
@@ -525,14 +544,14 @@ function ImageChipFromPath({ path: rawPath, className = "" }: { path: string; cl
   if (error) {
     return (
       <span className={cn("inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-red-50 text-red-500 text-xs", className)}>
-        图片加载失败: {error}
+        Image failed to load: {error}
       </span>
     );
   }
   if (!dataUrl) {
     return (
       <span className={cn("inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-gray-100 text-gray-500 text-xs", className)}>
-        图片加载中…
+        Loading image...
       </span>
     );
   }
@@ -548,7 +567,7 @@ function ImageChipFromPath({ path: rawPath, className = "" }: { path: string; cl
         />
         {copyToast && (
           <span className="absolute bottom-2 left-1/2 -translate-x-1/2 bg-black/75 text-white text-xs px-2 py-1 rounded whitespace-nowrap pointer-events-none">
-            已复制
+            Copied
           </span>
         )}
       </span>
@@ -864,7 +883,7 @@ function MessageContentMarkdown({
             <button
               type="button"
               className="rounded px-1 py-0.5 bg-gray-100 text-[13px] font-mono text-[#07C160] underline cursor-pointer hover:bg-gray-200 border-0 align-baseline text-left"
-              title="使用系统默认应用打开此文件"
+              title="Open with system default app"
               onClick={() => void openLinkOrPath(inlineText)}
             >
               {children}
@@ -963,13 +982,19 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const activeStreamBotIdRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<ChatMessageItem[]>([]);
   const [isLoadingChats, setIsLoadingChats] = useState(true);
-  /** contactId → A2A discover online; only contacts that appear in public discover have an entry */
+  /** contactId -> A2A discover online; only contacts that appear in public discover have an entry */
   const [a2aPresence, setA2aPresence] = useState<Map<string, boolean>>(new Map());
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [waitingDots, setWaitingDots] = useState("·");
+  const [waitingDots, setWaitingDots] = useState(".");
   const [messageQueue, setMessageQueue] = useState<QueuedMessage[]>([]);
   const [sandboxApprovals, setSandboxApprovals] = useState<SandboxApprovalRequest[]>([]);
+  const [gmailAuthRequests, setGmailAuthRequests] = useState<GmailAuthRequest[]>([]);
+  const [gmailAuthBusy, setGmailAuthBusy] = useState(false);
+  const [gmailAuthError, setGmailAuthError] = useState<string | null>(null);
+  const [gmailGogEmail, setGmailGogEmail] = useState("");
+  const [gmailGogExecutablePath, setGmailGogExecutablePath] = useState("");
+  const [gmailGogCredentialsPath, setGmailGogCredentialsPath] = useState("");
   const [sandboxPermissionMode, setSandboxPermissionMode] = useState<"default" | "full_access">(() => {
     try {
       return window.localStorage?.getItem("creez:sandboxPermissionMode") === "full_access" ? "full_access" : "default";
@@ -981,10 +1006,10 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const isStreamingRef = useRef(false);
   const selectedChatIdRef = useRef(selectedChatId);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
-  /** 用户未上滑离开底部时为 true；等待回复时 waitingDots 动画不应触发滚底 */
+  /** True when the user has not scrolled away from the bottom; waitingDots animation should not force-scroll. */
   const messagesStickToBottomRef = useRef(true);
   const activeToolCallsRef = useRef<ToolCall[]>([]);
-  /** Per-chat stream tracking — background bots persist to DB even when user switches away. */
+  /** Per-chat stream tracking; background bots persist to DB even when user switches away. */
   const chatStreamsRef = useRef<Map<string, ChatStreamState>>(new Map());
   const messageQueueRef = useRef<QueuedMessage[]>([]);
   const sendQueuedMessageRef = useRef<(item: QueuedMessage) => void>(() => {});
@@ -1389,7 +1414,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       ) {
         console.warn("[creez:chat] model API auth error (original):", rawMessage);
         text =
-          "模型 API 未授权。请在 设置 → Model Config 中填写当前模型的 API Key 并保存后重试。若已填写仍报错，请检查 Key 是否对应当前 Provider（如 OpenRouter）且未过期。";
+          "Model API is unauthorized. Please set the API key for the current provider in Settings > Model Config and try again.";
       }
       console.log("[creez:chat] reply_error", { message: text });
       chatLog("agent:error", text);
@@ -1513,7 +1538,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
     selectedChatIdRef.current = selectedChatId;
     const stream = chatStreamsRef.current.get(selectedChatId);
     if (stream) {
-      console.log("[creez:stream-debug] selectedChatId effect: restore stream → isStreaming true", {
+      console.log("[creez:stream-debug] selectedChatId effect: restore stream -> isStreaming true", {
         selectedChatId,
         assistantMessageId: stream.assistantMessageId,
       });
@@ -1525,7 +1550,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       activeToolMessageIdRef.current = stream.toolMessageId;
       setIsStreaming(true);
     } else {
-      console.log("[creez:stream-debug] selectedChatId effect: no stream in map → setIsStreaming(false)", {
+      console.log("[creez:stream-debug] selectedChatId effect: no stream in map -> setIsStreaming(false)", {
         selectedChatId,
         mapKeys: Array.from(chatStreamsRef.current.keys()),
       });
@@ -1545,10 +1570,10 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
 
   useEffect(() => {
     if (!isStreaming) {
-      setWaitingDots("·");
+      setWaitingDots(".");
       return;
     }
-    const frames = ["·", "··", "···"];
+    const frames = [".", "..", "..."];
     let idx = 0;
     const timer = window.setInterval(() => {
       idx = (idx + 1) % frames.length;
@@ -1768,7 +1793,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   const handleIncomingAgentEvent = (event: AgentEventPayload) => {
     const eventChatId = event.chatId ?? null;
     const currentSelectedChatId = selectedChatIdRef.current;
-    /** Main-process events always carry chatId when the session was created with one; if missing, fall back to the selected chat so chatStreamsRef (keyed by real chat UUID) still resolves. Otherwise agent_end is mis-handled and isStreaming never clears (stuck “···”). */
+    /** Main-process events always carry chatId when the session was created with one; if missing, fall back to the selected chat so chatStreamsRef (keyed by real chat UUID) still resolves. Otherwise agent_end is mis-handled and isStreaming never clears. */
     const streamLookupKey =
       eventChatId != null && String(eventChatId).trim() !== ""
         ? String(eventChatId).trim()
@@ -1799,6 +1824,25 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       setSandboxApprovals((prev) => {
         if (prev.some((item) => item.id === event.request?.id)) return prev;
         return [...prev, event.request as SandboxApprovalRequest];
+      });
+      return;
+    }
+    if (event.type === "gmail_auth_required") {
+      if (!isForCurrentChat) return;
+      setGmailAuthError(null);
+      setGmailAuthRequests((prev) => {
+        const request = (event as { request?: GmailAuthRequest }).request;
+        const id = request?.id || `gmail-auth-${Date.now()}`;
+        if (prev.some((item) => item.id === id)) return prev;
+        return [
+          ...prev,
+          {
+            id,
+            title: request?.title || (event as { title?: string }).title || "Connect Gmail",
+            message: request?.message || (event as { message?: string }).message || "Creez needs Google authorization before it can use Gmail.",
+            action: request?.action || "gmail",
+          },
+        ];
       });
       return;
     }
@@ -1882,7 +1926,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
         const meStream = chatStreamsRef.current.get(streamLookupKey);
         const fromEvent = parseAssistantText(event.message?.content);
         const accumulated = meStream?.streamedText ?? streamedTextRef.current ?? "";
-        // Prefer accumulated text when longer (avoids overwriting with only the post–tool-call segment)
+        // Prefer accumulated text when longer (avoids overwriting with only the post-tool-call segment)
         const finalText =
           accumulated.length >= (fromEvent?.length ?? 0)
             ? accumulated
@@ -1942,7 +1986,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
           return;
         }
         if (isForCurrentChat && !aeStream && activeAssistantMessageIdRef.current && isStreamingRef.current) {
-          console.warn("[creez:stream-debug] agent_end IGNORED (no stream entry — isStreaming stuck risk)", {
+          console.warn("[creez:stream-debug] agent_end IGNORED (no stream entry; isStreaming stuck risk)", {
             streamLookupKey,
             eventChatId: eventChatId ?? null,
             currentSelectedChatId: currentSelectedChatId ?? null,
@@ -1963,7 +2007,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
           toolCallsCount: aeTc?.length ?? 0,
           forCurrentChat: isForCurrentChat,
         });
-        console.log("[creez:stream-debug] agent_end APPLIED → clearing streaming state", {
+        console.log("[creez:stream-debug] agent_end APPLIED -> clearing streaming state", {
           streamLookupKey,
           endAssistantId: endAssistantId ?? null,
           willSetIsStreamingFalse: isForCurrentChat,
@@ -2034,6 +2078,18 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
               ? JSON.stringify(event.result)
               : event.message?.errorMessage || "";
           if (tcStatus === "failure") tcResult = event.message?.errorMessage || tcResult;
+          if (toolName === "gmail" && toolResultNeedsGmailAuth(tcResult)) {
+            setGmailAuthError(null);
+            setGmailAuthRequests((prev) => {
+              if (prev.length > 0) return prev;
+              return [{
+                id: `gmail-auth-${Date.now()}`,
+                title: "Connect Gmail",
+                message: "Creez needs Google authorization before it can use Gmail.",
+                action: "gmail",
+              }];
+            });
+          }
         }
         const dfStream = chatStreamsRef.current.get(streamLookupKey);
         if (dfStream) {
@@ -2072,6 +2128,79 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       }
     } catch (error) {
       console.warn("[ChatWindow] sandbox approval error:", error);
+    }
+  };
+
+  const decideGmailAuthRequest = async (request: GmailAuthRequest, allowed: boolean, reason?: string) => {
+    setGmailAuthRequests((prev) => prev.filter((item) => item.id !== request.id));
+    try {
+      const res = await window.electron?.gmail?.decideAuth?.({
+        id: request.id,
+        allowed,
+        reason: reason || (allowed ? "Gmail connected by user" : "Cancelled by user"),
+      });
+      if (!res?.ok) {
+        console.warn("[ChatWindow] gmail auth decision failed:", res?.error?.message || res);
+      }
+    } catch (error) {
+      console.warn("[ChatWindow] gmail auth decision error:", error);
+    }
+  };
+
+  const connectGmailForRequest = async (request: GmailAuthRequest) => {
+    setGmailAuthBusy(true);
+    setGmailAuthError(null);
+    try {
+      if (!gmailGogCredentialsPath.trim()) {
+        setGmailAuthError("Please choose your Google OAuth client_secret.json first.");
+        return;
+      }
+      if (!gmailGogEmail.trim()) {
+        setGmailAuthError("Please enter your Gmail address.");
+        return;
+      }
+      const res = await window.electron?.gmail?.gogSetup?.({
+        credentialsPath: gmailGogCredentialsPath.trim(),
+        googleEmail: gmailGogEmail.trim(),
+      });
+      if (res?.ok) {
+        setGmailAuthError(null);
+        await decideGmailAuthRequest(request, true);
+      } else {
+        setGmailAuthError(friendlyGmailAuthError(res?.error?.message || "Failed to connect Gmail."));
+      }
+    } catch (error) {
+      setGmailAuthError(friendlyGmailAuthError(error instanceof Error ? error.message : String(error)));
+    } finally {
+      setGmailAuthBusy(false);
+    }
+  };
+
+  const chooseGmailGogCredentials = async () => {
+    setGmailAuthError(null);
+    try {
+      const res = await window.electron?.gmail?.gogChooseCredentials?.();
+      if (res?.ok && !res.data?.canceled && res.data?.path) {
+        setGmailGogCredentialsPath(String(res.data.path));
+      } else if (!res?.ok) {
+        setGmailAuthError(res?.error?.message || "Failed to choose client_secret.json.");
+      }
+    } catch (error) {
+      setGmailAuthError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const chooseGmailGogExecutable = async () => {
+    setGmailAuthError(null);
+    try {
+      const res = await window.electron?.gmail?.gogChooseExecutable?.();
+      if (res?.ok && !res.data?.canceled && res.data?.path) {
+        setGmailGogExecutablePath(String(res.data.path));
+      } else if (!res?.ok) {
+        setGmailAuthError(res?.error?.message || "Failed to choose gog executable.");
+      }
+    } catch (error) {
+      setGmailAuthError(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -2250,7 +2379,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
           sender: "system",
           name: "System",
           avatar: "",
-          content: "已停止等待远程回复。",
+            content: "Stopped waiting for the remote reply.",
           timestamp: formatNowTime(),
           type: "system",
         })
@@ -2373,7 +2502,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
             sender: "system",
             name: "System",
             avatar: "",
-            content: "无法发送到远程 Bot（A2A 服务未运行或 Bot 离线）。",
+              content: "Unable to send to remote bot. A2A service is unavailable or the bot is offline.",
             timestamp: formatNowTime(),
             type: "system",
           }));
@@ -2388,7 +2517,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
           sender: "system",
           name: "System",
           avatar: "",
-          content: `发送到远程 Bot 失败: ${(e as Error).message || String(e)}`,
+          content: `Failed to send to remote bot: ${(e as Error).message || String(e)}`,
           timestamp: formatNowTime(),
           type: "system",
         }));
@@ -2414,8 +2543,8 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
       setIsStreaming(false);
       const sysId = `${Date.now()}-system-init-error`;
       const content = isTimeout
-        ? "Agent 初始化超时，请稍后重试。如果持续出现此问题，请检查网络连接。"
-        : "当前未配置可用模型或 API Key。请打开 设置 → Model Config，添加模型并填写 API Key 后保存。";
+        ? "Agent initialization timed out. Please try again later and check your network if it continues."
+        : "No available model or API key is configured. Please open Settings > Model Config, add a model, and save an API key.";
       const errMsg: ChatMessageItem = {
         id: sysId,
         sender: "system",
@@ -2631,21 +2760,129 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
                 className="px-3 py-2 rounded-md border border-gray-300 bg-white text-[13px] text-gray-700 hover:bg-gray-100"
                 onClick={() => void decideSandboxApproval(sandboxApprovals[0], false)}
               >
-                拒绝
+                Deny
               </button>
               <button
                 type="button"
                 className="px-3 py-2 rounded-md bg-[#07C160] text-[13px] text-white hover:bg-[#06ad56]"
                 onClick={() => void decideSandboxApproval(sandboxApprovals[0], true)}
               >
-                允许一次
+                Allow once
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {gmailAuthRequests[0] && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 px-4">
+          <div className="w-full max-w-[520px] rounded-lg bg-white shadow-xl border border-gray-200 overflow-hidden">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <div className="text-[15px] font-semibold text-gray-900">
+                {gmailAuthRequests[0].title || "Connect Gmail"}
+              </div>
+              <div className="mt-1 text-[12px] text-gray-500">
+                {gmailAuthRequests[0].message || "Creez needs Google authorization before it can use Gmail."}
+              </div>
+            </div>
+            <div className="px-5 py-4 space-y-3">
+              <div className="grid grid-cols-[88px_1fr] gap-y-2 text-[12px]">
+                <div className="text-gray-500">Mode</div>
+                <div className="text-gray-900">Local gog CLI</div>
+                <div className="text-gray-500">Step 1</div>
+                <div className="text-gray-900">
+                  Install gog, then make sure `gog --help` works in your terminal.
+                  <button
+                    type="button"
+                    className="ml-2 text-[#07C160] hover:underline"
+                    onClick={() => void openLinkOrPath("https://github.com/openclaw/gogcli/releases")}
+                  >
+                    Open gog releases
+                  </button>
+                </div>
+                <div className="text-gray-500">Step 2</div>
+                <div className="text-gray-900">Choose your Google OAuth Desktop client_secret.json.</div>
+                <div className="text-gray-500">Step 3</div>
+                <div className="text-gray-900">Authorize your Gmail account in the browser opened by gog, then return here and wait for setup to finish.</div>
+              </div>
+              <div className="space-y-2">
+                <label className="block text-[12px] text-gray-500">gog executable (optional if gog is in PATH)</label>
+                <div className="flex gap-2">
+                  <input
+                    value={gmailGogExecutablePath}
+                    readOnly
+                    placeholder="C:\\tools\\gog\\gog.exe or leave empty if gog is in PATH"
+                    className="min-w-0 flex-1 rounded-md border border-gray-200 px-3 py-2 text-[13px] outline-none bg-gray-50"
+                  />
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-md border border-gray-300 bg-white text-[13px] text-gray-700 hover:bg-gray-100"
+                    disabled={gmailAuthBusy}
+                    onClick={() => void chooseGmailGogExecutable()}
+                  >
+                    Choose
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="block text-[12px] text-gray-500">Gmail account</label>
+                <input
+                  value={gmailGogEmail}
+                  onChange={(event) => setGmailGogEmail(event.target.value)}
+                  placeholder="you@gmail.com"
+                  className="w-full rounded-md border border-gray-200 px-3 py-2 text-[13px] outline-none focus:border-[#07C160]"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="block text-[12px] text-gray-500">Google OAuth client_secret.json</label>
+                <div className="flex gap-2">
+                  <input
+                    value={gmailGogCredentialsPath}
+                    readOnly
+                    placeholder="Choose the JSON file downloaded from Google Cloud"
+                    className="min-w-0 flex-1 rounded-md border border-gray-200 px-3 py-2 text-[13px] outline-none bg-gray-50"
+                  />
+                  <button
+                    type="button"
+                    className="px-3 py-2 rounded-md border border-gray-300 bg-white text-[13px] text-gray-700 hover:bg-gray-100"
+                    disabled={gmailAuthBusy}
+                    onClick={() => void chooseGmailGogCredentials()}
+                  >
+                    Choose
+                  </button>
+                </div>
+              </div>
+              {gmailAuthError && (
+                <div className="rounded-md border border-red-100 bg-red-50 px-3 py-2 text-[12px] text-red-600">
+                  {gmailAuthError}
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-4 bg-gray-50 border-t border-gray-100 flex justify-end gap-2">
+              <button
+                type="button"
+                className="px-3 py-2 rounded-md border border-gray-300 bg-white text-[13px] text-gray-700 hover:bg-gray-100"
+                disabled={gmailAuthBusy}
+                onClick={() => {
+                  setGmailAuthError(null);
+                  void decideGmailAuthRequest(gmailAuthRequests[0], false);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="px-3 py-2 rounded-md bg-[#07C160] text-[13px] text-white hover:bg-[#06ad56] disabled:opacity-60"
+                disabled={gmailAuthBusy}
+                onClick={() => void connectGmailForRequest(gmailAuthRequests[0])}
+              >
+                {gmailAuthBusy ? "Running gog..." : "Run gog setup"}
               </button>
             </div>
           </div>
         </div>
       )}
       <div className="w-[250px] flex flex-col border-r border-[#E7E7E7] bg-[#F7F7F7] flex-shrink-0">
-        <SearchBar placeholder="搜索" rightElement={<Plus size={16} />} />
+        <SearchBar placeholder="Search" rightElement={<Plus size={16} />} />
 
         <div className="flex-1 overflow-y-auto custom-scrollbar">
           {isLoadingChats && <div className="px-3 py-3 text-xs text-gray-500">Loading chats...</div>}
@@ -2679,7 +2916,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
                         "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#F7F7F7]",
                         a2aPresence.get(chat.contactId) ? "bg-[#07C160]" : "bg-red-500"
                       )}
-                      title={a2aPresence.get(chat.contactId) ? "A2A 在线" : "A2A 离线"}
+                      title={a2aPresence.get(chat.contactId) ? "A2A online" : "A2A offline"}
                     />
                   )}
                   {chat.unread > 0 && (
@@ -2716,18 +2953,18 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
             a2aPresence.get(activeChat.contactId) ? (
               <span
                 className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#07C160]/10 text-[#07C160] text-[10px] font-medium rounded-full flex-shrink-0"
-                title="该 bot 在 A2A 网关上当前在线，可被远程调用"
+                title="This bot is online on the A2A gateway and can be called remotely."
               >
                 <span className="w-1.5 h-1.5 bg-[#07C160] rounded-full" />
-                A2A 在线
+                A2A online
               </span>
             ) : (
               <span
                 className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-600 text-[10px] font-medium rounded-full flex-shrink-0 max-w-[42%]"
-                title="该 bot 在 A2A 上离线（对方关客户端或断线）。你在本页的对话仍走本机模型，与 A2A 是否在线无关。"
+                  title="This bot is offline on A2A. Local chat still uses the local model."
               >
                 <span className="w-1.5 h-1.5 bg-red-500 rounded-full flex-shrink-0" />
-                A2A 离线
+                A2A offline
               </span>
             )
           ) : null}
@@ -2801,7 +3038,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
           )}
           {messageQueue.length > 0 && (
             <div className="mt-4 p-3 rounded-lg bg-amber-50/80 border border-amber-200/60">
-              <div className="text-xs text-amber-600 font-medium mb-2">待发送队列 ({messageQueue.length})</div>
+              <div className="text-xs text-amber-600 font-medium mb-2">Queued messages ({messageQueue.length})</div>
               <div className="space-y-1.5">
                 {messageQueue.map((item, idx) => (
                   <div key={item.id} className="flex items-center gap-2 px-2.5 py-1.5 bg-white rounded-md border border-amber-100">
@@ -3061,11 +3298,11 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
                 className="px-5 py-1.5 text-sm rounded-[4px] transition-colors font-medium bg-[#FDECEC] text-[#E53935] hover:bg-[#FAD4D4] flex items-center gap-1.5"
               >
                 <Square size={10} fill="currentColor" />
-                停止
+                Stop
               </button>
             )}
             <div className="flex flex-col items-end gap-0.5">
-              <span className="text-[10px] text-gray-400 hidden sm:block">Enter 发送 · Shift+Enter 换行</span>
+              <span className="text-[10px] text-gray-400 hidden sm:block">Enter to send / Shift+Enter for a new line</span>
               <button
                 onClick={() => void handleSend()}
                 disabled={!canSend}
@@ -3076,7 +3313,7 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
                     : "bg-[#F0F0F0] text-gray-400 cursor-not-allowed"
                 )}
               >
-                发送 (S)
+                Send (S)
               </button>
             </div>
             </div>

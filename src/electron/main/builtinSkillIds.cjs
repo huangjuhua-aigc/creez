@@ -6,6 +6,7 @@ const BUILTIN_SKILL_IDS = Object.freeze([
   "image_generator",
   "video_generator",
   "channel_send",
+  "gmail",
 ]);
 
 function isBuiltinSkillId(skillId) {

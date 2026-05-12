@@ -22,6 +22,7 @@ import { buildSystemPrompt } from "./system-prompt.mjs";
 const require = createRequire(import.meta.url);
 const { BUILTIN_SKILL_IDS } = require("./builtinSkillIds.cjs");
 const { isCreezVerboseDebug } = require("./creezDebug.cjs");
+const { requestGmailAuth } = require("./google/gmailAuthRequest.cjs");
 const { createSandboxPolicy, explainPolicy } = sandboxPolicyModule;
 const { requestSandboxApproval } = sandboxApprovalModule;
 
@@ -128,7 +129,7 @@ function resolveModel(provider, modelId) {
   return null;
 }
 
-const SANDBOX_TOOLING_VERSION = "creez-sandbox-tools-v3";
+const SANDBOX_TOOLING_VERSION = "creez-sandbox-tools-v4-gmail";
 
 /** Fingerprint of assistant config and execution policy that affects session tools/prompt. */
 function configFingerprint(assistantConfig, assistantConfigId, defaultContactId, execution = {}) {
@@ -372,6 +373,31 @@ export async function createAndSubscribe(sender, config) {
       },
     });
   };
+  const requestGmailAuthorization = (authRequest = {}) => {
+    const resolved =
+      sessionEntryForEvents?.lastPromptChatId != null && String(sessionEntryForEvents.lastPromptChatId).trim() !== ""
+        ? String(sessionEntryForEvents.lastPromptChatId).trim()
+        : (chatId ?? undefined);
+    return requestGmailAuth({
+      request: {
+        title: "Connect Gmail",
+        message: "Creez needs Google authorization before this agent can use Gmail.",
+        action: "gmail",
+        ...(authRequest && typeof authRequest === "object" ? authRequest : {}),
+        chatId: resolved ?? null,
+      },
+      sendRequest: (payload) => {
+        broadcast("agent:event", {
+          type: "gmail_auth_required",
+          chatId: resolved,
+          request: payload,
+          title: payload.title,
+          message: payload.message,
+          action: payload.action,
+        });
+      },
+    });
+  };
   const sandboxPolicy = createSandboxPolicy({
     scenario: config.scenario,
     isExternalUser,
@@ -402,12 +428,17 @@ export async function createAndSubscribe(sender, config) {
   const builtinExecutor = createBuiltinSkillExecutor({
     registry: builtinRegistry,
     runtimeContext: {
+      scenario: config.scenario || null,
+      isExternalUser,
       contactId: contactId || null,
       assistantConfigId: assistantConfigId || null,
       defaultContactId: defaultContactId || null,
       chatId: chatId || null,
       workDir: cwd,
       channelSend: config.channelSend,
+      gmailClient: config.gmailClient || null,
+      requestApproval,
+      requestGmailAuth: requestGmailAuthorization,
     },
     onEvent: (builtinEv) => {
       const resolved =
