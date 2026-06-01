@@ -85,7 +85,7 @@ class GmailGogClient {
       ["auth", "add", email, "--services", "gmail", "--timeout", "15m", "--force-consent"],
       { timeoutMs: 16 * 60 * 1000, repository: this.repository },
     );
-    this.repository.saveGogAccount({ googleEmail: email });
+    this.repository.saveGogAccount({ googleEmail: email, gogCredentialsPath: file });
     return this.repository.getStatus();
   }
 

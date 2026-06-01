@@ -26,6 +26,7 @@ async function executeTask(task, deps) {
     taskRepository,
     creezHome,
     sendToRenderer,
+    gmailClient,
   } = deps;
 
   const taskId = task.id;
@@ -68,7 +69,7 @@ async function executeTask(task, deps) {
     const config = await new AgentConfigBuilder()
       .setContactId(contactId)
       .setScenario("headless")
-      .setDeps({ contactRepository, assistantConfigRepository, appStateStore, memoryStore })
+      .setDeps({ contactRepository, assistantConfigRepository, appStateStore, memoryStore, gmailClient })
       .setChatId(chatId)
       .setSessionKey(headlessSessionKey)
       .setCreezHome(agentDir)

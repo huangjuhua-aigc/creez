@@ -38,6 +38,22 @@ test("read tool blocks sensitive files", async () => {
   );
 });
 
+test("read tool can read explicit skill directories outside workspace", async () => {
+  const { createCreezSandboxTools } = await import("../electron/main/sandbox/sandboxTools.mjs");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "creez-tools-skill-workspace-"));
+  const skillRoot = await fs.mkdtemp(path.join(os.tmpdir(), "creez-tools-skill-root-"));
+  await fs.mkdir(path.join(skillRoot, "demo"), { recursive: true });
+  await fs.writeFile(path.join(skillRoot, "demo", "SKILL.md"), "description: demo skill\n", "utf8");
+  const policy = createSandboxPolicy({
+    scenario: "default_assistant",
+    workDir: root,
+    skillDirs: [skillRoot],
+  });
+  const readTool = createCreezSandboxTools({ cwd: root, policy }).find((tool) => tool.name === "read");
+  const result = await readTool.execute("tc", { path: path.join(skillRoot, "demo", "SKILL.md") });
+  assert.match(result.content[0].text, /demo skill/);
+});
+
 test("write tool writes through to host only for default assistant", async () => {
   const { createCreezSandboxTools } = await import("../electron/main/sandbox/sandboxTools.mjs");
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "creez-tools-host-write-"));

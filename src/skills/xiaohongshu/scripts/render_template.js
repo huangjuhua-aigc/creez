@@ -60,7 +60,17 @@ async function main() {
   if (bg) params.set('backgroundImage', bg);
   const fileUrl = pathToFileURL(htmlPath).href + '?' + params.toString();
 
-  const browser = await puppeteer.launch({ headless: 'new' });
+  const browser = await puppeteer.launch({
+    headless: true,
+    timeout: 60000,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-gpu',
+      '--disable-dev-shm-usage',
+      '--disable-extensions',
+    ],
+  });
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 750, height: 1000, deviceScaleFactor: 2 });

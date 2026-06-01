@@ -28,7 +28,11 @@ function decodeSecret(value) {
   if (raw.startsWith("safe:")) {
     const safeStorage = getSafeStorage();
     if (!safeStorage?.isEncryptionAvailable?.()) return "";
-    return safeStorage.decryptString(Buffer.from(raw.slice(5), "base64"));
+    try {
+      return safeStorage.decryptString(Buffer.from(raw.slice(5), "base64"));
+    } catch {
+      return "";
+    }
   }
   if (raw.startsWith("plain:")) {
     return Buffer.from(raw.slice(6), "base64").toString("utf8");
@@ -42,9 +46,9 @@ class GmailRepository {
     this.getStmt = db.prepare("SELECT * FROM gmail_accounts WHERE id = ?");
     this.upsertStmt = db.prepare(`
       INSERT INTO gmail_accounts (
-        id, google_email, access_token, refresh_token, scope, expiry_date, provider, gog_account, gog_path, created_at, updated_at
+        id, google_email, access_token, refresh_token, scope, expiry_date, provider, gog_account, gog_path, gog_credentials_path, created_at, updated_at
       ) VALUES (
-        @id, @google_email, @access_token, @refresh_token, @scope, @expiry_date, @provider, @gog_account, @gog_path, @created_at, @updated_at
+        @id, @google_email, @access_token, @refresh_token, @scope, @expiry_date, @provider, @gog_account, @gog_path, @gog_credentials_path, @created_at, @updated_at
       )
       ON CONFLICT(id) DO UPDATE SET
         google_email = @google_email,
@@ -55,6 +59,7 @@ class GmailRepository {
         provider = @provider,
         gog_account = @gog_account,
         gog_path = @gog_path,
+        gog_credentials_path = @gog_credentials_path,
         updated_at = @updated_at
     `);
     this.deleteStmt = db.prepare("DELETE FROM gmail_accounts WHERE id = ?");
@@ -73,6 +78,7 @@ class GmailRepository {
       provider: row.provider || "native",
       gogAccount: row.gog_account || "",
       gogPath: row.gog_path || "",
+      gogCredentialsPath: row.gog_credentials_path || "",
       createdAt: row.created_at || 0,
       updatedAt: row.updated_at || 0,
     };
@@ -86,6 +92,8 @@ class GmailRepository {
         provider: "gog",
         googleEmail: account.gogAccount,
         scope: "gog:gmail",
+        gogPath: account.gogPath || "",
+        gogCredentialsPath: account.gogCredentialsPath || "",
       };
     }
     if (!account?.refreshToken) {
@@ -115,13 +123,14 @@ class GmailRepository {
       provider: patch.provider || current?.provider || "native",
       gog_account: patch.gogAccount || current?.gogAccount || "",
       gog_path: patch.gogPath || current?.gogPath || "",
+      gog_credentials_path: patch.gogCredentialsPath || current?.gogCredentialsPath || "",
       created_at: current?.createdAt || ts,
       updated_at: ts,
     });
     return this.getAccount();
   }
 
-  saveGogAccount({ googleEmail, gogPath } = {}) {
+  saveGogAccount({ googleEmail, gogPath, gogCredentialsPath } = {}) {
     const current = this.getAccount();
     const ts = nowSeconds();
     const email = String(googleEmail || "").trim();
@@ -136,6 +145,7 @@ class GmailRepository {
       provider: "gog",
       gog_account: email,
       gog_path: String(gogPath || current?.gogPath || "").trim(),
+      gog_credentials_path: String(gogCredentialsPath || current?.gogCredentialsPath || "").trim(),
       created_at: current?.createdAt || ts,
       updated_at: ts,
     });
@@ -155,6 +165,7 @@ class GmailRepository {
       provider: current?.provider || "gog",
       gog_account: current?.gogAccount || "",
       gog_path: String(gogPath || "").trim(),
+      gog_credentials_path: current?.gogCredentialsPath || "",
       created_at: current?.createdAt || ts,
       updated_at: ts,
     });

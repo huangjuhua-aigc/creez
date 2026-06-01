@@ -59,6 +59,26 @@ test("local assistant can read bundled skills outside workspace but still blocks
   assert.throws(() => validatePathAccess(policy, path.join(agentDir, ".env"), "read"), /PATH_OUTSIDE_SANDBOX|SENSITIVE_PATH/);
 });
 
+test("local assistant can read explicit skill directories outside workspace", () => {
+  const root = path.join(os.tmpdir(), "creez-sandbox-workspace");
+  const appSkillsDir = path.join(os.tmpdir(), "creez-app-skills");
+  const botSkillsDir = path.join(os.tmpdir(), "creez-bot-skills");
+  const policy = createSandboxPolicy({
+    scenario: "trusted_desktop",
+    workDir: root,
+    skillDirs: [appSkillsDir, botSkillsDir],
+  });
+  assert.equal(
+    validatePathAccess(policy, path.join(appSkillsDir, "xiaohongshu", "SKILL.md"), "read"),
+    path.join(appSkillsDir, "xiaohongshu", "SKILL.md"),
+  );
+  assert.equal(
+    validatePathAccess(policy, path.join(botSkillsDir, "custom", "references", "guide.md"), "read"),
+    path.join(botSkillsDir, "custom", "references", "guide.md"),
+  );
+  assert.throws(() => validatePathAccess(policy, path.join(appSkillsDir, "custom", ".env"), "read"), /SENSITIVE_PATH/);
+});
+
 test("read-only policy blocks writes", () => {
   const root = path.join(os.tmpdir(), "creez-sandbox-test");
   const policy = createSandboxPolicy({ scenario: "headless", workDir: root });

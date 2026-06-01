@@ -335,6 +335,10 @@ export async function createAndSubscribe(sender, config) {
     const { resolveCreezHome: rch, getBotDir } = require("./creezPaths.cjs");
     botDir = getBotDir(rch(), contactId);
   }
+  const botSkillPath = botDir ? path.join(botDir, "skills") : null;
+  const globalSkillPath = path.join(resolvedAgentDir, "skills");
+  const bundledSkillRoot = path.join(APP_ROOT_DIR, "skills");
+  const builtinSkillPath = path.join(bundledSkillRoot, "builtin", "skills");
 
   let sessionDir;
   if (botDir) {
@@ -403,6 +407,7 @@ export async function createAndSubscribe(sender, config) {
     isExternalUser,
     workDir: cwd,
     agentDir: resolvedAgentDir,
+    skillDirs: [globalSkillPath, botSkillPath, bundledSkillRoot, builtinSkillPath].filter(Boolean),
     requestApproval,
   });
   const sandboxTools = createCreezSandboxTools({ cwd, policy: sandboxPolicy });
@@ -419,9 +424,6 @@ export async function createAndSubscribe(sender, config) {
     tools: sandboxTools.map((t) => t.name).join(","),
   });
 
-  const botSkillPath = botDir ? path.join(botDir, "skills") : null;
-  const globalSkillPath = path.join(resolvedAgentDir, "skills");
-  const builtinSkillPath = path.join(APP_ROOT_DIR, "skills", "builtin", "skills");
   const replyInstructions = loadBuiltinReplyInstructions(builtinSkillPath, BUILTIN_SKILL_IDS);
   const builtinRegistry = createBuiltinSkillRegistry();
   /** Set after sessionEntry is created; used so tool/builtin events use the chatId of the active prompt turn (not only init-time chatId). */
@@ -437,6 +439,7 @@ export async function createAndSubscribe(sender, config) {
       workDir: cwd,
       channelSend: config.channelSend,
       gmailClient: config.gmailClient || null,
+      sandboxPermissionMode,
       requestApproval,
       requestGmailAuth: requestGmailAuthorization,
     },
