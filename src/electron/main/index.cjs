@@ -482,6 +482,7 @@ app.whenReady().then(async () => {
       memoryStore,
       creezHome,
       sendToRenderer,
+      gmailClient,
     });
     await cronManager.initAll();
 

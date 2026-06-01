@@ -93,6 +93,9 @@ async function waitForAuth(runtimeContext, action) {
 }
 
 async function ensureSendApproval(runtimeContext, args) {
+  if (runtimeContext.sandboxPermissionMode === "full_access") {
+    return { allowed: true, reason: "Allowed by full access mode." };
+  }
   if (typeof runtimeContext.requestApproval !== "function") {
     return { allowed: false, reason: "Approval UI is unavailable." };
   }

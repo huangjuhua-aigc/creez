@@ -597,6 +597,13 @@ const MIGRATIONS = [
       ALTER TABLE gmail_accounts ADD COLUMN gog_path TEXT;
     `,
   },
+  {
+    version: 25,
+    name: "add_gmail_gog_credentials_path",
+    sql: `
+      ALTER TABLE gmail_accounts ADD COLUMN gog_credentials_path TEXT;
+    `,
+  },
 ];
 
 module.exports = {

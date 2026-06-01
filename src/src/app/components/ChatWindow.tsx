@@ -1161,6 +1161,22 @@ export function ChatWindow({ activeChatId, activeChatMeta, onSelectChat, onNavig
   }, []);
 
   useEffect(() => {
+    async function restoreGmailGogConfig() {
+      try {
+        const res = await (window as any).electron?.gmail?.status?.();
+        if (res?.ok && res.data?.provider === "gog" && res.data?.connected) {
+          if (res.data.googleEmail) setGmailGogEmail(res.data.googleEmail);
+          if (res.data.gogPath) setGmailGogExecutablePath(res.data.gogPath);
+          if (res.data.gogCredentialsPath) setGmailGogCredentialsPath(res.data.gogCredentialsPath);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    void restoreGmailGogConfig();
+  }, []);
+
+  useEffect(() => {
     const api = window.electron?.contact;
     if (!api?.onListChanged) return;
     return api.onListChanged(() => {

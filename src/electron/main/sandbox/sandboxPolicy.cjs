@@ -79,6 +79,8 @@ function createSandboxPolicy({
   isExternalUser,
   workDir,
   agentDir,
+  readableRoots: extraReadableRoots,
+  skillDirs,
   platform = process.platform,
   requestApproval,
 } = {}) {
@@ -92,6 +94,19 @@ function createSandboxPolicy({
   const readableRoots = [root];
   if (!isExternalUser && agentDir) {
     readableRoots.push(normalizePath(path.join(agentDir, "skills")));
+  }
+  if (!isExternalUser) {
+    const extraRoots = [
+      ...(Array.isArray(extraReadableRoots) ? extraReadableRoots : []),
+      ...(Array.isArray(skillDirs) ? skillDirs : []),
+    ];
+    for (const extraRoot of extraRoots) {
+      if (!extraRoot || String(extraRoot).trim() === "") continue;
+      const normalized = normalizePath(extraRoot);
+      if (!readableRoots.some((existing) => isSubPath(existing, normalized) || isSubPath(normalized, existing))) {
+        readableRoots.push(normalized);
+      }
+    }
   }
 
   return Object.freeze({
